@@ -1114,6 +1114,7 @@ fn dispatch_request(
         | AgentRequest::ToolConfigLoginCancel { .. }
         | AgentRequest::ToolConfigPreview { .. }
         | AgentRequest::ToolConfigApply { .. }
+        | AgentRequest::ToolConfigManagedApply { .. }
         | AgentRequest::ToolConfigRollback { .. }
         | AgentRequest::ToolConfigProxyPreview { .. }
         | AgentRequest::ToolConfigProxyApply { .. }) => tools::handle(state, request),

@@ -116,7 +116,8 @@ pub(crate) fn rollback(
                 tool,
             );
         }
-        return apply_locked(state, request.clone()).or_else(|e| safety::apply_error(&request, e));
+        return apply_locked(state, request.clone(), false)
+            .or_else(|e| safety::apply_error(&request, e));
     }
     // The first switch must also be reversible, including an unmanaged original login.
     let locks = account_locks(state)?;

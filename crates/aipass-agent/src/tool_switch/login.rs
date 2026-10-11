@@ -327,7 +327,7 @@ fn poll(state: &Arc<AgentState>, ticket: Uuid) -> ServiceResult<ToolConfigLoginS
         })?;
         let mut request = login.request.clone();
         request.preview_id = None;
-        let result = apply_locked(state, request.clone())
+        let result = apply_locked(state, request.clone(), false)
             .or_else(|error| safety::apply_error(&request, error))?;
         if result.outcome == ToolConfigOutcome::Applied {
             response.status = "complete".into();

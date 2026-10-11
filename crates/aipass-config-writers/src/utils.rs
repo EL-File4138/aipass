@@ -13,6 +13,18 @@ pub fn endpoint_url(endpoints: &[ProviderEndpoint]) -> Option<String> {
     endpoints.iter().find_map(|endpoint| endpoint.url.clone())
 }
 
+pub fn opencode_config_path(home: &Path) -> PathBuf {
+    let directory = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".config"))
+        .join("opencode");
+    ["opencode.jsonc", "opencode.json", "config.json"]
+        .into_iter()
+        .map(|f| directory.join(f))
+        .find(|p| p.exists())
+        .unwrap_or_else(|| directory.join("opencode.json"))
+}
+
 pub(crate) fn resolve_codex_dir(home: &Path) -> PathBuf {
     if let Some(dir) = std::env::var_os("CODEX_HOME") {
         let path = PathBuf::from(dir);

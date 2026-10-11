@@ -2310,6 +2310,7 @@ pub fn run() {
             pricing_group_delete,
             pricing_group_version_delete,
             tool_config_detect,
+            agent_management_apply,
             vault_create,
             vault_unlock,
             vault_recover,

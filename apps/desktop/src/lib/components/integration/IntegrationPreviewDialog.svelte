@@ -16,6 +16,7 @@
   export let busy = false;
   export let localProxy = false;
   export let allowConfirm = true;
+  export let managedSwitch = false;
   export let onConfirm: () => void = () => {};
   export let onOpenChange: (open: boolean) => void = () => {};
 
@@ -135,7 +136,7 @@
       {/if}
 
       <div class="dialog-footer">
-        <span class="dialog-note"><span class="access-note">{accessNote}</span>{$t("integration.backupNote")}</span>
+        <span class="dialog-note"><span class="access-note">{accessNote}</span>{$t(managedSwitch ? "agents.backupDescription" : "integration.backupNote")}</span>
         <div class="dialog-actions">
           <!-- Button does not forward Dialog.Close child props (onclick), so
                closing is wired through the controlled onOpenChange instead. -->
@@ -144,7 +145,7 @@
           </Button>
           {#if allowConfirm}
             <Button variant="primary" on:click={() => onConfirm()} disabled={busy}>
-              {$t("server.writeConfig")}
+              {$t(managedSwitch ? "agents.importAndSwitch" : "server.writeConfig")}
             </Button>
           {/if}
         </div>

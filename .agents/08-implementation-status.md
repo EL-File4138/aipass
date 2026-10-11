@@ -53,6 +53,7 @@
 - Archive, restore, permanent delete.
 - Settings drawer with auto-lock, clipboard clear seconds, master password change, epoch rotation, encrypted vault export/import, sync, device list/revoke, safe tool config modes, and native-host status/repair.
 - Local/iCloud folder sync and WebDAV sync UI.
+- Agent management above Local Proxy, with installed/configured tool discovery, current credential summaries, compatible per-secret choices and a guarded import-before-switch confirmation. Supported tool writers are Codex, Claude Code, Gemini CLI, OpenCode, Grok Build, Pi and Cursor Agent Local; direct subscription switching is available for Codex and Claude Code. Rust owns encrypted original snapshots and non-overwriting vault imports; unsupported or failed imports stop the switch.
 
 ## Implemented CLI Details
 

@@ -178,7 +178,7 @@ export type PricingConfig = {
   listPriceUpdatedAt?: number;
 };
 export type PricingApplyScope = "all_history" | "from_now";
-export type ToolDetection = { tool: ToolConfigTarget; binaryFound: boolean; configPath?: string };
+export type ToolDetection = { tool: ToolConfigTarget; binaryFound: boolean; localRuntimeFound?: boolean; configPath?: string };
 export type UsageRange = "24h" | 7 | 30;
 export type ServerUsageByRange = Record<UsageRange, ServerUsageSummary>;
 

@@ -7,6 +7,7 @@
 
   export let value = "";
   export let label = "";
+  export let ariaLabel = "";
   export let placeholder = "";
   export let disabled = false;
   export let options: Array<{ value: string; label: string; disabled?: boolean }> = [];
@@ -29,7 +30,7 @@
     {disabled}
     items={options.map((option) => ({ value: option.value, label: option.label, disabled: option.disabled }))}
   >
-    <Select.Trigger class="select-trigger" aria-label={label || placeholder}>
+    <Select.Trigger class="select-trigger" aria-label={ariaLabel || label || placeholder}>
       <span class="select-value" class:placeholder={!selectedLabel}>
         {selectedLabel || placeholder || $t("common.select")}
       </span>

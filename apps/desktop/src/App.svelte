@@ -19,6 +19,8 @@
   import AuthScreen from "./lib/components/auth/AuthScreen.svelte";
   import RecoveryKitModal from "./lib/components/auth/RecoveryKitModal.svelte";
   import UnlockTransition from "./lib/components/auth/UnlockTransition.svelte";
+  import AgentManagementPage from "./lib/components/integration/AgentManagementPage.svelte";
+  import { toolConfigActions } from "./lib/services/toolConfig";
   import { VaultSidebar as Sidebar } from "@aipass/ui";
   import ProviderDetailPane from "./lib/components/providers/ProviderDetailPane.svelte";
   import { ProviderListPane } from "@aipass/ui";
@@ -56,7 +58,6 @@
     ProxyStatus,
     ServerTokenResponse,
     ServerUsageByRange,
-    CodexApiKeyMode,
     CcSwitchDetection,
     CcSwitchProviderImportError,
     CcSwitchProviderLink,
@@ -68,7 +69,6 @@
     SyncMode,
     SyncReport,
     ToolConfigApplyResult,
-    ToolConfigMode,
     ToolConfigPreview,
     ToolConfigTarget,
     ToolDetection,
@@ -272,6 +272,7 @@
   let showArchived = false;
   let showTrash = false;
   let showFavorites = false;
+  let showAgents = false;
   let showServer = false;
   let pendingServerView = false;
   let pendingDeepLinks: PendingDeepLink[] = [];
@@ -1143,6 +1144,7 @@
     usageProbeResult = undefined;
     showSettings = false;
     showServer = false;
+    showAgents = false;
     serverConfig = { enabled: false, bindAddr: "127.0.0.1:8787", routes: [], pricing: [], upstreamProxy: { mode: "system" } };
     serverStatus = { running: false, enabled: false, bindAddr: "127.0.0.1:8787", activeRoutes: 0, requests: 0, failures: 0, recentRequests: 0, recentTokens: 0, successRateBps: 0 };
     serverUsage = emptyServerUsage();
@@ -1308,6 +1310,7 @@
       await loadEntries(false, false, false, () => {
         providerFilter = value;
         showServer = false;
+        showAgents = false;
         showArchived = false;
         showTrash = false;
         showFavorites = false;
@@ -1315,6 +1318,7 @@
     } else {
       providerFilter = value;
       showServer = false;
+      showAgents = false;
     }
     if (!filtered.some((entry) => entry.id === selectedId)) {
       selectedId = filtered[0]?.id ?? "";
@@ -1845,6 +1849,7 @@
       showTrash = false;
       showFavorites = false;
       showServer = false;
+      showAgents = false;
       providerFilter = "all";
       query = "";
     });
@@ -1865,6 +1870,7 @@
       showArchived = false;
       showFavorites = false;
       showServer = false;
+      showAgents = false;
       providerFilter = "all";
       query = "";
     });
@@ -1878,6 +1884,7 @@
       showArchived = false;
       showTrash = false;
       showServer = false;
+      showAgents = false;
       providerFilter = "all";
       query = "";
     });
@@ -1891,6 +1898,7 @@
     showTrash = false;
     showFavorites = false;
     showServer = false;
+    showAgents = false;
     providerFilter = "all";
     query = "";
   }
@@ -2069,6 +2077,7 @@
   }
 
   async function setServerView() {
+    showAgents = false;
     showServer = true;
     showArchived = false;
     showTrash = false;
@@ -2770,28 +2779,7 @@
     return next.group || next.rate ? next : undefined;
   }
 
-  async function previewToolConfig(request: {
-    tool: ToolConfigTarget;
-    mode: ToolConfigMode;
-    id: string;
-    secretId?: string;
-    codexApiKeyMode?: CodexApiKeyMode;
-  }) {
-    clearError();
-    return invokeTauri<ToolConfigPreview>("tool_config_preview", { request });
-  }
-
-  async function applyToolConfig(request: {
-    tool: ToolConfigTarget;
-    mode: ToolConfigMode;
-    id: string;
-    secretId?: string;
-    codexApiKeyMode?: CodexApiKeyMode;
-  }) {
-    clearError();
-    // The integration dialog owns its apply error and retry state.
-    return invokeTauri<ToolConfigApplyResult>("tool_config_apply", { request });
-  }
+  const { preview: previewToolConfig, apply: applyToolConfig } = toolConfigActions(invokeTauri, clearError);
 
   async function loadBrowserExtensionStatus() {
     browserExtensionBusy = "status";
@@ -3246,7 +3234,7 @@
 <div class="app-shell">
   <AppTitleBar
     showAppMenu={statusReady && status.exists && !status.locked}
-    showResetProvider={Boolean(selected) && !showArchived && !showTrash && !showServer && !showSettings}
+    showResetProvider={Boolean(selected) && !showArchived && !showTrash && !showServer && !showAgents && !showSettings}
     onOpenSettings={() => openSettings("general")}
     onLock={lockVault}
     onResetProvider={resetProviderToBlank}
@@ -3305,6 +3293,8 @@
         {showTrash}
         {showFavorites}
         {showServer}
+        {showAgents}
+        onAgentView={() => { resetProviderListView(); showAgents = true; }}
         {providerFilter}
         providerCounts={counts}
         trashCount={trashCount}
@@ -3315,7 +3305,9 @@
         onServerView={setServerView}
       />
 
-      {#if showServer}
+      {#if showAgents}
+        <AgentManagementPage {invokeTauri} entries={countEntries} onRefreshEntries={() => loadEntries(false, false, false)} />
+      {:else if showServer}
         <RouteListPane
           routes={serverConfig.routes}
           status={serverStatus}

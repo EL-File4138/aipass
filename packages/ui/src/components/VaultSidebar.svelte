@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Archive, Inbox, Server, ShieldCheck, Sparkles, Star, Terminal, Trash2, Wifi } from "lucide-svelte";
+  import { Archive, Bot, Inbox, Server, ShieldCheck, Sparkles, Star, Terminal, Trash2, Wifi } from "lucide-svelte";
 
   import { t } from "../i18n";
   import SidebarItem from "./SidebarItem.svelte";
@@ -11,6 +11,7 @@
   export let showTrash = false;
   export let showFavorites = false;
   export let showServer = false;
+  export let showAgents = false;
   export let providerFilter: ProviderFilter = "all";
   export let providerCounts: ProviderCounts;
   export let trashCount = 0;
@@ -19,8 +20,9 @@
   export let onArchiveView: (value: boolean) => MaybePromise = () => {};
   export let onTrashView: (value: boolean) => MaybePromise = () => {};
   export let onServerView: () => MaybePromise = () => {};
+  export let onAgentView: (() => MaybePromise) | undefined = undefined;
 
-  $: activeFilter = showServer
+  $: activeFilter = showAgents ? "__agents" : showServer
     ? "__server"
     : showTrash
     ? "__trash"
@@ -67,6 +69,11 @@
 
   <div class="group bottom-group">
     <nav class="nav" aria-label={$t("sidebar.storage")}>
+      {#if onAgentView}
+        <SidebarItem label={$t("agents.title")} active={activeFilter === "__agents"} on:click={() => onAgentView?.()}>
+          <Bot size={16} />
+        </SidebarItem>
+      {/if}
       <SidebarItem label={$t("sidebar.server")} active={activeFilter === "__server"} on:click={() => onServerView()}>
       <Server size={16} />
     </SidebarItem>

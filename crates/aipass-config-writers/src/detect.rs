@@ -7,6 +7,7 @@ use std::sync::OnceLock;
 pub struct ToolDetection {
     pub tool: ToolId,
     pub binary_found: bool,
+    pub local_runtime_found: bool,
     pub config_path: Option<PathBuf>,
 }
 
@@ -40,6 +41,8 @@ pub fn detect_tools() -> Vec<ToolDetection> {
             binary_found: binary_names(tool)
                 .iter()
                 .any(|name| binary_in_dirs(&search_dirs, name)),
+            local_runtime_found: *tool == ToolId::Cursor
+                && binary_in_dirs(&search_dirs, "cursor-agent-local"),
             config_path: home.as_deref().and_then(|home| config_dir(home, tool)),
         })
         .collect()
@@ -271,7 +274,7 @@ fn config_dir(home: &Path, tool: &ToolId) -> Option<PathBuf> {
                 .unwrap_or_else(|| home.join(".codex"));
             dir.exists().then_some(dir)
         }
-        ToolId::GeminiCli => first_existing([home.join(".gemini")]),
+        ToolId::GeminiCli => first_existing([crate::gemini_config_dir(home)]),
         ToolId::OpenCode => {
             let mut candidates = Vec::new();
             // opencode honors XDG_CONFIG_HOME when it is set.

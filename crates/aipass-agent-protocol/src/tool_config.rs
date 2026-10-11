@@ -8,6 +8,7 @@ pub enum ToolConfigTool {
     Codex,
     ClaudeCode,
     GeminiCli,
+    #[serde(alias = "opencode")]
     OpenCode,
     Grok,
     Pi,

@@ -4,6 +4,7 @@ pub(super) fn handle(
     state: &Arc<AgentState>,
     request: AgentRequest,
 ) -> ServiceResult<AgentResponse> {
+    let managed = matches!(&request, AgentRequest::ToolConfigManagedApply { .. });
     match request {
         AgentRequest::ToolConfigStatus { tool } => {
             crate::tool_switch::status(state, tool).map(AgentResponse::success)
@@ -27,9 +28,7 @@ pub(super) fn handle(
             );
             let result = with_vault(state, true, |vault| {
                 let (entry, plan, content) = build_tool_config_plan(vault, &request_for_closure, true)?;
-                let preview_id = if crate::tool_switch::supported(&request_for_closure.tool) {
-                    Some(crate::tool_switch::preview_id(vault, state, &request_for_closure, &plan).map_err(ServiceError::internal)?)
-                } else { None };
+                let preview_id = Some(crate::tool_switch::preview_id(vault, state, &request_for_closure, &plan).map_err(ServiceError::internal)?);
                 let mut files = tool_config_preview_files(&plan, &content);
                 files.extend(crate::tool_switch::credential_preview(vault, &request_for_closure)?);
                 let preview = combined_tool_config_preview(&files);
@@ -75,9 +74,17 @@ pub(super) fn handle(
             }
             result
         }
-        AgentRequest::ToolConfigApply { request } => {
+        AgentRequest::ToolConfigApply { request }
+        | AgentRequest::ToolConfigManagedApply { request } => {
+            if managed && request.preview_id.is_none() {
+                return Err(ServiceError::new(
+                    AgentErrorCode::Conflict,
+                    "Preview the Agent switch before applying",
+                ));
+            }
             if crate::tool_switch::supported(&request.tool) && request.mode != ToolConfigMode::Env {
-                return crate::tool_switch::apply(state, request).map(AgentResponse::success);
+                return crate::tool_switch::apply_managed(state, request, managed)
+                    .map(AgentResponse::success);
             }
             let started = Instant::now();
             let request_for_closure = request.clone();
@@ -91,6 +98,17 @@ pub(super) fn handle(
             );
             let result = with_vault(state, false, |vault| {
                 let (entry, plan, content) = build_tool_config_plan(vault, &request_for_closure, false)?;
+                if managed {
+                    let stamp = crate::tool_switch::preview_id(vault, state, &request_for_closure, &plan).map_err(crate::tool_credentials::error)?;
+                    if request_for_closure.preview_id.as_deref() != Some(stamp.as_str()) {
+                        return Err(ServiceError::new(AgentErrorCode::Conflict, "Agent credentials changed; preview again"));
+                    }
+                    crate::tool_credentials::preserve(vault, state, &request_for_closure.tool)?;
+                    let after = crate::tool_switch::preview_id(vault, state, &request_for_closure, &plan).map_err(crate::tool_credentials::error)?;
+                    if after != stamp {
+                        return Err(ServiceError::new(AgentErrorCode::Conflict, "Agent credentials changed during import; preview again"));
+                    }
+                }
                 let operation_id = plan.operation_id;
                 let target = "redacted";
                 let applied = apply_plan_encrypted(&plan, &content, &vault.config_backup_key())

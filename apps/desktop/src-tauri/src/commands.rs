@@ -4,14 +4,14 @@ use crate::auth_tasks::{
     VaultAuthTaskStatusRequest, VaultAuthTaskStatusResponse,
 };
 use crate::models::{
-    from_agent_sync_conflict_response, from_agent_sync_settings, from_tool_id,
-    into_agent_cloud_sync_provider, into_agent_sync_conflict_request,
-    into_agent_sync_settings_update, AppPreferences, BrowserExtensionInstallResult,
-    BrowserExtensionStatus, ChangePasswordRequest, CreateVaultRequest, NativeHostRepairRequest,
-    NativeHostStatus, ProbeResult, ProviderAddRequest, ProviderUpdateRequest, RecoveryVaultRequest,
-    SavePreferencesRequest, SaveSyncSettingsRequest, SyncCloudRequest, SyncConflictActionRequest,
-    SyncConflictResponse, SyncConflictsRequest, SyncLocalRequest, SyncSettings, SyncWebDavRequest,
-    ToolDetection, UnlockVaultRequest, VaultExportRequest, VaultImportRequest, VaultStatus,
+    from_agent_sync_conflict_response, from_agent_sync_settings, into_agent_cloud_sync_provider,
+    into_agent_sync_conflict_request, into_agent_sync_settings_update, AppPreferences,
+    BrowserExtensionInstallResult, BrowserExtensionStatus, ChangePasswordRequest,
+    CreateVaultRequest, NativeHostRepairRequest, NativeHostStatus, ProbeResult, ProviderAddRequest,
+    ProviderUpdateRequest, RecoveryVaultRequest, SavePreferencesRequest, SaveSyncSettingsRequest,
+    SyncCloudRequest, SyncConflictActionRequest, SyncConflictResponse, SyncConflictsRequest,
+    SyncLocalRequest, SyncSettings, SyncWebDavRequest, UnlockVaultRequest, VaultExportRequest,
+    VaultImportRequest, VaultStatus,
 };
 use aipass_agent_protocol::{
     AgentRequest, CcSwitchDetection, FaviconBackfillRequest, FaviconBackfillResponse, LockReason,
@@ -430,21 +430,6 @@ pub(crate) async fn pricing_group_version_delete(
             effective_from,
         },
     )
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn tool_config_detect() -> Result<Vec<ToolDetection>, String> {
-    run_blocking(|| {
-        Ok(aipass_config_writers::detect_tools()
-            .into_iter()
-            .map(|detection| ToolDetection {
-                tool: from_tool_id(detection.tool),
-                binary_found: detection.binary_found,
-                config_path: detection.config_path.map(|path| path.display().to_string()),
-            })
-            .collect())
-    })
     .await
 }
 

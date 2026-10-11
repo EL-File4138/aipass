@@ -887,6 +887,8 @@ pub enum AgentRequest {
     ToolConfigPreview { request: ToolConfigRequest },
     #[serde(rename = "tool_config.apply")]
     ToolConfigApply { request: ToolConfigRequest },
+    #[serde(rename = "tool_config.managed_apply")]
+    ToolConfigManagedApply { request: ToolConfigRequest },
     #[serde(rename = "tool_config.proxy_preview")]
     ToolConfigProxyPreview { request: ToolConfigProxyRequest },
     #[serde(rename = "tool_config.proxy_apply")]
@@ -1070,6 +1072,7 @@ impl AgentRequest {
             Self::ToolConfigLoginCancel { .. } => "tool_config.login.cancel",
             Self::ToolConfigPreview { .. } => "tool_config.preview",
             Self::ToolConfigApply { .. } => "tool_config.apply",
+            Self::ToolConfigManagedApply { .. } => "tool_config.managed_apply",
             Self::ToolConfigProxyPreview { .. } => "tool_config.proxy_preview",
             Self::ToolConfigProxyApply { .. } => "tool_config.proxy_apply",
             Self::ToolConfigRollback { .. } => "tool_config.rollback",
@@ -1181,6 +1184,7 @@ impl AgentRequest {
             | Self::ToolConfigLoginCode { .. }
             | Self::ToolConfigPreview { .. }
             | Self::ToolConfigApply { .. }
+            | Self::ToolConfigManagedApply { .. }
             | Self::ToolConfigProxyPreview { .. }
             | Self::ToolConfigProxyApply { .. } => LONG_RESPONSE_TIMEOUT,
             // Cheap local file reads only.

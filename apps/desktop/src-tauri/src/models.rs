@@ -324,6 +324,7 @@ pub(crate) enum ToolConfigTool {
     Codex,
     ClaudeCode,
     GeminiCli,
+    #[serde(rename = "opencode", alias = "open-code")]
     OpenCode,
     Grok,
     Pi,
@@ -476,6 +477,7 @@ pub(crate) fn from_tool_id(tool: aipass_agent_protocol::ToolId) -> ToolConfigToo
 pub(crate) struct ToolDetection {
     pub(crate) tool: ToolConfigTool,
     pub(crate) binary_found: bool,
+    pub(crate) local_runtime_found: bool,
     pub(crate) config_path: Option<String>,
 }
 
@@ -613,7 +615,7 @@ pub(crate) fn from_agent_sync_settings(settings: AgentSyncSettings) -> SyncSetti
     }
 }
 
-fn from_agent_tool(tool: AgentToolConfigTool) -> ToolConfigTool {
+pub(crate) fn from_agent_tool(tool: AgentToolConfigTool) -> ToolConfigTool {
     match tool {
         AgentToolConfigTool::Codex => ToolConfigTool::Codex,
         AgentToolConfigTool::ClaudeCode => ToolConfigTool::ClaudeCode,

@@ -109,8 +109,7 @@ fn preview_resources(
     plan: &ConfigPlan,
 ) -> Result<Vec<Resource>> {
     let home = crate::server::home_dir(vault).map_err(|e| anyhow::anyhow!(e.message))?;
-    let store = active_store(&home, &request.tool)?;
-    let mut resources = store.resources();
+    let mut resources = crate::tool_credentials::resources(&home, &request.tool)?;
     resources.push(Resource::File(plan.target_path.clone()));
     resources.extend(
         plan.extra_writes
@@ -279,24 +278,35 @@ fn outcome(
         message,
     }
 }
+#[cfg(test)]
 pub(crate) fn apply(
     state: &Arc<AgentState>,
     request: ToolConfigRequest,
 ) -> ServiceResult<ToolConfigApplyResponse> {
-    apply_coordinated(state, request.clone()).or_else(|error| safety::apply_error(&request, error))
+    apply_managed(state, request, false)
+}
+pub(crate) fn apply_managed(
+    state: &Arc<AgentState>,
+    request: ToolConfigRequest,
+    import: bool,
+) -> ServiceResult<ToolConfigApplyResponse> {
+    apply_coordinated(state, request.clone(), import)
+        .or_else(|error| safety::apply_error(&request, error))
 }
 fn apply_coordinated(
     state: &Arc<AgentState>,
     request: ToolConfigRequest,
+    import: bool,
 ) -> ServiceResult<ToolConfigApplyResponse> {
     let _guard = SWITCH_LOCK
         .lock()
         .map_err(|_| safe_error(anyhow::anyhow!("tool coordinator unavailable")))?;
-    apply_locked(state, request)
+    apply_locked(state, request, import)
 }
 fn apply_locked(
     state: &Arc<AgentState>,
     request: ToolConfigRequest,
+    import: bool,
 ) -> ServiceResult<ToolConfigApplyResponse> {
     // Existing conflicts require explicit restoration/reconciliation, not an
     // account switch that silently replaces an external writer's state.
@@ -395,6 +405,18 @@ fn apply_locked(
                 AgentErrorCode::Conflict,
                 "tool configuration or selected account changed during verification; preview again",
             ));
+        }
+        if import {
+            crate::tool_credentials::preserve(vault, state, &request.tool)?;
+            let selected = selection_context(vault, request.id).map_err(safe_error)?;
+            if fingerprint(&resources, &vault.config_backup_key(), &selected).map_err(safe_error)?
+                != stamp
+            {
+                return Err(ServiceError::new(
+                    AgentErrorCode::Conflict,
+                    "Agent credentials changed during import; preview again",
+                ));
+            }
         }
         apply_inner(state, vault, &request)
     })
@@ -625,6 +647,9 @@ pub(crate) fn status(
     state: &Arc<AgentState>,
     tool: ToolConfigTool,
 ) -> ServiceResult<ToolConfigStatus> {
+    if !supported(&tool) {
+        return crate::tool_credentials::status(state, tool);
+    }
     status_checked(state, tool.clone()).or_else(|error| safety::status_error(tool, error))
 }
 fn status_checked(
@@ -734,6 +759,11 @@ fn status_snapshot(
                     }
                 }
                 Err(_) => result.state = "storage_unavailable".into(),
+            }
+            if result.account_identity.is_none() && result.state == "unmanaged" {
+                let mut api = crate::tool_credentials::snapshot(vault, tool.clone())?;
+                api.overrides = result.overrides;
+                return Ok(api);
             }
             return Ok(result);
         };
