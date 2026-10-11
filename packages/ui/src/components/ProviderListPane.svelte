@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { subscriptionAccountPresentation } from "@aipass/schemas";
   import type { ProviderEntry } from "@aipass/schemas";
   import { scrollMask } from "../actions/scrollMask";
   import Badge from "./Badge.svelte";
@@ -67,7 +68,7 @@
   }
 
   function entrySubtitle(entry: ProviderEntry): string {
-    if (entry.credentialKind === "oauth") return entry.accountIdentity ?? "";
+    if (entry.credentialKind === "oauth") return subscriptionAccountPresentation(entry).subtitle;
     const parts: string[] = [];
     if (entry.accountIdentity) parts.push(entry.accountIdentity);
     const target = entry.domains[0] ?? entry.endpoints[0]?.url ?? entry.defaultModel;
@@ -168,12 +169,12 @@
               />
               <div class="entry-main">
                 <div class="title-row">
-                  <span class="title">{entry.title}</span>
+                  <span class="title">{entry.credentialKind === "oauth" ? subscriptionAccountPresentation(entry).title : entry.title}</span>
                   {#if entry.credentialKind === "oauth"}
                     <Badge size="sm">{$t("providerDetail.oauth")}</Badge>
                   {/if}
                 </div>
-                <span class="subtitle">{entrySubtitle(entry)}</span>
+                {#if entrySubtitle(entry)}<span class="subtitle" title={entry.accountIdentity ?? entrySubtitle(entry)}>{entrySubtitle(entry)}</span>{/if}
               </div>
     {/snippet}
     {#each entries as entry (entry.id)}

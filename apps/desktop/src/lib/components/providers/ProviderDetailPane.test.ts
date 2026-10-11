@@ -463,3 +463,12 @@ test("provider save creates a pending key before saving metadata", async () => {
   await vi.waitFor(() => { flushSync(); expect(calls).toEqual(["add", "provider"]); });
   expect(document.querySelector(".add-secret-row")).toBeNull();
 });
+
+test("a subscription without a first snapshot can load usage", async () => {
+  const invokeTauri = vi.fn(async (command: string) => command === "community_refresh" ? { source: "community:codex", observedAt: "2026-10-12T00:00:00Z", windows: [{ id: "five", label: "five_hour", windowMinutes: 300, usedPercent: 12 }] } : null);
+  render({ selected: { ...selected, credentialKind: "oauth", providerId: "codex" }, invokeTauri: invokeTauri as never });
+  const button = document.querySelector<HTMLButtonElement>(".usage-footer button");
+  expect(button).toBeTruthy(); button!.click();
+  await vi.waitFor(() => { flushSync(); expect(document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBe("12"); });
+  expect(invokeTauri).toHaveBeenCalledWith("community_refresh", { id: "provider" });
+});

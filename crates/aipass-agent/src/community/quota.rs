@@ -9,7 +9,12 @@ pub(super) fn now() -> String {
 pub(super) fn snapshot(provider: &str, value: &Value) -> SubscriptionSnapshot {
     SubscriptionSnapshot {
         plan: value["plan"].as_str().map(str::to_owned),
-        credits_remaining: value["balance"].as_str().map(str::to_owned),
+        credits_remaining: value["balance"].as_str().map(str::to_owned).or_else(|| {
+            value["balance"]
+                .as_f64()
+                .filter(|n| n.is_finite() && *n >= 0.0)
+                .map(|n| n.to_string())
+        }),
         source: format!("community:{provider}"),
         observed_at: now(),
         error: value["error"].as_str().map(str::to_owned),
@@ -59,9 +64,18 @@ pub(crate) fn refresh(state: &Arc<AgentState>, id: Uuid) -> ServiceResult<Subscr
         Err(error) if error == ACCOUNT_BUSY => return Err(invalid(error)),
         Err(error) => json!({"error":error}),
     };
-    let snapshot = snapshot(&provider, &usage);
+    let mut snapshot = snapshot(&provider, &usage);
     with_vault(state, false, |vault| {
         read(vault, id, marker.expose())?;
+        if snapshot.error.is_some() {
+            if let Some(previous) = vault
+                .get_provider_summary(id)
+                .map_err(map_vault_error)?
+                .subscription
+            {
+                snapshot = failed_snapshot(previous, &snapshot);
+            }
+        }
         vault
             .set_provider_runtime_extension(
                 id,
@@ -95,13 +109,26 @@ pub(crate) fn refresh_due(state: &Arc<AgentState>) {
             if !preferences.quota_tracking {
                 continue;
             }
-            let previous = entry.subscription.as_ref().and_then(|s| {
-                time::OffsetDateTime::parse(
-                    &s.observed_at,
-                    &time::format_description::well_known::Rfc3339,
-                )
-                .ok()
+            // Failed snapshots retain the last successful reading's timestamp.
+            // Schedule retries from the attempt receipt instead of that cached date.
+            let receipt = vault
+                .provider_runtime_extension(entry.id, "community_usage_v1")
+                .map_err(map_vault_error)?;
+            let attempted_at = receipt.as_ref().and_then(|raw| {
+                serde_json::from_str::<Value>(raw.expose())
+                    .ok()
+                    .and_then(|v| v["observedAt"].as_str().map(str::to_owned))
             });
+            let previous = attempted_at
+                .as_deref()
+                .or_else(|| entry.subscription.as_ref().map(|s| s.observed_at.as_str()))
+                .and_then(|date| {
+                    time::OffsetDateTime::parse(
+                        date,
+                        &time::format_description::well_known::Rfc3339,
+                    )
+                    .ok()
+                });
             if previous.is_none_or(|t| {
                 (time::OffsetDateTime::now_utc() - t).whole_seconds()
                     >= preferences.quota_refresh_seconds as i64
@@ -167,4 +194,38 @@ pub(crate) fn quota(vault: &Vault, id: Uuid) -> Vec<aipass_proxy::QuotaWindow> {
             })
         })
         .collect()
+}
+
+// Keep the last reading visibly stale when a refresh fails. Routing still uses
+// the failed raw response above and never treats these cached bars as current.
+fn failed_snapshot(
+    mut previous: SubscriptionSnapshot,
+    failure: &SubscriptionSnapshot,
+) -> SubscriptionSnapshot {
+    previous.error = failure.error.clone();
+    previous.stale = true;
+    previous
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+    #[test]
+    fn numeric_credits_and_failed_refresh_preserve_the_last_reading() {
+        let old = snapshot(
+            "codex",
+            &json!({"balance":0,"windows":[{"name":"weekly","used":29,"span":604800}]}),
+        );
+        assert_eq!(old.credits_remaining.as_deref(), Some("0"));
+        assert_eq!(old.windows[0].window_minutes, Some(10080));
+        let failed = failed_snapshot(
+            old.clone(),
+            &snapshot("codex", &json!({"error":"read failed"})),
+        );
+        assert_eq!(failed.windows, old.windows);
+        assert_eq!(failed.observed_at, old.observed_at);
+        assert_eq!(failed.error.as_deref(), Some("read failed"));
+        assert!(failed.stale);
+        assert_eq!(snapshot("codex", &json!({})).credits_remaining, None);
+    }
 }

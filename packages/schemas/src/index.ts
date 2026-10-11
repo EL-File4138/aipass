@@ -755,3 +755,5 @@ export function authSchemeCompatibleWithInterface(authScheme: AuthScheme, interf
 export * from "./proxy.js";
 
 export * from "./providers.js";
+
+export * from "./account-presentation.js";

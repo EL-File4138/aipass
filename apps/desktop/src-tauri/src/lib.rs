@@ -2325,6 +2325,7 @@ pub fn run() {
             subscription_import_start,
             subscription_import_poll,
             subscription_import_cancel,
+            subscription_import_open_location,
             oauth_browser::oauth_open_verification,
             community_catalog,
             community_login_start,

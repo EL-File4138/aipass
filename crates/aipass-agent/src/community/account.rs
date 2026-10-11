@@ -172,14 +172,11 @@ pub(super) fn persist(vault: &Vault, account: Account) -> ServiceResult<Uuid> {
     let entry = vault
         .add_provider_with_runtime_extension(
             ProviderEntryInput {
-                title: format!(
-                    "{}{}",
-                    account.provider,
-                    if account.identity.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" · {}", account.identity)
-                    }
+                title: display::account_title(
+                    &account.provider,
+                    &account.identity,
+                    &serde_json::from_str::<Value>(account.auth.expose())
+                        .map_err(ServiceError::internal)?,
                 ),
                 provider_kind: ProviderKind::Official,
                 provider_id: Some(account.provider.clone()),

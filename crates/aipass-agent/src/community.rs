@@ -666,6 +666,7 @@ impl CommunityBridge {
 
 mod account;
 mod backend;
+mod display;
 mod quota;
 pub(crate) use account::{
     bind_cli, ensure_owner, identity, identity_value, is_account, legacy_scope_matches, read,

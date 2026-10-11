@@ -13,11 +13,11 @@
   export let initialProvider = "";
   let selected = initialProvider;
   const providers = [
-    { id: "claude", name: "Claude", description: "claudeConnect.providerDescription" },
-    { id: "codex", name: "ChatGPT (Codex)", description: "subscriptionCli.codexDescription" },
-    { id: "grok", name: "Grok Build", description: "subscriptionCli.grokDescription" },
-    { id: "copilot", name: "GitHub Copilot", description: "subscriptionCli.copilotDescription" },
-    { id: "gemini-cli", name: "Gemini CLI", description: "subscriptionCli.geminiDescription" }
+    { id: "claude", name: "Claude" },
+    { id: "codex", name: "ChatGPT (Codex)" },
+    { id: "grok", name: "Grok Build" },
+    { id: "copilot", name: "GitHub Copilot" },
+    { id: "gemini-cli", name: "Gemini CLI" }
   ];
 </script>
 
@@ -33,22 +33,21 @@
           <IconButton label={$t("oauthConnect.close")} on:click={onClose}><X size={17} /></IconButton>
         </header>
         <div class="body">
-          <Dialog.Description class="description">{$t("subscriptionCli.localNote")}</Dialog.Description>
           {#if selected === "claude"}
             <ClaudeConnectPane {invokeTauri} onBack={() => { selected = ""; }} {onConnected} />
           {:else}
             <div class="providers">
               {#each providers as provider}
                 <button type="button" class="provider" on:click={() => { selected = provider.id; }}>
-                  <ProviderIcon title={provider.name} providerId={provider.id} kind="official" size="lg" />
-                  <span><strong>{provider.name}</strong><small>{$t(provider.description)}</small></span><ArrowRight size={16} />
+                  <ProviderIcon title={provider.name} providerId={provider.id} kind="official" size="md" />
+                  <strong>{provider.name}</strong><ArrowRight size={16} />
                 </button>
               {/each}
             </div>
             <div class="actions"><Button variant="secondary" on:click={() => { void onImportCli(); }}><Terminal size={14} />{$t("oauthConnect.importCli")}</Button><Button on:click={onCommunity}>{$t("communityConnect.more")}</Button></div>
           {/if}
         </div>
-        <footer><ShieldCheck size={14} />{$t("subscriptionCli.localNote")}</footer>
+        <footer><ShieldCheck size={14} /><Dialog.Description class="description">{$t("subscriptionCli.localNote")}</Dialog.Description></footer>
       </Dialog.Content>
     </Dialog.Portal>
   </Dialog.Root>
@@ -56,16 +55,16 @@
 
 <style>
   :global(.provider-dialog-content.subscription-dialog) { width: 620px; max-height: calc(100vh - 48px); display: flex; flex-direction: column; }
-  header { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid var(--divider); }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid var(--divider); }
   .heading { display: flex; align-items: center; gap: 10px; }
-  .body { overflow-y: auto; padding: 20px 22px; display: grid; gap: 16px; }
-  :global(.subscription-dialog .description) { margin: 0; font-size: 12px; color: var(--text-secondary); }
+  .body { overflow-y: auto; padding: 16px 20px; display: grid; gap: 12px; }
+  :global(.subscription-dialog .description) { margin: 0; }
   .providers { display: grid; gap: 6px; }
-  .provider { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); text-align: left; color: var(--text); }
+  .provider { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); text-align: left; color: var(--text); }
   .provider:hover { background: var(--surface-2); border-color: var(--accent); }
   .provider:focus-visible { outline: 2px solid var(--accent); }
-  .provider span { flex: 1; display: grid; gap: 4px; }
-  strong { font-size: 13px; } small { font-size: 11px; color: var(--text-secondary); }
+  strong { flex: 1; font-size: 13px; }
   .actions { display: flex; gap: 8px; }
-  footer { display: flex; align-items: center; gap: 6px; padding: 12px 22px; border-top: 1px solid var(--divider); font-size: 11px; color: var(--text-tertiary); }
+  footer { display: flex; align-items: center; gap: 6px; padding: 10px 20px; border-top: 1px solid var(--divider); font-size: 11px; color: var(--text-tertiary); }
+  footer :global(svg) { flex-shrink: 0; }
 </style>

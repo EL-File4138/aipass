@@ -174,3 +174,17 @@ fn google_home_is_a_home_not_a_config_directory() {
         PathBuf::from("/private/home/.gemini")
     );
 }
+
+#[test]
+fn codex_does_not_show_credits_for_accounts_without_a_credit_pool() {
+    let v = codex_usage(
+        &json!({"rateLimits":{"planType":"pro","credits":{"hasCredits":false,"balance":"0"}}}),
+    )
+    .unwrap();
+    assert!(v["balance"].is_null());
+    let v = codex_usage(
+        &json!({"rateLimits":{"planType":"pro","credits":{"hasCredits":true,"balance":12.5}}}),
+    )
+    .unwrap();
+    assert_eq!(v["balance"], 12.5);
+}

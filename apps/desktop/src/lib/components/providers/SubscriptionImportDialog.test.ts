@@ -133,3 +133,36 @@ test("locking and unlocking the workspace resets busy state without scanning aut
   button("Open import").click(); await settle();
   expect(invoke.mock.calls.filter(([c]) => c === "subscription_import_start")).toHaveLength(2);
 });
+
+
+test("missing accounts show their state only once and use a visible sign-in button", async () => {
+  const missing = { ...result("not_found"), accountIdentity: null, action: "login" as const };
+  const invoke = vi.fn(async () => task([missing]));
+  render(invoke); await settle();
+  const row = document.querySelector(".result")!;
+  expect(row.textContent?.match(/No account found/g)).toHaveLength(1);
+  expect(row.querySelector("button.btn-secondary")?.textContent).toContain("Sign in");
+  expect(row.querySelector("details")).toBeNull();
+  expect(document.body.textContent).not.toContain("/fixture/home");
+  button("View account location").click(); await settle();
+  expect(document.querySelector(".account-location")?.textContent).toContain("/fixture/home");
+  expect(document.querySelectorAll(".result")).toHaveLength(1);
+  button("Open").click(); await settle();
+  expect(invoke).toHaveBeenCalledWith("subscription_import_open_location", { ticket: "ticket-a", sourceId: "source-a" });
+  expect(document.querySelector(".account-location")).not.toBeNull();
+  document.querySelector<HTMLButtonElement>(".location-close")!.click(); await settle();
+  expect(document.querySelector(".account-location")).toBeNull();
+  expect(button("View account location")).toBe(document.activeElement);
+});
+
+test("opening a missing location reports a localized error and allows retry", async () => {
+  const invoke = vi.fn(async command => {
+    if (command === "subscription_import_open_location") throw new Error("fixture-private-error");
+    return task([result("imported")]);
+  });
+  render(invoke); await settle(); button("View account location").click(); await settle();
+  button("Open").click(); await settle();
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain("could not be opened");
+  expect(document.body.textContent).not.toContain("fixture-private-error");
+  expect(button("Open").disabled).toBe(false);
+});

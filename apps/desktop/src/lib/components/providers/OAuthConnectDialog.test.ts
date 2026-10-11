@@ -14,6 +14,10 @@ test("offers one Grok Build entry and all official CLI subscriptions without dev
  expect(titles).toEqual(["Claude", "ChatGPT (Codex)", "Grok Build", "GitHub Copilot", "Gemini CLI"]);
  expect(document.querySelectorAll(".provider-icon")).toHaveLength(5);
  expect(document.querySelectorAll(".provider-icon .initials")).toHaveLength(0);
+ const dialog = document.querySelector('[role="dialog"]')!;
+ const description = document.getElementById(dialog.getAttribute("aria-describedby")!);
+ expect(description?.closest("footer")).toBeTruthy();
+ expect(document.body.textContent?.split(description!.textContent!).length).toBe(2);
  expect(invoke).not.toHaveBeenCalled();
 });
 test("checks Codex CLI and blocks sign-in until installation is available", async () => {

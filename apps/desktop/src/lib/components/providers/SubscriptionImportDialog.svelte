@@ -2,10 +2,12 @@
   import { onDestroy } from "svelte";
   import { Dialog } from "bits-ui";
   import { Badge, Banner, Button, IconButton, ProviderIcon, SelectField, scrollMask } from "@aipass/ui";
-  import { FolderOpen, RefreshCw, X } from "lucide-svelte";
+  import { FolderOpen, LogIn, RefreshCw, X } from "lucide-svelte";
   import type { SubscriptionImportInput, SubscriptionImportTask } from "@aipass/schemas";
+  import { readableAccountIdentity } from "@aipass/schemas";
   import type { SubscriptionImportSource } from "@aipass/schemas";
   import { t } from "../../stores/i18n";
+  import AccountLocationButton from "./AccountLocationButton.svelte";
 
   export let invokeTauri: <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
   export let open = false;
@@ -30,12 +32,9 @@
   const name = (id: string) => providers.find(([key]) => key === id)?.[1] ?? id;
   function sourceName(source: SubscriptionImportSource) {
     if (source.provider === "cursor") return $t(source.selector === "keychain" ? "subscriptionImport.source.secureStore" : "subscriptionImport.source.file");
-    if (source.provider === "kiro") return source.selector === "ide" ? "Kiro IDE" : source.selector?.startsWith("cli:") ? `Kiro CLI · ${source.selector.slice(4).replace("odic", "OIDC")}` : "Kiro CLI";
+    if (source.provider === "kiro") return source.selector === "ide" ? "Kiro IDE" : source.selector?.startsWith("cli:") ? `Kiro CLI (${source.selector.slice(4).replace("odic", "OIDC")})` : "Kiro CLI";
     if (source.provider === "zcode") return $t(source.selector?.startsWith("team:") ? "subscriptionImport.source.team" : "subscriptionImport.source.file");
     return "";
-  }
-  function accountName(id: string | null, provider: string) {
-    return provider === "zcode" ? id?.split("::").filter(Boolean).map(v => v === "zai" ? "Z.ai" : v === "bigmodel" ? "BigModel" : v).join(" · ") : id;
   }
   $: options = providers.map(([value, label]) => ({ value, label }));
   $: results = task?.results ?? [];
@@ -128,10 +127,17 @@
           {#each results as result (result.sourceId)}
             <div class="result">
               <ProviderIcon providerId={result.source.provider} title={name(result.source.provider)} size="sm" />
-              <div class="account"><strong>{name(result.source.provider)}</strong><span>{accountName(result.accountIdentity, result.source.provider) ?? $t("subscriptionImport.status." + result.status)}</span><small title={result.source.root}>{result.source.root}{sourceName(result.source) ? ` · ${sourceName(result.source)}` : ""}</small></div>
+              <div class="account">
+                <div class="account-heading">
+                  <strong>{name(result.source.provider)}</strong>
+                  <AccountLocationButton path={result.source.root} onOpen={() => invokeTauri("subscription_import_open_location", { ticket: task!.ticket, sourceId: result.sourceId })} />
+                </div>
+                {#if result.accountIdentity}<span title={result.accountIdentity}>{readableAccountIdentity(result.accountIdentity)}</span>{/if}
+                {#if sourceName(result.source)}<small>{sourceName(result.source)}</small>{/if}
+              </div>
               <div class="outcome"><span class:failed={result.status === "failed"}>{$t("subscriptionImport.status." + result.status)}</span>
-                {#if result.action === "login"}<Button size="sm" variant="ghost" disabled={busy} on:click={() => { open = false; onLogin(result.source.provider); }}>{$t("subscriptionImport.login")}</Button>
-                {:else if result.action === "install_cli"}<Button size="sm" variant="ghost" on:click={() => { void install(result.source.provider); }}>{$t("subscriptionCli.install")}</Button>{/if}
+                {#if result.action === "login"}<Button size="sm" variant="secondary" disabled={busy} on:click={() => { open = false; onLogin(result.source.provider); }}><LogIn size={13} />{$t("subscriptionImport.login")}</Button>
+                {:else if result.action === "install_cli"}<Button size="sm" variant="secondary" on:click={() => { void install(result.source.provider); }}>{$t("subscriptionCli.install")}</Button>{/if}
                 {#if result.errorCode && result.status === "failed"}<small>{$t("subscriptionImport.error." + result.errorCode)}</small>{/if}
               </div>
             </div>
@@ -147,7 +153,7 @@
           <div class="directory"><SelectField placeholder={$t("subscriptionImport.provider")} options={options} value={provider} onValueChange={(value) => { provider = value; }} disabled={busy || selecting} /><Button variant="secondary" disabled={busy || selecting} on:click={() => { void chooseDirectory(); }}><FolderOpen size={14} />{$t("subscriptionImport.directory")}</Button></div>
           <div class="actions">
             {#if busy}<Button variant="secondary" disabled={!task || cancelRequested} on:click={() => { void cancel(); }}>{$t("common.cancel")}</Button>
-            {:else}{#if !results.length}<Button variant="secondary" on:click={() => { open = false; onLogin(provider); }}>{$t("subscriptionImport.login")}</Button>{/if}<Button variant="secondary" disabled={!task || !retryIds.length} on:click={() => { if (task) void start({ retry: { ticket: task.ticket, sourceIds: retryIds } }); }}><RefreshCw size={14} />{$t("subscriptionImport.retry")}</Button><Button on:click={() => { open = false; }}>{$t("common.close")}</Button>{/if}
+            {:else}{#if !results.length}<Button variant="secondary" on:click={() => { open = false; onLogin(provider); }}><LogIn size={13} />{$t("subscriptionImport.login")}</Button>{/if}<Button variant="secondary" disabled={!task || !retryIds.length} on:click={() => { if (task) void start({ retry: { ticket: task.ticket, sourceIds: retryIds } }); }}><RefreshCw size={14} />{$t("subscriptionImport.retry")}</Button><Button on:click={() => { open = false; }}>{$t("common.close")}</Button>{/if}
           </div>
         </footer>
       </Dialog.Content>
@@ -162,10 +168,12 @@
   .import-count { display: inline-flex; flex-shrink: 0; }
   .summary { display: grid; gap: 10px; padding: 12px 20px; font-size: 12px; flex-shrink: 0; }
   .results { min-height: 100px; overflow-y: auto; padding: 0 20px; }
-  .result { display: flex; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--divider); font-size: 12px; }
+  .result { align-items: flex-start; display: flex; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--divider); font-size: 12px; }
   .account { flex: 1; min-width: 0; display: grid; gap: 5px; overflow-wrap: anywhere; }
   .account small { color: var(--text-tertiary); font-size: 11px; line-height: 1.3; }
-  .outcome { max-width: 190px; display: flex; flex-direction: column; align-items: end; gap: 4px; text-align: end; overflow-wrap: anywhere; }
+  .outcome { max-width: 190px; display: flex; flex-direction: column; align-items: end; gap: 8px; text-align: end; overflow-wrap: anywhere; }
+  .account-heading { display: flex; align-items: center; gap: 6px; min-height: 24px; margin-top: -4px; }
+  .outcome > span { font-size: 11px; color: var(--text-secondary); }
   .outcome small { color: var(--text-tertiary); }.failed { color: var(--danger); }
   .empty { padding: 32px 20px; text-align: center; color: var(--text-secondary); display: flex; flex-direction: column; gap: 8px; align-items: center; }
   .empty strong { font-size: 13px; color: var(--text); }

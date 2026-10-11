@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
+  import SubscriptionUsageCard from "./SubscriptionUsageCard.svelte";
+  import { subscriptionAccountPresentation } from "@aipass/schemas";
   import SubscriptionAccountCard from "./SubscriptionAccountCard.svelte";
   import ProviderRuntimePanel from "./ProviderRuntimePanel.svelte";
   import { ProviderEmptyState } from "@aipass/ui";
@@ -446,7 +448,7 @@
       <div class="identity">
         <ProviderIcon title={selected.title} kind={selected.providerKind} providerId={selected.providerId} credentialKind={selected.credentialKind} domain={selected.domains[0]} faviconUrl={selected.faviconUrl} size="lg" />
         <div class="identity-text">
-          <h1>{selected.title}</h1>
+          <h1>{isSubscription ? subscriptionAccountPresentation(selected).title : selected.title}</h1>
           <div class="meta">
             <Badge tone={providerKindTone[selected.providerKind]}>{$t(providerKindLabelKey(selected.providerKind))}</Badge>
             {#if !isSubscription}<Badge>{$t(keyFormats.length > 1 ? "credential.multipleFormats" : interfaceLabelKey(keyFormats[0] ?? selected.interfaceType))}</Badge>{/if}
@@ -955,33 +957,11 @@
           </Card>
         {/if}
 
-        {#if hasSubscription}
-          <Card title={$t("providerDetail.subscription")} collapsible>
-            {#if selected.subscription?.plan}
-              <div class="kv-row"><span class="kv-label">{$t("providerDetail.plan")}</span><strong class="kv-value">{selected.subscription.plan}</strong><span></span></div>
-            {/if}
-            {#if selected.subscription?.subscriptionExpiresAt}
-              <div class="kv-row"><span class="kv-label">{$t("providerDetail.subscriptionExpires")}</span><code class="kv-value mono">{formatDateTime(selected.subscription.subscriptionExpiresAt)}</code><span></span></div>
-            {/if}
-            {#if selected.subscription?.subscriptionRenewsAt}
-              <div class="kv-row"><span class="kv-label">{$t("providerDetail.subscriptionRenews")}</span><code class="kv-value mono">{formatDateTime(selected.subscription.subscriptionRenewsAt)}</code><span></span></div>
-            {/if}
-            {#if selected.subscription?.billingPeriodEndsAt}
-              <div class="kv-row"><span class="kv-label">{$t("providerDetail.billingPeriodEnds")}</span><code class="kv-value mono">{formatDateTime(selected.subscription.billingPeriodEndsAt)}</code><span></span></div>
-            {/if}
-            {#if selected.subscription?.credentialExpiresAt}
-              <div class="kv-row"><span class="kv-label">{$t("providerDetail.credentialExpires")}</span><code class="kv-value mono">{formatDateTime(selected.subscription.credentialExpiresAt)}</code><span></span></div>
-            {/if}
-            {#if selected.subscription?.creditsRemaining}
-              <div class="kv-row"><span class="kv-label">{$t("providerDetail.credits")}</span><strong class="kv-value">{selected.subscription.creditsRemaining}{selected.subscription.creditsCurrency ? ` ${selected.subscription.creditsCurrency}` : ""}</strong><span></span></div>
-            {/if}
-            {#each selected.subscription?.windows ?? [] as window (window.id)}
-              <div class="kv-row"><span class="kv-label">{window.label}</span><span class="kv-value"><strong>{typeof window.usedPercent === "number" ? `${window.usedPercent.toFixed(1)}%` : "—"}</strong>{#if window.resetsAt}<span class="text-tertiary"> · {formatDateTime(window.resetsAt)}</span>{/if}</span><span></span></div>
-            {/each}
-            <div class="snapshot-source">{$t("providerDetail.snapshotSource", { source: selected.subscription?.source ?? "" })} · {formatDateTime(selected.subscription?.observedAt)}{#if selected.subscription?.stale} · <span class="probe-error">{$t("providerDetail.snapshotStale")}</span>{/if}</div>
-            {#if selected.subscription?.source.startsWith("community:") || selected.subscription?.source === "claude-cli"}<Button variant="secondary" size="sm" disabled={communityRefreshing} on:click={refreshCommunity}>{communityRefreshing ? $t("common.loading") : $t("communityConnect.refresh")}</Button>{#if communityError}<div class="probe-error">{communityError}</div>{/if}{/if}
-            {#if selected.subscription?.error}<div class="probe-error">{selected.subscription.error}</div>{/if}
-          </Card>
+        {#if hasSubscription || isSubscription}
+          {#key selected.id}
+            <SubscriptionUsageCard subscription={selected.subscription} refreshing={communityRefreshing} error={communityError}
+              refreshable={Boolean(isSubscription || selected.subscription?.source.startsWith("community:") || selected.subscription?.source === "claude-cli")} onRefresh={refreshCommunity} />
+          {/key}
         {/if}
 
         {#if !showTrash && !showArchived}
@@ -1190,13 +1170,6 @@
     flex-wrap: wrap;
     gap: 6px;
     align-items: center;
-  }
-
-
-  .snapshot-source {
-    margin-top: 8px;
-    color: var(--text-tertiary);
-    font-size: 12px;
   }
 
   .account-identity {

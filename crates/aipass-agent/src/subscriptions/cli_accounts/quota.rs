@@ -91,5 +91,11 @@ pub(super) fn codex_usage(value: &Value) -> Result<Value> {
     if windows.is_empty() && base["planType"].is_null() {
         return Err("Codex CLI returned no allowance data".into());
     }
-    Ok(json!({"plan":base["planType"],"balance":base["credits"]["balance"],"windows":windows}))
+    let credits = &base["credits"];
+    let balance = if credits["hasCredits"] == false || credits["unlimited"] == true {
+        Value::Null
+    } else {
+        credits["balance"].clone()
+    };
+    Ok(json!({"plan":base["planType"],"balance":balance,"windows":windows}))
 }
