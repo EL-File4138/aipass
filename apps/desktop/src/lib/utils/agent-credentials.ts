@@ -5,7 +5,7 @@ import { supportsIntegration } from "./integrations";
 export type AgentCredentialChoice = { value: string; label: string; request: ToolSwitchRequest };
 
 export function agentCredentialChoices(entries: ProviderEntry[], tool: ToolConfigTarget): AgentCredentialChoice[] {
-  const choices = entries.filter(entry => !entry.archivedAt).flatMap(entry => entry.secretRefs.flatMap(secret => {
+  const choices = entries.filter(entry => !entry.archivedAt).flatMap(entry => entry.secretRefs.flatMap<AgentCredentialChoice>(secret => {
     const native = entry.credentialKind === "oauth" && entry.providerKind === "official" && (
       (tool === "codex" && ["codex", "openai"].includes(entry.providerId ?? "")) ||
       (tool === "claude-code" && entry.providerId === "anthropic")
