@@ -45,7 +45,7 @@ await writeFile(
       id: extensionId,
       name: manifest.name,
       // Display version: the full release semver when the pipeline stamps a
-      // Chrome-compatible numeric manifest version (nightly builds).
+      // Chrome-compatible numeric manifest version (prerelease builds).
       version: process.env.AIPASS_EXTENSION_RELEASE_VERSION ?? manifest.version,
       // The version actually written into manifest.json; the desktop app uses
       // it to name and compare version directories inside browser profiles.

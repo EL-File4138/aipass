@@ -138,8 +138,10 @@ jobs:
           set -euo pipefail
           version="${{ needs.resolve-release.outputs.version }}"
           node scripts/set-release-version.mjs "${version}"
-          if [[ "${{ needs.resolve-release.outputs.channel }}" == "nightly" ]]; then
+          if [[ "${{ needs.resolve-release.outputs.channel }}" != "official" ]]; then
             node scripts/set-extension-release-version.mjs "${version}" "${version%%-*}.${GITHUB_RUN_NUMBER}"
+          else
+            node scripts/set-extension-release-version.mjs "${version}"
           fi
 
       - name: Validate signing and updater secrets
@@ -485,9 +487,9 @@ jobs:
         run: |
           set -euo pipefail
           version="${{ needs.resolve-release.outputs.version }}"
-          if [[ "${{ needs.resolve-release.outputs.channel }}" == "nightly" ]]; then
+          if [[ "${{ needs.resolve-release.outputs.channel }}" != "official" ]]; then
             # Browsers only accept 1-4 dot-separated integers (each <= 65535)
-            # as an extension manifest version, so nightly sideload builds use
+            # as an extension manifest version, so prerelease sideload builds use
             # <base>.<run number>; the full semver stays in package metadata.
             manifest_version="${version%%-*}.${GITHUB_RUN_NUMBER}"
             node scripts/set-extension-release-version.mjs "${version}" "${manifest_version}"

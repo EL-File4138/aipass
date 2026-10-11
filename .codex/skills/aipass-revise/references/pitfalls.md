@@ -810,3 +810,10 @@ Newest entries last within each section.
 - **Fix**: Share config/auth path resolution, rebase inherited default XDG paths onto independent homes and preserve custom XDG locations.
 - **Guardrail**: Test config and data defaults against independent homes, retain explicit custom overrides, and use the same resolver for detection, snapshots, previews and writes.
 - **Watch points**: `aipass-config-writers::{utils,detect,plan}`, `tool_credentials::reader`, Linux CI and per-vault test home overrides.
+
+### Every prerelease extension needs a numeric browser version
+- **Symptom**: beta packaging could succeed with an unloadable semver prerelease in manifest.version; the desktop bundled a different extension version.
+- **Root cause**: `release.yml` normalized only nightly builds and `validate-edge-submission.mjs` did not check browser version constraints.
+- **Fix**: Stamp desktop and standalone extension packages for every channel; use numeric build versions and version_name for prereleases. Share strict version validation before writing and packaging.
+- **Guardrail**: Reject prerelease text, leading zeroes, overflow and all-zero browser versions before publication. Test beta and nightly stamping without partial writes.
+- **Watch points**: both release workflow stamp steps, `set-extension-release-version.mjs`, `extension-version.mjs`, Edge validation and packaged extension metadata.

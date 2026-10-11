@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFile, readdir, stat } from "node:fs/promises";
 import { resolve } from "node:path";
+import { isExtensionVersion } from "./extension-version.mjs";
 
 const root = resolve(process.argv[2] ?? "apps/extension/dist");
 const requiredFiles = [
@@ -24,6 +25,7 @@ for (const relativePath of requiredFiles) {
 
 const manifest = JSON.parse(await readFile(resolve(root, "manifest.json"), "utf8"));
 if (manifest.manifest_version !== 3) throw new Error("Edge submission requires Manifest V3");
+if (!isExtensionVersion(manifest.version)) throw new Error(`Invalid browser extension version: ${manifest.version}`);
 if (!manifest.default_locale || manifest.name !== "__MSG_extensionName__" || manifest.description !== "__MSG_extensionDescription__") {
   throw new Error("Manifest must use the checked-in localized name and description");
 }
