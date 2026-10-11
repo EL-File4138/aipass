@@ -29,6 +29,14 @@ Use this skill whenever you change, review, commit, or push code in the AIPass r
 - The authoritative desktop viewport is the Tauri window minimum of `960x640`, configured in `apps/desktop/src-tauri/tauri.conf.json` and `tauri.dev.conf.json`.
 - Desktop UI validation must cover that minimum window for pages, lists, forms, and dialogs. Do not introduce phone-sized or browser-preview responsive workarounds for the Tauri desktop surface unless the product explicitly adds that target.
 
+## UI copy and compactness
+
+- Keep every UI surface concise and compact. Remove descriptions that do not help users understand an action, state, or decision. Do not add text merely to fill space.
+- Prefer short labels, single-line list rows, and restrained spacing while preserving clear guidance for errors, empty states, and consequential actions.
+- Avoid middle dots or bullet separators (`·`, `•`) in Chinese UI text. Use separate fields, layout groups, or natural sentences instead of concatenating unrelated labels, states, and metadata.
+- Show each fact once within a page or dialog. Check headings, body copy, footers, account identity, status, and buttons for redundant information.
+- Apply these rules to every locale and loading, success, empty, and failure state. See root `AGENTS.md` and `.agents/03-ui-design.md`.
+
 Read these repo docs before large changes:
 
 - `.agents/04-architecture.md`
@@ -76,6 +84,8 @@ Read these repo docs before large changes:
 - Are sensitive fields handled with secret-aware types?
 - Does sync still operate on encrypted objects only?
 - Did you avoid introducing a second code path that bypasses `aipass-agent`?
+- For UI changes, did you remove unnecessary descriptions and duplicated information, avoid dotted Chinese text, and keep rows and spacing compact?
+- Did you review the affected locales and loading, success, empty, and failure states at the desktop minimum window size?
 
 ## Local validation platform
 

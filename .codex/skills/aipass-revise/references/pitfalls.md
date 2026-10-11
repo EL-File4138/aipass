@@ -788,3 +788,18 @@ Newest entries last within each section.
 - **Fix**: Preserve the default secure-store selector, use CLI status instead of reading Claude grants, discover NVM binaries and provide their Node PATH, inherit or override outbound proxy for both inference and quota, reset abandoned login flags, and skip signals for reaped children. Remove retired grant persistence code, repair the SVG, and separate CLI IPC handlers/types.
 - **Guardrail**: Verify default/custom command environments, credential-free account discovery, pending-submit/restart, reconnect capability revocation, proxy precedence and HTTP-only subscription transport. Parse bundled SVGs and test root/clipping integrity. Rebuild the embedded panel after shared asset/locale changes. The native Rust gate must also reject TS, Python and shell subscription implementations.
 - **Watch points**: `claude_cli::{account_environment,configure}`, `claude_bridge::Run`, `subscriptions::native_cli::Running`, proxy runtime resolution, CLI IPC handlers, `ClaudeConnectPane`, brand SVG assets and `repo-health.mjs`.
+
+### Managed Agent switches must preserve the outgoing credential before writing
+- **Symptom**: Switching a local Agent could overwrite an unimported API or select a new Gemini API key while retaining Google login. Desktop and Agent also used different OpenCode spellings.
+- **Root cause**: Configuration writes alone do not preserve credential ownership or select a vendor authentication mode; serde's kebab-case spelling differs from the desktop tool ID.
+- **Fix**: Use the typed `tool_config.managed_apply` path with a required preview fingerprint, encrypted source snapshots and non-overwriting vault imports. Retain native CLI account homes before changing selection, and stop on unsupported imports. Set Gemini's authentication selection alongside its API configuration; preserve the existing Agent `open-code` wire tag while bridging desktop `opencode`.
+- **Guardrail**: Test stale/missing previews, import failure with unchanged files, API deduplication, independent native homes, OpenCode auth.json, selected-provider ordering and effective per-secret authentication. Check the page and confirmation dialog at 960×640; never return source credentials to Svelte.
+- **Watch points**: `tool_credentials`, `tool_switch`, `handlers/tools`, config writer Gemini settings, `tool_commands`, `agent-credentials` and `AgentManagementPage`.
+
+
+### Subscription presentation must distinguish identity, quota and availability
+- **Symptom**: imported records repeated internal account keys, import states appeared twice, Codex limits used internal primary/secondary labels, and failed reads erased useful quota data.
+- **Root cause**: generated titles used ownership identities (`community/account.rs`), provider details rendered raw snapshot rows, and `community/quota.rs::refresh` replaced the snapshot with an error-only result.
+- **Fix**: derive human-readable Rust titles separately from ownership keys; share account presentation for legacy records; render period-aware progress bars, optional credits and localized empty/loading/recovery states. Keep failed readings stale and schedule retries from the attempt receipt.
+- **Guardrail**: never change account identity for display. Never infer a missing usage window or treat unknown balances as zero; retain model scope, explicit zero readings, and the last successful timestamp on failure. Keep the retry timestamp separate from cached readings.
+- **Watch points**: `SubscriptionImportDialog.test.ts`, `SubscriptionUsageCard.test.ts`, `community::display`, `community::quota::snapshot_tests`, Codex allowance tests, shared Chinese/English catalogs and 960×640 Tauri validation.

@@ -12,6 +12,14 @@
 - The desktop UI is shipped inside Tauri. The authoritative minimum viewport is `960x640`, from `apps/desktop/src-tauri/tauri.conf.json` and `tauri.dev.conf.json`.
 - Review and verify desktop pages, lists, forms, and dialogs at the Tauri minimum window size. Do not add phone-sized or browser-only responsive workarounds unless a separate product surface explicitly requires them.
 
+## UI copy and compactness
+
+- Keep all UI surfaces concise and compact. Remove descriptions that do not help users understand an action, state, or decision; do not add explanatory text merely to fill space.
+- Prefer short labels, single-line list rows, and restrained spacing. Keep necessary guidance for errors, empty states, and consequential actions clear and actionable.
+- Avoid joining Chinese UI text with middle dots or bullet separators (`·`, `•`). Prefer separate fields, layout groups, or natural sentences; do not concatenate unrelated labels, states, and metadata into dotted text.
+- Do not repeat the same information within a page or dialog, including heading/body/footer descriptions, account identity, status, or button labels. Give each fact one clear place.
+- Review UI changes for unnecessary descriptions, duplicated copy, dotted Chinese text, and excess spacing alongside minimum-window validation. Apply the same rules to every locale and loading, success, empty, and failure state.
+
 Use this format for all commits:
 
 `op(component): desc`
