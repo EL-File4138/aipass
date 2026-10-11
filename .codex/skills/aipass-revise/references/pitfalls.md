@@ -803,3 +803,10 @@ Newest entries last within each section.
 - **Fix**: derive human-readable Rust titles separately from ownership keys; share account presentation for legacy records; render period-aware progress bars, optional credits and localized empty/loading/recovery states. Keep failed readings stale and schedule retries from the attempt receipt.
 - **Guardrail**: never change account identity for display. Never infer a missing usage window or treat unknown balances as zero; retain model scope, explicit zero readings, and the last successful timestamp on failure. Keep the retry timestamp separate from cached readings.
 - **Watch points**: `SubscriptionImportDialog.test.ts`, `SubscriptionUsageCard.test.ts`, `community::display`, `community::quota::snapshot_tests`, Codex allowance tests, shared Chinese/English catalogs and 960×640 Tauri validation.
+
+### Inherited XDG defaults must not escape an independent tool home
+- **Symptom**: OpenCode credential import and preview tests read or wrote the runner account instead of their isolated home.
+- **Root cause**: `utils.rs::opencode_config_path` and the auth reader applied a process-default XDG directory to a different supplied home.
+- **Fix**: Share config/auth path resolution, rebase inherited default XDG paths onto independent homes and preserve custom XDG locations.
+- **Guardrail**: Test config and data defaults against independent homes, retain explicit custom overrides, and use the same resolver for detection, snapshots, previews and writes.
+- **Watch points**: `aipass-config-writers::{utils,detect,plan}`, `tool_credentials::reader`, Linux CI and per-vault test home overrides.

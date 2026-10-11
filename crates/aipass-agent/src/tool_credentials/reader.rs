@@ -24,10 +24,7 @@ pub(super) fn paths(home: &Path, tool: &ToolConfigTool) -> Vec<PathBuf> {
         .collect(),
         ToolConfigTool::OpenCode => vec![
             aipass_config_writers::opencode_config_path(home),
-            std::env::var_os("XDG_DATA_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join(".local/share"))
-                .join("opencode/auth.json"),
+            aipass_config_writers::opencode_auth_path(home),
         ],
         ToolConfigTool::Grok => vec![home.join(".grok/config.toml"), home.join(".grok/auth.json")],
         ToolConfigTool::Pi => vec![

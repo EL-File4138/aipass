@@ -29,7 +29,7 @@ pub use plan::{
     preview_codex_plaintext_with_mode, GrokApiBackend, OpenCodeApi, PiApi,
 };
 pub use utils::{
-    config_backup_path, diff_preview_for_path, diff_preview_from, endpoint_url,
+    config_backup_path, diff_preview_for_path, diff_preview_from, endpoint_url, opencode_auth_path,
     opencode_config_path, redacted_diff_preview,
 };
 

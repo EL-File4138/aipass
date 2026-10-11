@@ -14,15 +14,42 @@ pub fn endpoint_url(endpoints: &[ProviderEndpoint]) -> Option<String> {
 }
 
 pub fn opencode_config_path(home: &Path) -> PathBuf {
-    let directory = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".config"))
-        .join("opencode");
+    let directory = xdg_directory(home, "XDG_CONFIG_HOME", ".config").join("opencode");
     ["opencode.jsonc", "opencode.json", "config.json"]
         .into_iter()
         .map(|f| directory.join(f))
         .find(|p| p.exists())
         .unwrap_or_else(|| directory.join("opencode.json"))
+}
+
+pub fn opencode_auth_path(home: &Path) -> PathBuf {
+    xdg_directory(home, "XDG_DATA_HOME", ".local/share").join("opencode/auth.json")
+}
+
+fn xdg_directory(home: &Path, variable: &str, fallback: &str) -> PathBuf {
+    resolve_xdg_directory(
+        home,
+        std::env::var_os(variable).map(PathBuf::from).as_deref(),
+        std::env::var_os("HOME").map(PathBuf::from).as_deref(),
+        fallback,
+    )
+}
+
+fn resolve_xdg_directory(
+    home: &Path,
+    configured: Option<&Path>,
+    process_home: Option<&Path>,
+    fallback: &str,
+) -> PathBuf {
+    // A default inherited XDG path belongs to the process home. Rebase it
+    // when operating on an independent home; retain explicit custom paths.
+    configured
+        .filter(|path| !path.as_os_str().is_empty())
+        .filter(|path| {
+            !process_home.is_some_and(|current| current != home && *path == current.join(fallback))
+        })
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| home.join(fallback))
 }
 
 pub(crate) fn resolve_codex_dir(home: &Path) -> PathBuf {
@@ -285,6 +312,32 @@ pub(crate) fn dotenv_quote(value: &str) -> String {
 #[cfg(test)]
 mod diff_tests {
     use super::*;
+
+    #[test]
+    fn inherited_xdg_defaults_follow_an_independent_home() {
+        let process_home = Path::new("/process-home");
+        let independent = Path::new("/independent-home");
+        for fallback in [".config", ".local/share"] {
+            let default = process_home.join(fallback);
+            assert_eq!(
+                resolve_xdg_directory(independent, Some(&default), Some(process_home), fallback),
+                independent.join(fallback)
+            );
+            assert_eq!(
+                resolve_xdg_directory(process_home, Some(&default), Some(process_home), fallback),
+                default
+            );
+            assert_eq!(
+                resolve_xdg_directory(
+                    independent,
+                    Some(Path::new("/custom-xdg")),
+                    Some(process_home),
+                    fallback
+                ),
+                Path::new("/custom-xdg")
+            );
+        }
+    }
 
     #[test]
     fn preview_keeps_file_coordinates_after_omitted_prefix() {

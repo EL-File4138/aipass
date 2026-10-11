@@ -278,8 +278,8 @@ fn config_dir(home: &Path, tool: &ToolId) -> Option<PathBuf> {
         ToolId::OpenCode => {
             let mut candidates = Vec::new();
             // opencode honors XDG_CONFIG_HOME when it is set.
-            if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
-                candidates.push(PathBuf::from(xdg).join("opencode"));
+            if let Some(directory) = crate::opencode_config_path(home).parent() {
+                candidates.push(directory.to_owned());
             }
             candidates.push(home.join(".config").join("opencode"));
             // The official installer always creates ~/.opencode for the binary.
