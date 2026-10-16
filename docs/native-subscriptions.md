@@ -25,14 +25,15 @@ refreshing OAuth grants in AIPass.
 The encrypted provider record contains a routing marker, models, account identity
 and `nativeHome`/`nativeProvider`/`nativeDevice` reference. Access/refresh/ID tokens
 are excluded. Native credentials are read only in Rust for the immediate request,
-kept in zeroizing buffers, and never returned to the frontend. CLI-owned refresh
+kept in zeroizing buffers, and never returned to the frontend. Codex discovery may reuse a short-lived Keychain snapshot after a non-interactive attribute check; generation admission and account-switch backups require fresh secret reads. CLI-owned refresh
 writes stay in the vendor's store. CLI children exclude inherited API keys and
 custom provider endpoint variables, and apply the configured outbound proxy.
 
-New accounts use private persistent vendor homes under `aipass-accounts/<uuid>`.
+New accounts use private persistent vendor homes under `aipass-accounts/<account>`.
 Gemini's `GEMINI_CLI_HOME` is a home root: credentials live in its `.gemini/`
 subdirectory. Copilot supports github.com CLI config-file tokens or its macOS
-Keychain entry; unavailable secure stores and enterprise hosts report an error
+Keychain entry. Enterprise Cloud hosts bind the account to its `*.ghe.com`
+tenant and validated tenant API; unavailable secure stores report an error
 rather than falling back to an editor account. CLI-managed homes are not deleted
 when an AIPass provider entry is removed.
 
@@ -53,8 +54,37 @@ proxy integration. Subscription references never become tool API keys. See
 [native account switching](native-tool-switching.md).
 WebSockets are disabled for the subscription backend. Gemini's Code Assist response envelope
 preserves native thought signatures and tool history. Copilot premium quota is
-scoped to models with explicit positive billing multipliers; unknown or unrelated
+scoped to models with explicit premium flags or positive billing multipliers; unknown or unrelated
 quota buckets are advisory, so free models are not falsely exhausted.
+
+## Subscription policies
+
+Account quota settings expose Codex paid-credit and reset-credit policies and
+Claude/Codex native automatic switching. All are disabled by default. Automatic
+switching requires an enabled group with at least two verified accounts of the
+same provider. It preserves encrypted backups and respects manual account
+changes; running external CLIs still need a restart after their account changes.
+
+The CLI uses the same Agent policy validation:
+
+```sh
+aipass accounts policy <account-id>
+aipass accounts policy <account-id> --native-group <group-id> --return-preferred true
+aipass accounts policy <account-id> --disable-native-switch
+aipass accounts policy <codex-account-id> --allow-paid-credits true
+aipass accounts policy <codex-account-id> --auto-reset-credits true
+aipass accounts reset <codex-account-id>
+```
+
+`reset` spends an available reset credit. Unfinished operations reuse their
+persisted idempotency key; an explicit `--request-id` can retry the same operation.
+An unknown outcome must be resolved before starting a different reset. Disabling
+paid credits checks official allowance immediately before generation; vendor
+quota races mean this is not a hard billing cap. MCP exposes
+`subscription_policy_get`, `subscription_policy_set` and `subscription_reset`.
+
+See the [provider review](subscription-provider-parity-2026-10-16.md) for passive
+allowance feedback, encrypted history ownership and remaining provider gaps.
 
 ## Legacy handoff
 
@@ -91,7 +121,9 @@ pnpm --filter @aipass/control-panel build
 pnpm --filter @aipass/desktop build
 ```
 
-Protocol 17 includes native tool status, bound previews and target-bound login tasks alongside `subscription.cli.status`, local subscription import tasks and the retained Claude
+Protocol 18 adds subscription policy/reset, passive allowance and durable history
+operations. Restart an older resident Agent when using the updated clients.
+It retains native tool status, bound previews and target-bound login tasks alongside `subscription.cli.status`, local subscription import tasks and the retained Claude
 operation tags. Regression fixtures cover handoff identity and stable IDs,
 credential rereads, account/device changes, CLI RPC, quota scopes, Code Assist
 envelopes, login cancellation and lock/unmount. Browser fixtures cover 960×640 in
@@ -101,3 +133,19 @@ requests still require opt-in account validation.
 
 See [local account import](local-account-import.md) for batch discovery, custom
 directories, result recovery, and the CLI/IPC contract.
+
+## Client cache and retained provider sessions
+
+Claude Code keeps its default native caching unless a Messages caller sets
+`x-aipass-cache-marks: client`. Unmapped client marks are reported in
+`x-aipass-cache-marks-dropped`. Cache creation totals and their one-hour subset
+are retained separately for pricing.
+
+Grok normalizes namespace/text-custom tools and integral numeric arguments in
+Rust. Cursor can retain one native HTTP/2 Run across complete text-tool result
+batches, with account/history validation and no replay after uncertain writes.
+Expired Cursor continuation requires a new conversation; final usage covers the
+whole native Run, identified by `x-aipass-usage-scope: native-run`.
+
+See [capability boundaries and validation](subscription-capabilities-2026-10-16.md)
+for supported mappings, expiry, billing scope and remaining gaps.

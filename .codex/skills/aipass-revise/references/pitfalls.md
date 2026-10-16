@@ -324,7 +324,14 @@ Newest entries last within each section.
 - **Fix**: per the 2026-09-07 user instruction, remove response deadlines from HTTP/SSE/native WS/adapted WS. Bound only connection/handshake establishment, socket writes, and retry backoff. After submission, permit another provider only on an explicit rejected status/error event/error payload or a fully received invalid response; never replay ambiguous write/read failures or truncated responses. Disable reqwest automatic retries. Cancel pending work on downstream close/config invalidation without classifying cancellation as provider failure.
 - **Guardrail**: do not use first-byte, idle or hold budgets to terminate a submitted generation. Check hold limits only before another attempt and during backoff/handshake. Verify slow headers/bodies/SSE/WS remain active beyond legacy budgets, confirmed errors still fail over, and ambiguous failures never touch a backup.
 - **Watch points**: `forward_request`, `prefetch_sse_event`, `collect_upstream_body`, `track_usage_stream`, `websocket.rs`, `websocket/upstream.rs`, `websocket/bridge.rs`; regressions in `tests/runtime_status.rs` and WebSocket tests.
+- **Subscription coverage (2026-10-16)**: Agent subscription transport must also disable automatic retries and response read timeouts. Retire the operation setup deadline before provider generation dispatch; never put an idle timer around buffered SSE aggregation. Shield rotating credentials through durable ACK even if the setup deadline expires. Virtual-clock regressions live in `subscriptions/lifecycle/tests.rs` and proxy `subscription.rs`; establish real TCP connections before pausing Tokio time so scheduler auto-advance cannot masquerade as a connect failure.
 - **Test guardrail**: allow CI startup/parsing/SQLite work before upstream submission, then wait beyond the configured budgets after the upstream acknowledges receipt. A 30 ms hold budget can expire before submission and falsely fail a slow-response test; race arrival against early request completion for actionable failures. Local development tools can send unauthenticated `GET /` probes to IPv4 and IPv6 test listeners: LocalStack traffic caused a false backup-connection failure on macOS. Ignore only those root probes in HTTP and WebSocket fixtures (including multimodal failover and handshake attempt counters), reject API/authenticated traffic at the backup, and independently verify that no diagnostic references the backup target.
+
+### Passive quota updates must reach held requests
+- **Symptom**: an exhausted subscription recovers while a local request waits, but every retry still filters it out until the hold budget expires.
+- **Root cause**: forwarding retained the authenticated route snapshot, including stale quota and admission metadata; quota updates intentionally do not invalidate active generations.
+- **Fix**: refresh quota, concurrency, priority and weight from the live trusted runtime before each new selection round, retaining the original credential and protocol snapshot. Credential/account changes still invalidate the route. Regression: `tests/local_proxy_review.rs` covers recovery over actual local HTTP, new exhaustion, changed limits and credential isolation.
+- **Guardrail**: never cancel a submitted generation merely because quota changes; never replay it to apply a new routing preference. Refresh eligibility only before a permitted next attempt, and keep encrypted reasoning/compaction pinned to its recorded origin.
 
 ### Live channel telemetry must follow generation lifetimes
 - **Symptom**: live concurrency and available channels displayed zero with an old resident Agent; WS connections were counted while idle, recovering targets were subtracted as unavailable, and usage rows moved on every refresh.
@@ -522,6 +529,27 @@ Newest entries last within each section.
 - **Fix**: Agent-owned isolated `claude auth login --claudeai`, capability detection shared with generation, and account-scoped `claude -p /usage`; preserve CLI rotations even after a failed usage read, serialize identical grants, retain rotation receipts/recovery until lock, and CAS background updates against the complete source grant.
 - **Guardrail**: never fallback to direct Anthropic auth/usage HTTP or an unrelated native account. Reject missing/unusable/unsupported CLI installations with install/update and recheck actions. Test canceled/locked/late logins, failed save retries, grant-only rotations, timeout cleanup, unknown output, model windows, IANA dates and year rollover; verify both locales/themes at 960×640. Preserve old quota windows as stale on CLI errors.
 - **Watch points**: `claude_cli.rs`, `claude_bridge.rs`, `official_accounts.rs`, typed protocol, session lock, Tauri browser helper, `ClaudeConnectPane` and `OAuthConnectDialog`.
+
+### Claude account identity includes its organization
+- **Symptom**: multiple Claude seats sharing an email collapsed into one entry, and a same-email login could replace another organization during reauthentication.
+- **Root cause**: `claude_cli/login.rs::signed_in` and `native_auth.rs::NativeStore::identity` extracted email alone; persistence and native switches trusted that shared identifier.
+- **Fix**: share `native_auth::claude_identity` across CLI status/profile reads and native stores; scope identity by organization UUID and reject conflicting metadata. Upgrade legacy entries only from their pinned device-local profile, preserving entry/secret IDs; normalize old tool bindings against that upgraded entry.
+- **Guardrail**: never match scoped Claude identities by email alone. Test same-email distinct organizations, missing/changed organization metadata, mismatched status/profile, wrong-device legacy records, targeted reauthentication and unchanged sibling bindings. Keep upgrades out of proxy snapshot reads.
+- **Watch points**: `official_accounts/identity.rs`, `claude_cli/login.rs`, `tool_switch/{identity,login,native,restore}.rs`, subscription import and native backups. Regressions live in the shared identity, official-account and tool-switch tests.
+
+### Default Claude profiles and login homes need the same ownership boundary
+- **Symptom**: the default terminal account could disagree with native switches on its organization; canceled logins retained private directories and four completed tickets blocked a fifth account.
+- **Root cause**: `account_environment` always set `CLAUDE_CONFIG_DIR`, moving the default profile inside the directory, while native stores read the parent profile. Login directories were persistent before a save was attempted, and the cap counted saved tickets.
+- **Fix**: share `claude_identity::profile_path`, leave the default config-directory environment unset, reject malformed profiles, and own new login directories through RAII until persistence is attempted. Keep ambiguous failed writes recoverable; exclude completed receipts from the pending-login cap.
+- **Guardrail**: test default/custom profile identity agreement, cancel cleanup, four pending versus four saved tickets, and a failed commit followed by cancellation. Never delete a CLI home after an ambiguous vault write or delete borrowed vendor homes.
+- **Watch points**: `claude_cli::{account_environment,ConfigDir}`, `claude_cli/login.rs`, native stores and legacy upgrades. Scope reconnect upgrades to the matching organization and refresh runtime readers after background migration, even with quota tracking disabled.
+
+### Subscription wire and quota contracts must not fork between transports
+- **Symptom**: CLI-owned Codex requests advertised 0.116 while the proxy used 0.159, used obsolete underscored session headers and exposed hidden catalog models. Claude family-specific exhaustion never affected routing.
+- **Root cause**: `subscriptions/cli_accounts/backend.rs` duplicated Codex headers/catalog URLs; `proxy_service::account_quota` dropped model-specific Claude windows.
+- **Fix**: reuse the proxy's Codex header/catalog helpers, send `session-id` and `thread-id`, and carry known Claude family scopes into `QuotaWindow` matching.
+- **Guardrail**: test header/catalog version agreement across both paths and preserve same-session cache keys. Family exhaustion must affect only matching Claude models, honor freshness/reset bounds, and never turn unknown scopes into account-wide limits.
+- **Watch points**: `aipass-proxy::codex`, CLI subscription backend, `proxy_service/routing.rs`, `ResolvedTarget::quota_usage`, direct HTTP, downstream WS bridges and fixed-model groups.
 
 ### Canceled device flows and failed persistence reused one-shot exchanges
 - **Symptom**: closing/canceling during an in-flight start or poll could reconnect later; a failed vault write spent the authorization code again on retry.
@@ -817,3 +845,83 @@ Newest entries last within each section.
 - **Fix**: Stamp desktop and standalone extension packages for every channel; use numeric build versions and version_name for prereleases. Share strict version validation before writing and packaging.
 - **Guardrail**: Reject prerelease text, leading zeroes, overflow and all-zero browser versions before publication. Test beta and nightly stamping without partial writes.
 - **Watch points**: both release workflow stamp steps, `set-extension-release-version.mjs`, `extension-version.mjs`, Edge validation and packaged extension metadata.
+
+
+### Passive subscription feedback must not change generation replay semantics
+- **Symptom**: Scheduled quota lagged real generation; partial readings could refresh unrelated windows, and a failed passive write could hide a submitted response.
+- **Root cause**: HTTP/CLI streams and scheduled quota used different state paths; response feedback shared fatal authentication-update handling.
+- **Fix**: Merge credential/generation-bound encrypted observations through existing CAS writes; retain per-window ages, refresh runtime quotas without rotating markers, and forward the original response when passive persistence fails.
+- **Guardrail**: Test rejected feedback ACKs without response loss or replay, partial-window timestamps, scoped limits and delayed old-generation writes. Preserve scheduled scopes and a separate poll-at timestamp when publishing a partial response view. Passive Claude identity checks read only the non-sensitive profile, never the native grant/Keychain. Internal polls must not touch session idle time.
+- **Watch points**: `subscriptions/feedback`, `community/{feedback,quota}`, `official_accounts/feedback`, `claude_bridge/feedback`, `QuotaWindow` and typed internal IPC.
+
+### Subscription identity includes the vendor's billing scope
+- **Symptom**: Same-name Enterprise Cloud, explicit Cloud project or WorkBuddy enterprise accounts could merge or send personal-account headers.
+- **Root cause**: Import readers and request signers retained the user ID while dropping the host/project/enterprise selection.
+- **Fix**: Pin Copilot host, Gemini explicit project and WorkBuddy enterprise in account identity; share Copilot header/endpoint contracts, send tenant headers and preserve free/premium model quota scopes.
+- **Guardrail**: Reject cross-tenant endpoints and changed native scope; preserve legacy public/personal identities. Share Copilot user/tool continuation and image accounting headers across transports. Normalize numeric scope IDs and keep missing used quantities unknown. Parse literal project settings without shell evaluation. Infer omitted protobuf zero only with the matching quota billing strategy and a known reset.
+- **Watch points**: native imports, `cli_accounts/{store,copilot,gemini,quota}`, `workbuddy/scope`, `devin/quota`, Factory pool membership and billing-period snapshots.
+
+### Cost and native-login automation require durable intent and existing authority
+- **Symptom**: Repeating an uncertain reset could spend another credit; independent account automation could overwrite manual CLI choices or omit backups.
+- **Root cause**: Remote spend and native config writes have separate commit points from their callers' response delivery.
+- **Fix**: Default new policies off, persist reset request IDs before the official idempotent RPC, preserve unresolved attempts, and reuse the native switch coordinator and encrypted transactions. Return-to-preferred uses hysteresis and unknown quotas never authorize switching.
+- **Guardrail**: Test reset-before-ACK refusal, lost/duplicate outcomes including zero remaining credits, unknown allowance with paid credits disabled, policy validation and UI busy/default-off states. Revalidate current native identity and all policy members before renewal and write; preserve manual/external choices, active Claude turns and login-before-switch. Never replay generation after renewal.
+- **Watch points**: `subscription_policy`, `cli_accounts/reset`, `tool_switch/automatic`, provider runtime IPC, desktop, CLI and MCP.
+
+### Restored opaque history must retain its original account binding
+- **Symptom**: Eviction lost Claude tool ownership; newly requested Codex encrypted reasoning could otherwise follow group failover to another account.
+- **Root cause**: Process-local call maps and session affinity cannot prove ownership after restart or target edits.
+- **Fix**: Persist encrypted completed Claude checkpoints and Codex ciphertext digests; validate current generation and enabled target/secret binding before resolving ownership. Fork a native resume rather than overwrite an external transcript.
+- **Guardrail**: Reject mixed/unknown encrypted history on subscription routes while leaving API-only routes to their existing authority. Share typed ciphertext recognition across outgoing ownership records, incoming hashes, model-group routing and cross-protocol validation: include agent messages and explicit encrypted content blocks, without parsing arbitrary tool JSON/text or deleting its IDs. Do not restore pending tools or partial transcripts. Bound transcript/event caches and verify plaintext is absent from AIPass storage.
+- **Watch points**: `community/history`, `official_accounts/sessions`, `claude_bridge/{checkpoint,stream}`, subscription backend route-aware ownership, target edits and revocation.
+
+### Sparse streaming usage must merge before cache normalization
+- **Symptom**: Late usage-only events erased known input/cache counters; Anthropic-to-Chat missed cached tokens; normalizing each partial OpenAI observation then taking maxima double-counted uncached input when cache details arrived later.
+- **Root cause**: Each converter and proxy ledger tracked different subsets, with zero defaults for omitted fields and normalization before the complete wire observation existed.
+- **Fix**: Share `aipass-proxy-conversion::UsageAccumulator`; merge present cumulative counters and nested detail fields first, preserve missing/null fields and explicit zero, then extract protocol totals. Reuse buffered response usage mapping in streamed conversion. Split Chat/Messages state and tests from the legacy oversized stream module.
+- **Guardrail**: Verify sparse and late cache observations against buffered conversion across protocols; check actual local HTTP output and SQLite records. Do not add cumulative events together or take maxima of already-normalized uncached input. Preserve finish reasons across usage-only updates, mark Messages-to-Responses terminal exactly once, and preserve tool start arguments if no JSON delta follows.
+- **Watch points**: conversion `usage`, `stream/chat_messages`, `openai/stream`, proxy `sse`; regressions in `usage/tests` and `tests/local_proxy_review`.
+
+### Client cache controls must remain explicit and loss must be reported
+- **Symptom**: Native CLI caching could change from ordinary client annotations, or cache marks could disappear across system/MCP/history rendering while appearing supported.
+- **Root cause**: The native CLI has different cache control surfaces from the vendor Messages API (`claude_bridge.rs`, cache planning before native prompt construction).
+- **Fix**: Default CLI behavior plus explicit Messages header, shared per-request plan, mark-loss headers and local preflight rejection.
+- **Guardrail**: Strip ordinary marks before the CLI boundary; preserve system/tool authority, report unmapped marks, and bind cache mode/tail to the native context. Reject invalid local requests without account replay or vendor circuit failures.
+- **Watch points**: `claude_bridge/cache.rs`, `forward/http_attempt.rs`, `tests/local_proxy_review.rs`.
+
+### Mixed cache TTLs and optional prices must not create free or duplicate usage
+- **Symptom**: One-hour writes could use the wrong price; a missing optional source price could become explicit zero because the legacy scalar parser defaults missing fields to zero.
+- **Root cause**: Four-bucket usage/pricing assumed one cache creation rate (`aipass-proxy-conversion/src/lib.rs`, `pricing/list_prices.rs::litellm_rule`).
+- **Fix**: Retain the hour count as a subset, persist/migrate it, and price the remainder separately through the same rule/version/off-peak/multiplier pipeline.
+- **Guardrail**: Preserve absent versus explicit zero hour rates. Never add the subset to input totals. Test late streaming updates, protocol round trips, old SQLite rows, query-time repricing and UI edit round trips.
+- **Watch points**: `usage.rs`, `pricing/cost.rs`, `sse::estimate_cost`, price DTOs and both price editors.
+
+### Retained native tool results need ownership and reservation before upload
+- **Symptom**: Recreating the provider Run after a tool call loses native state; retrying partial result writes could execute a continuation twice.
+- **Root cause**: Per-request adapter runtimes end after the HTTP response (`subscriptions/cursor.rs` before native Run pooling).
+- **Fix**: Rust-owned connection workers, account/context/history checks, native KV retention and complete-batch reservation before writes; revoke on target changes.
+- **Follow-up (2026-10-16)**: A parked Run outlives its request adapter. Reconciling only live adapter Weak pointers missed outbound-proxy changes; reconcile the connection pool independently and check outbound settings again before continuation. Resolve the service endpoint only when opening a new Run.
+- **Guardrail**: Keep generation reads unbounded, bound only idle retention/setup/writes, never replay uncertain results, bind call routing to its original credential and label whole-Run usage rather than inventing a last-step count. Revoke retained connections on effective transport changes even after the originating request adapter has ended.
+- **Watch points**: Cursor pool/codec, CommunityBridge owner retention, HTTP/2 fixture and proxy cancellation.
+
+### Keychain metadata caching cannot authorize generation or native backups
+- **Symptom**: Repeated account polling opens duplicate authorization prompts; a cached pre-switch credential can miss an external account change.
+- **Root cause**: Store selection and every credential read independently accessed Keychain (`native_auth.rs::NativeStore::codex`). Metadata modification dates alone can have coarse resolution.
+- **Fix**: Non-interactive attribute selection, in-flight coalescing, bounded zeroizing discovery snapshots, refusal cooldown and explicit reconnect retry. Fresh reads remain mandatory at generation/backup boundaries.
+- **Follow-up (2026-10-16)**: A shared completed-generation counter let a faster fresh read overwrite an earlier waiter's completion. Each in-flight read now owns its result until its waiters finish. Capacity eviction cannot discard live callers or an unexpired refusal. The 16-caller/1,024-read regression failed before the fix and passes after it.
+- **Guardrail**: Never treat attribute/ACL failure as absence. Keep unanswered reads coalesced, scope explicit retry to the selected account, preserve other refusal cooldowns across lock/invalidation and capacity eviction, invalidate in-flight epochs on writes/lock, erase idle snapshots, and test overlapping fresh reads as well as completed-cache bypass. A new completion must not erase another read's outcome.
+- **Watch points**: `native_auth/keychain_cache`, CLI account fresh/generate/login, native switching and session locking.
+
+### Launchd fixtures must publish complete readiness data atomically
+- **Symptom**: The complete workspace intermittently failed with `kill: illegal process id` although the isolated tray suspension test passed.
+- **Root cause**: `autostart/imp/tests.rs` waited for PID-file existence while shell redirection had created the file before `echo` wrote the PID.
+- **Fix**: Publish the fixture PID through a temporary file and atomic rename; production tray suspension is unchanged.
+- **Guardrail**: Never use existence of a partially written PID/readiness file as completion. Keep the actual child-survival assertion and exercise it in the full workspace.
+- **Watch points**: Launchd fixtures, process cleanup and runtime-check readiness handshakes.
+
+### Grok compatibility must preserve tool identity and argument values
+- **Symptom**: Namespaces/custom tools are rejected upstream, regex character classes fail schema validation, and strictly typed clients reject integral argument decimals.
+- **Root cause**: Native and API forwarding lacked a shared provider adapter; generic JSON floating-point parsing can round large integers or alter unrelated application data.
+- **Fix**: Shared request/JSON/SSE adapter for explicit Grok profiles and native Build; deterministic alias mapping, bounded custom-input envelopes, lexical per-call number normalization and schema-position walking.
+- **Guardrail**: Apply identity restoration to item/done/completed events and historical calls/tool choice. Test every delta cut and interleaved calls; preserve strings/fractions/exponents and schema defaults/enums. Reject unsupported grammar tools explicitly. Protobuf Struct decoders must also preserve safe integral tool values for strictly typed clients.
+- **Watch points**: `providers/grok`, Cursor protobuf values, API HTTP/adapted WS and native subscription dispatch.

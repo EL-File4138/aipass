@@ -1,5 +1,7 @@
 # Subscription and local proxy review / 订阅与本地代理审查
 
+Latest focused review: [2026-10-16 subscription comparison](subscription-review-2026-10-16.md).
+
 Current account ownership is documented in [native subscriptions](native-subscriptions.md)
 and [Claude subscriptions](claude-subscriptions.md). The dated review below records
 the earlier implementation; its managed-grant behavior has since been retired for
