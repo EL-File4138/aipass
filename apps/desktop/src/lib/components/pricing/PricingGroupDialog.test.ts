@@ -49,3 +49,15 @@ test("deleting a historical version requires confirmation and reports failures",
   await vi.waitFor(() => { flushSync(); expect(document.body.textContent).toContain("fixture failure"); });
   expect(remove).toHaveBeenCalledWith("shared", 0);
 });
+
+test("editing a group preserves the optional one hour rate including explicit zero", async () => {
+  setLocale("en");
+  const save = vi.fn();
+  const current = { ...group, versions: [{ effectiveFrom: 0, rules: [{ ...group.versions[0].rules[0], cacheCreation1hMicrosPerMillion: 0 }] }] };
+  app = mount(PricingGroupDialog, { target: document.body, props: { group: current, onSave: save } }); flushSync();
+  const price = [...document.querySelectorAll<HTMLInputElement>('input[type="number"]')].at(4)!;
+  expect(price.value).toBe("0");
+  button("Save").click(); flushSync();
+  document.querySelector<HTMLButtonElement>(".modal-footer .btn-primary")!.click();
+  await vi.waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ versions: [expect.objectContaining({ rules: [expect.objectContaining({ cacheCreation1hMicrosPerMillion: 0 })] })] }), "from_now"));
+});

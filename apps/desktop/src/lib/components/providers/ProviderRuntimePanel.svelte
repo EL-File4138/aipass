@@ -6,9 +6,10 @@
   import ProviderRuntimeDialog, { type Options, type Section } from "./ProviderRuntimeDialog.svelte";
   import { t } from "../../stores/i18n";
 
-  let { id, providerTitle = "", invokeTauri }: {
+  let { id, providerTitle = "", providerId = "", invokeTauri }: {
     id: string;
     providerTitle?: string;
+    providerId?: string;
     invokeTauri: <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
   } = $props();
   let options = $state.raw<Options | null>(null);
@@ -60,7 +61,7 @@
 </Card>
 
 {#if dialogOpen}
-  <ProviderRuntimeDialog {id} {providerTitle} {invokeTauri} {activeSection} onClose={() => (dialogOpen = false)} onSaved={saved} />
+  <ProviderRuntimeDialog {id} {providerTitle} {providerId} {invokeTauri} {activeSection} onClose={() => (dialogOpen = false)} onSaved={saved} />
 {/if}
 
 <style lang="scss">

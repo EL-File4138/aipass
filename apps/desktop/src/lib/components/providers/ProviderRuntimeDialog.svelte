@@ -1,6 +1,7 @@
 <script context="module" lang="ts">
   type Hook = { id: string; url: string; enabled: boolean; events: string[]; secret?: string | null; hasSecret?: boolean; clearSecret?: boolean };
   export type Options = {
+    subscription: { allowPaidCredits: boolean; autoResetCredits: boolean; nativeSwitch: { routeId: string; returnPreferred: boolean } | null };
     quotaTracking: boolean; quotaRefreshSeconds: number;
     proxy: { mode: string; url?: string | null; username?: string | null; password?: string | null; hasCredentials?: boolean; clearCredentials?: boolean } | null;
     balance: { url: string; post: boolean; body?: string | null; headers: [string, string | null][]; jsonPath: string; unit: string } | null;
@@ -14,8 +15,10 @@
   import { Dialog, Tabs } from "bits-ui";
   import { Bell, CircleDollarSign, Clock3, Globe, Info, Plus, Send, ShieldCheck, SlidersHorizontal, Trash2, X } from "lucide-svelte";
   import { t } from "../../stores/i18n";
+  import SubscriptionPolicyFields from "./SubscriptionPolicyFields.svelte";
   export let id: string;
   export let providerTitle = "";
+  export let providerId = "";
   export let onClose: () => void;
   export let onSaved: () => void;
   export let activeSection: Section = "quota";
@@ -116,6 +119,10 @@
                       options={[60, 120, 300, 900, 3600].map(seconds => ({ value: String(seconds), label: `${seconds / 60} ${$t("providerRuntime.minutes")}` }))}
                       onValueChange={(value) => { options!.quotaRefreshSeconds = Number(value); changed(); }} />
                   </div>
+                  {#if providerId === "codex" || providerId === "anthropic"}
+                    <SubscriptionPolicyFields {id} {providerId} policy={options.subscription} bind:busy {dirty} {invokeTauri}
+                      onChanged={changed} onSaved={onSaved} />
+                  {/if}
                 </Tabs.Content>
                 <Tabs.Content value="proxy" class="tab-content">
                   <div class="settings-section">

@@ -27,6 +27,7 @@
     output: number | undefined;
     cacheRead: number | undefined;
     cacheCreation: number | undefined;
+    cacheCreation1h: number | undefined;
   };
 
   type RuleForm = {
@@ -35,6 +36,7 @@
     output: number | undefined;
     cacheRead: number | undefined;
     cacheCreation: number | undefined;
+    cacheCreation1h: number | undefined;
     offPeak: OffPeakForm;
   };
 
@@ -69,6 +71,7 @@
       input: undefined,
       output: undefined,
       cacheRead: undefined,
+      cacheCreation1h: undefined,
       cacheCreation: undefined
     };
   }
@@ -79,6 +82,7 @@
       input: undefined,
       output: undefined,
       cacheRead: undefined,
+      cacheCreation1h: undefined,
       cacheCreation: undefined,
       offPeak: emptyOffPeak()
     };
@@ -91,6 +95,7 @@
       output: microsToUsd(rule.outputMicrosPerMillion),
       cacheRead: microsToUsd(rule.cacheReadMicrosPerMillion),
       cacheCreation: microsToUsd(rule.cacheCreationMicrosPerMillion),
+      cacheCreation1h: rule.cacheCreation1hMicrosPerMillion === undefined ? undefined : microsToUsd(rule.cacheCreation1hMicrosPerMillion),
       offPeak: rule.offPeak
         ? {
             enabled: true,
@@ -99,7 +104,8 @@
             input: microsToUsd(rule.offPeak.inputMicrosPerMillion),
             output: microsToUsd(rule.offPeak.outputMicrosPerMillion),
             cacheRead: microsToUsd(rule.offPeak.cacheReadMicrosPerMillion),
-            cacheCreation: microsToUsd(rule.offPeak.cacheCreationMicrosPerMillion)
+            cacheCreation: microsToUsd(rule.offPeak.cacheCreationMicrosPerMillion),
+            cacheCreation1h: rule.offPeak.cacheCreation1hMicrosPerMillion === undefined ? undefined : microsToUsd(rule.offPeak.cacheCreation1hMicrosPerMillion)
           }
         : emptyOffPeak()
     };
@@ -112,6 +118,7 @@
       outputMicrosPerMillion: usdToMicros(rule.output),
       cacheReadMicrosPerMillion: usdToMicros(rule.cacheRead),
       cacheCreationMicrosPerMillion: usdToMicros(rule.cacheCreation),
+      cacheCreation1hMicrosPerMillion: rule.cacheCreation1h === undefined ? undefined : usdToMicros(rule.cacheCreation1h),
       offPeak: rule.offPeak.enabled
         ? {
             startMinuteUtc: timeToMinute(rule.offPeak.start),
@@ -119,7 +126,8 @@
             inputMicrosPerMillion: usdToMicros(rule.offPeak.input),
             outputMicrosPerMillion: usdToMicros(rule.offPeak.output),
             cacheReadMicrosPerMillion: usdToMicros(rule.offPeak.cacheRead),
-            cacheCreationMicrosPerMillion: usdToMicros(rule.offPeak.cacheCreation)
+            cacheCreationMicrosPerMillion: usdToMicros(rule.offPeak.cacheCreation),
+            cacheCreation1hMicrosPerMillion: rule.offPeak.cacheCreation1h === undefined ? undefined : usdToMicros(rule.offPeak.cacheCreation1h)
           }
         : undefined
     };
@@ -141,8 +149,8 @@
 
   $: versionsDesc = [...(group?.versions ?? [])].sort((a, b) => b.effectiveFrom - a.effectiveFrom);
   $: hasVersions = Boolean(group && group.versions.length > 0);
-  function validPrices(rule: Pick<RuleForm, "input" | "output" | "cacheRead" | "cacheCreation">) {
-    return [rule.input, rule.output, rule.cacheRead, rule.cacheCreation].every(value =>
+  function validPrices(rule: Pick<RuleForm, "input" | "output" | "cacheRead" | "cacheCreation" | "cacheCreation1h">) {
+    return (rule.cacheCreation1h === undefined || (Number.isFinite(rule.cacheCreation1h) && rule.cacheCreation1h >= 0)) && [rule.input, rule.output, rule.cacheRead, rule.cacheCreation].every(value =>
       value !== undefined && Number.isFinite(value) && value >= 0 && Number.isSafeInteger(Math.round(value * 1e6)));
   }
   $: canSave = Boolean(nameDraft.trim()) && rules.length > 0
@@ -298,7 +306,7 @@
 
               <div class="price-table">
               <div class="price-columns" aria-hidden="true">
-                <span>{$t("pricing.modelPattern")}</span><span>{$t("pricing.inputPrice")}</span><span>{$t("pricing.outputPrice")}</span><span>{$t("pricing.cacheReadPrice")}</span><span>{$t("pricing.cacheCreationPrice")}</span><span></span>
+                <span>{$t("pricing.modelPattern")}</span><span>{$t("pricing.inputPrice")}</span><span>{$t("pricing.outputPrice")}</span><span>{$t("pricing.cacheReadPrice")}</span><span>{$t("pricing.cacheCreationPrice")}</span><span>{$t("pricing.cacheCreation1hPrice")}</span><span></span>
               </div>
               {#each rules as rule, index (index)}
                 <div class="rule-card">
@@ -322,6 +330,10 @@
                     <label class="field price-field">
                       <span class="field-label">{$t("pricing.cacheCreationPrice")}</span>
                       <input type="number" min="0" step="0.01" bind:value={rule.cacheCreation} />
+                    </label>
+                    <label class="field price-field">
+                      <span class="field-label">{$t("pricing.cacheCreation1hPrice")}</span>
+                      <input type="number" min="0" step="0.01" placeholder="—" bind:value={rule.cacheCreation1h} />
                     </label>
                     <button
                       type="button"
@@ -362,6 +374,10 @@
                       <label class="field price-field">
                         <span class="field-label">{$t("pricing.cacheCreationPrice")}</span>
                         <input type="number" min="0" step="0.01" bind:value={rule.offPeak.cacheCreation} />
+                      </label>
+                      <label class="field price-field">
+                        <span class="field-label">{$t("pricing.cacheCreation1hPrice")}</span>
+                        <input type="number" min="0" step="0.01" placeholder="—" bind:value={rule.offPeak.cacheCreation1h} />
                       </label>
                     </div>
                   {/if}
@@ -625,13 +641,13 @@
   .section-title { font-size: 12px; font-weight: 600; color: var(--text); margin: 0; }
   .unit-tag { color: var(--text-tertiary); font-weight: 400; }
   .price-table { overflow: hidden; border: 1px solid var(--border); border-radius: 9px; }
-  .price-columns, .rule-row { display: grid; grid-template-columns: minmax(150px, 1.6fr) repeat(4, minmax(76px, 1fr)) 28px; gap: 8px; align-items: end; }
+  .price-columns, .rule-row { display: grid; grid-template-columns: minmax(150px, 1.6fr) repeat(5, minmax(68px, 1fr)) 28px; gap: 8px; align-items: end; }
   .price-columns { padding: 10px 12px; color: var(--text-tertiary); background: var(--surface-2); font-size: 11px; white-space: nowrap; }
   .rule-card { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-top: 1px solid var(--divider); }
   .rule-row-main .field-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
   .price-field input { font-variant-numeric: tabular-nums; }
   .model-field input { font-family: var(--font-mono); }
-  .offpeak-row { grid-template-columns: repeat(2, minmax(72px, 0.7fr)) repeat(4, minmax(76px, 1fr)); padding: 12px; background: var(--surface-2); border-radius: 6px; }
+  .offpeak-row { grid-template-columns: repeat(2, minmax(104px, 1fr)) repeat(5, minmax(60px, 1fr)); padding: 12px; background: var(--surface-2); border-radius: 6px; }
   .rule-help { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 11px; color: var(--text-tertiary); line-height: 1.5; }
   .rule-help :global(svg) { flex-shrink: 0; }
 

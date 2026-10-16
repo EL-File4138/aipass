@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ModelPricingFields from "./ModelPricingFields.svelte";
   import CcSwitchImportPanel from "./CcSwitchImportPanel.svelte";
   import ControlPanelSettings from "./ControlPanelSettings.svelte";
   import { listen } from "@tauri-apps/api/event";
@@ -332,7 +333,8 @@
   }
 
   function updatePricingNumber(index: number, key: keyof Omit<ModelPricing, "model">, input: HTMLInputElement) {
-    if (validNumber(input)) updatePricing(index, { [key]: Number(input.value) });
+    if (key === "cacheCreation1hMicrosPerMillion" && input.value === "") updatePricing(index, { [key]: undefined });
+    else if (validNumber(input)) updatePricing(index, { [key]: Number(input.value) });
   }
 
   function removePricing(index: number) {
@@ -826,18 +828,7 @@
               <div class="settings-stack">
                 <p class="hint">{$t("settings.modelPricingDesc")}</p>
                 {#each serverDraft.pricing as pricing, index}
-                  <div class="pricing-row">
-                    <div class="pricing-model-row">
-                      <Field label={$t("settings.modelPrefix")}><input value={pricing.model} on:change={(event) => updatePricing(index, { model: event.currentTarget.value.trim() })} /></Field>
-                      <button type="button" class="pricing-remove" title={$t("settings.removePricing")} aria-label={$t("settings.removePricing")} on:click={() => removePricing(index)}><Trash2 size={14} /></button>
-                    </div>
-                    <div class="pricing-price-grid">
-                      <Field label={$t("settings.inputPrice")}><input type="number" min="0" value={pricing.inputMicrosPerMillion} on:change={(event) => updatePricingNumber(index, "inputMicrosPerMillion", event.currentTarget)} /></Field>
-                      <Field label={$t("settings.outputPrice")}><input type="number" min="0" value={pricing.outputMicrosPerMillion} on:change={(event) => updatePricingNumber(index, "outputMicrosPerMillion", event.currentTarget)} /></Field>
-                      <Field label={$t("settings.cacheReadPrice")}><input type="number" min="0" value={pricing.cacheReadMicrosPerMillion} on:change={(event) => updatePricingNumber(index, "cacheReadMicrosPerMillion", event.currentTarget)} /></Field>
-                      <Field label={$t("settings.cacheCreationPrice")}><input type="number" min="0" value={pricing.cacheCreationMicrosPerMillion} on:change={(event) => updatePricingNumber(index, "cacheCreationMicrosPerMillion", event.currentTarget)} /></Field>
-                    </div>
-                  </div>
+                  <ModelPricingFields {pricing} onChange={(patch) => updatePricing(index, patch)} onNumber={(key, input) => updatePricingNumber(index, key, input)} onRemove={() => removePricing(index)} />
                 {/each}
                 <div class="button-row">
                   <Button variant="ghost" size="sm" on:click={addPricing}><Plus size={13} /> {$t("settings.addPricing")}</Button>
@@ -1514,45 +1505,8 @@
     gap: 10px;
   }
 
-  .pricing-row {
-    display: grid;
-    gap: 12px;
-    padding: 12px;
-    border: 1px solid var(--divider);
-    border-radius: var(--radius);
-  }
-
-  .pricing-model-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 28px;
-    align-items: end;
-    gap: 8px;
-  }
-
-  .pricing-price-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px 12px;
-    align-items: start;
-  }
-
-  .pricing-remove {
-    display: grid;
-    place-items: center;
-    width: 28px;
-    height: 34px;
-    color: var(--text-tertiary);
-    border-radius: var(--radius-sm);
-  }
-
-  .pricing-remove:hover {
-    color: var(--danger);
-    background: color-mix(in oklab, var(--danger) 8%, transparent);
-  }
-
   @media (max-width: 560px) {
-    .server-settings-grid,
-    .pricing-price-grid {
+    .server-settings-grid {
       grid-template-columns: 1fr;
     }
     .extension-summary {

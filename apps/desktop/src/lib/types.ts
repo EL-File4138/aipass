@@ -100,6 +100,7 @@ export type ModelPricing = {
   outputMicrosPerMillion: number;
   cacheReadMicrosPerMillion: number;
   cacheCreationMicrosPerMillion: number;
+  cacheCreation1hMicrosPerMillion?: number;
 };
 
 export type UpstreamProxyMode = "system" | "direct" | "environment" | "custom";
@@ -152,6 +153,7 @@ export type PricingOffPeakWindow = {
   outputMicrosPerMillion: number;
   cacheReadMicrosPerMillion: number;
   cacheCreationMicrosPerMillion: number;
+  cacheCreation1hMicrosPerMillion?: number;
 };
 
 export type ModelPriceRule = {
@@ -160,6 +162,7 @@ export type ModelPriceRule = {
   outputMicrosPerMillion: number;
   cacheReadMicrosPerMillion: number;
   cacheCreationMicrosPerMillion: number;
+  cacheCreation1hMicrosPerMillion?: number;
   offPeak?: PricingOffPeakWindow;
 };
 

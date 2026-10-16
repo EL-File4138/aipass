@@ -965,7 +965,7 @@
         {/if}
 
         {#if !showTrash && !showArchived}
-          {#key selected.id}<ProviderRuntimePanel id={selected.id} providerTitle={selected.title} {invokeTauri} />{/key}
+          {#key selected.id}<ProviderRuntimePanel id={selected.id} providerTitle={selected.title} providerId={selected.credentialKind === "oauth" ? selected.providerId ?? "" : ""} {invokeTauri} />{/key}
         {/if}
 
         {#if selected.notes}

@@ -4,7 +4,7 @@ import { setLocale } from "../../stores/i18n";
 import Panel from "./ProviderRuntimePanel.svelte";
 let app: ReturnType<typeof mount> | undefined;
 afterEach(async () => { if (app) await unmount(app); app = undefined; await new Promise(resolve => setTimeout(resolve, 30)); document.body.innerHTML = ""; });
-const initial = { quotaTracking: true, quotaRefreshSeconds: 120, proxy: null, balance: null, webhooks: [] };
+const initial = { quotaTracking: true, quotaRefreshSeconds: 120, proxy: null, balance: null, webhooks: [], subscription: { allowPaidCredits: false, autoResetCredits: false, nativeSwitch: null } };
 function configure() { document.querySelector<HTMLButtonElement>('button[aria-label="Configure subscription and proxy"]')!.click(); flushSync(); }
 function tab(label: string) { [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(b => b.textContent?.trim() === label)!.click(); flushSync(); }
 function button(text: string) { return [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent?.trim() === text)!; }
@@ -119,4 +119,47 @@ test("a late overview read cannot replace newly saved settings", async () => {
   finish(structuredClone(initial));
   await new Promise(resolve => setTimeout(resolve, 20)); flushSync();
   expect(document.querySelector('.settings-overview')?.textContent).toContain("Not enabled");
+});
+
+test("subscription spending stays off until an explicit settings save", async () => {
+  setLocale("en");
+  const invoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+    if (command === "provider_runtime_get") return structuredClone(initial);
+    if (command === "server_config_get") return { routes: [] };
+    if (command === "provider_runtime_set") return structuredClone(args!.options);
+    throw new Error(`unexpected ${command}`);
+  });
+  app = mount(Panel, { target: document.body, props: { id: "codex-a", providerId: "codex", invokeTauri: invoke as never } });
+  configure();
+  await vi.waitFor(() => { flushSync(); expect(document.querySelectorAll('.subscription-policy [role="switch"]')).toHaveLength(3); });
+  const switches = [...document.querySelectorAll<HTMLButtonElement>('.subscription-policy [role="switch"]')];
+  expect(switches.every(s => s.getAttribute("aria-checked") === "false")).toBe(true);
+  switches[0].click(); flushSync();
+  expect(invoke.mock.calls.some(([command]) => command === "provider_runtime_set" || command === "subscription_reset")).toBe(false);
+  expect(button("Use one reset credit").disabled).toBe(true);
+  button("Save").click();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("provider_runtime_set", {
+    id: "codex-a", options: { ...initial, subscription: { ...initial.subscription, allowPaidCredits: true } }
+  }));
+});
+
+test("an explicit reset keeps the settings dialog busy until the durable outcome arrives", async () => {
+  setLocale("en");
+  let finish!: (value: {outcome: string}) => void;
+  const pending = new Promise(resolve => { finish = resolve; });
+  const invoke = vi.fn(async (command: string) => {
+    if (command === "provider_runtime_get") return structuredClone(initial);
+    if (command === "server_config_get") return { routes: [] };
+    if (command === "subscription_reset") return pending;
+    throw new Error(`unexpected ${command}`);
+  });
+  app = mount(Panel, { target: document.body, props: { id: "codex-b", providerId: "codex", invokeTauri: invoke as never } });
+  configure();
+  await vi.waitFor(() => { flushSync(); expect(button("Use one reset credit")).toBeTruthy(); });
+  button("Use one reset credit").click(); flushSync();
+  expect(invoke).toHaveBeenCalledWith("subscription_reset", { id: "codex-b" });
+  expect(document.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!.disabled).toBe(true);
+  finish({outcome:"noCredit"});
+  await vi.waitFor(() => { flushSync(); expect(document.body.textContent).toContain("No reset credits available."); });
+  expect(document.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!.disabled).toBe(false);
 });
