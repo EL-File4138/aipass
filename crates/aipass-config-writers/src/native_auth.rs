@@ -1,4 +1,11 @@
 //! Vendor credential stores. Secret bytes never belong in previews or process arguments.
+pub mod claude_identity;
+#[cfg(any(target_os = "macos", test))]
+mod keychain_cache;
+#[cfg(any(target_os = "macos", test))]
+pub use keychain_cache::invalidate_reads;
+#[cfg(not(any(target_os = "macos", test)))]
+pub fn invalidate_reads() {}
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -16,6 +23,29 @@ pub enum Resource {
 }
 
 impl Resource {
+    /// Explicit user retry is scoped to this item, never another account's ACL.
+    pub fn retry_read(&self) {
+        #[cfg(target_os = "macos")]
+        if let Self::Keychain { service, account } = self {
+            keychain_cache::invalidate_item(service, account, true);
+        }
+    }
+    fn exists(&self) -> Result<bool> {
+        match self {
+            #[cfg(target_os = "macos")]
+            Self::Keychain { service, account } => keychain_cache::exists(service, account),
+            _ => Ok(self.read()?.is_some()),
+        }
+    }
+    /// For account discovery and quota polling only. Switching/backups and
+    /// generation admission use `read`, which requires a fresh secret read.
+    pub fn read_cached(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
+        match self {
+            #[cfg(target_os = "macos")]
+            Self::Keychain { service, account } => keychain_cache::read(service, account, true),
+            _ => self.read(),
+        }
+    }
     pub fn read(&self) -> Result<Option<Zeroizing<Vec<u8>>>> {
         match self {
             Self::File(path) => match fs::symlink_metadata(path) {
@@ -66,6 +96,10 @@ impl Resource {
 
 #[cfg(target_os = "macos")]
 fn keychain_read(service: &str, account: &str) -> Result<Option<Zeroizing<Vec<u8>>>> {
+    keychain_cache::read(service, account, false)
+}
+#[cfg(target_os = "macos")]
+fn keychain_read_direct(service: &str, account: &str) -> Result<Option<Zeroizing<Vec<u8>>>> {
     match security_framework::passwords::get_generic_password(service, account) {
         Ok(v) => Ok(Some(Zeroizing::new(v))),
         Err(e) if e.code() == -25300 => Ok(None),
@@ -75,7 +109,8 @@ fn keychain_read(service: &str, account: &str) -> Result<Option<Zeroizing<Vec<u8
 #[cfg(target_os = "macos")]
 fn keychain_write(service: &str, account: &str, bytes: Option<&[u8]>) -> Result<()> {
     use security_framework::passwords::{delete_generic_password, set_generic_password};
-    match bytes {
+    keychain_cache::invalidate_item(service, account, false);
+    let result = match bytes {
         Some(v) => set_generic_password(service, account, v)
             .map_err(|_| anyhow::anyhow!("system credential write failed")),
         None => match delete_generic_password(service, account) {
@@ -83,7 +118,9 @@ fn keychain_write(service: &str, account: &str, bytes: Option<&[u8]>) -> Result<
             Err(e) if e.code() == -25300 => Ok(()),
             Err(_) => bail!("system credential removal failed"),
         },
-    }
+    };
+    keychain_cache::invalidate_item(service, account, result.is_ok());
+    result
 }
 #[cfg(not(target_os = "macos"))]
 fn keychain_read(_: &str, _: &str) -> Result<Option<Zeroizing<Vec<u8>>>> {
@@ -168,7 +205,7 @@ impl NativeStore {
             "keyring" => (keychain, Some(file)),
             // Select the actual backing store. An inaccessible keychain must not be treated as absence.
             "auto" => {
-                if keychain.read()?.is_some() {
+                if keychain.exists()? {
                     (keychain, Some(file))
                 } else {
                     (file, Some(keychain))
@@ -212,11 +249,7 @@ impl NativeStore {
             let _ = default_home;
             (file, None)
         };
-        let profile = if home == default_home {
-            home.parent().unwrap_or(home).join(".claude.json")
-        } else {
-            home.join(".claude.json")
-        };
+        let profile = claude_identity::profile_path(home, default_home);
         Ok(Self {
             tool: "claude-code".into(),
             home: home.to_owned(),
@@ -226,7 +259,18 @@ impl NativeStore {
         })
     }
     pub fn credentials(&self) -> Result<PrivateJson> {
-        let bytes = self.primary.read()?.context("native sign-in missing")?;
+        self.credentials_inner(false)
+    }
+    pub fn credentials_cached(&self) -> Result<PrivateJson> {
+        self.credentials_inner(true)
+    }
+    fn credentials_inner(&self, cached: bool) -> Result<PrivateJson> {
+        let bytes = (if cached {
+            self.primary.read_cached()
+        } else {
+            self.primary.read()
+        })?
+        .context("native sign-in missing")?;
         let value = parse(&bytes)?;
         if !value.0.is_object() {
             bail!("invalid native credential data");
@@ -267,14 +311,7 @@ impl NativeStore {
                 .read()?
                 .context("native account profile unavailable")?;
             let profile = parse(&bytes)?;
-            Ok(Some(
-                profile
-                    .0
-                    .pointer("/oauthAccount/emailAddress")
-                    .and_then(Value::as_str)
-                    .context("native account identity unavailable")?
-                    .into(),
-            ))
+            Ok(Some(claude_identity::identity(&Value::Null, &profile.0)?))
         }
     }
     pub fn expires_at(&self) -> Result<Option<i64>> {
