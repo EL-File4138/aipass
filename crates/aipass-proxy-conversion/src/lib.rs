@@ -7,8 +7,11 @@ mod reasoning;
 mod request;
 mod response;
 mod stream;
+mod usage;
 
+pub use reasoning::response_item_ciphertexts;
 pub use stream::StreamConverter;
+pub use usage::UsageAccumulator;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -46,6 +49,9 @@ pub struct TokenUsage {
     pub output_tokens: u64,
     pub cache_read_tokens: u64,
     pub cache_creation_tokens: u64,
+    /// Subset of cache creation billed at the one-hour rate.
+    #[serde(default)]
+    pub cache_creation_1h_tokens: u64,
 }
 
 #[derive(Debug, Error)]
@@ -186,6 +192,10 @@ fn extract_usage(protocol: ProxyProtocol, payload: &Value) -> TokenUsage {
             output_tokens: number(usage.get("output_tokens")),
             cache_read_tokens: number(usage.get("cache_read_input_tokens")),
             cache_creation_tokens: number(usage.get("cache_creation_input_tokens")),
+            cache_creation_1h_tokens: number(
+                usage.pointer("/cache_creation/ephemeral_1h_input_tokens"),
+            )
+            .min(number(usage.get("cache_creation_input_tokens"))),
         },
         ProxyProtocol::OpenAiResponses | ProxyProtocol::OpenAiChatCompletions => {
             let total_input =
@@ -205,6 +215,13 @@ fn extract_usage(protocol: ProxyProtocol, payload: &Value) -> TokenUsage {
                     .max(number(usage.get("completion_tokens"))),
                 cache_read_tokens: cache_read,
                 cache_creation_tokens: cache_creation,
+                cache_creation_1h_tokens: number(
+                    usage.pointer("/input_tokens_details/cache_creation_1h_tokens"),
+                )
+                .max(number(
+                    usage.pointer("/prompt_tokens_details/cache_creation_1h_tokens"),
+                ))
+                .min(cache_creation),
             }
         }
     }

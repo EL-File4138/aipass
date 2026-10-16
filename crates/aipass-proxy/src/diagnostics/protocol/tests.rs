@@ -105,7 +105,7 @@ fn split_sse_events_are_observed_once_and_valid_sequence_is_healthy() {
         .collect::<String>();
     let mut trace = ResponseTrace::default();
     let mut buffer = Vec::new();
-    let mut usage = TokenUsage::default();
+    let mut usage = UsageAccumulator::default();
     for chunk in sse.as_bytes().chunks(7) {
         observe_sse_usage_traced(
             ProxyProtocol::OpenAiResponses,

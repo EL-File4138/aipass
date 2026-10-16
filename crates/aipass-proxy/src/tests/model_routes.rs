@@ -181,6 +181,7 @@ fn binding_controls_quota_and_invalidates_cached_target_identity() {
     let mut target = test_target("http://127.0.0.1:1".into(), 0);
     target.config.model = Some("premium".into());
     target.quota = vec![QuotaWindow {
+        model_family: None,
         models: Some(vec!["premium".into()]),
         not_models: vec![],
         used_basis_points: 10_000,
@@ -215,29 +216,50 @@ fn opaque_history_retains_recorded_origin_even_when_unavailable() {
     let route = bound_route(vec![target]);
     let owner = route.targets[0].config.id;
     let proxy = start_proxy(available_addr(), route.clone());
-    let payload = json!({"input":[{"type":"reasoning","encrypted_content":"opaque"}]});
-    assert!(crate::model_routes::history_owner(
-        &proxy.state,
-        &route,
-        &payload,
-        Some("session"),
-        None
-    )
-    .is_err());
-    remember_affinity_target(&proxy.state, route.config.id, Some("session"), owner);
-    assert_eq!(
-        crate::model_routes::history_owner(&proxy.state, &route, &payload, Some("session"), None)
-            .unwrap(),
-        Some(owner)
-    );
-    assert!(crate::model_routes::history_owner(
-        &proxy.state,
-        &route,
-        &payload,
-        Some("session"),
-        Some(Uuid::new_v4())
-    )
-    .is_err());
+    for (kind, item) in [
+        (
+            "compaction",
+            json!({"type":"compaction","encrypted_content":"opaque"}),
+        ),
+        (
+            "reasoning",
+            json!({"type":"reasoning","encrypted_content":"opaque"}),
+        ),
+        (
+            "agent",
+            json!({"type":"agent_message","encrypted_content":"opaque"}),
+        ),
+        (
+            "nested",
+            json!({"type":"message","content":[{"type":"encrypted_content","data":"opaque"}]}),
+        ),
+    ] {
+        let session = format!("session-{kind}");
+        let session = session.as_str();
+        let payload = json!({"input":[item]});
+        assert!(crate::model_routes::history_owner(
+            &proxy.state,
+            &route,
+            &payload,
+            Some(session),
+            None
+        )
+        .is_err());
+        remember_affinity_target(&proxy.state, route.config.id, Some(session), owner);
+        assert_eq!(
+            crate::model_routes::history_owner(&proxy.state, &route, &payload, Some(session), None)
+                .unwrap(),
+            Some(owner)
+        );
+        assert!(crate::model_routes::history_owner(
+            &proxy.state,
+            &route,
+            &payload,
+            Some(session),
+            Some(Uuid::new_v4())
+        )
+        .is_err());
+    }
 }
 
 #[test]

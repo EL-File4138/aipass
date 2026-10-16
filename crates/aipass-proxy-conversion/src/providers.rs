@@ -5,6 +5,7 @@ pub mod commandcode;
 pub mod connect;
 pub mod cursor;
 pub mod devin;
+pub mod grok;
 pub mod kiro;
 pub mod qoder;
 pub mod zcode;
@@ -132,6 +133,12 @@ pub const DROID: &str = "You are Droid, an AI software engineering agent built b
 pub fn factory_request(wire: &str, body: &mut Value) -> Result<(), String> {
     match wire {
         "responses" => {
+            // Factory's OpenAI lane follows Droid's reasoning-model contract.
+            let object = body
+                .as_object_mut()
+                .ok_or("Factory request must be an object")?;
+            object.remove("temperature");
+            object.remove("top_p");
             let instructions = body["instructions"].as_str().unwrap_or("");
             if !instructions.starts_with(DROID) {
                 body["instructions"] = json!(if instructions.trim().is_empty() {

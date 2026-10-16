@@ -96,7 +96,7 @@ fn am_content_parts(content: Option<&Value>) -> (String, Vec<Value>) {
 /// AM usage counts cached tokens separately from `input_tokens`; OpenAI
 /// usage folds them into the input total with detail breakdowns. The output
 /// key differs per wire format (`completion_tokens` for CC).
-fn am_usage_to_openai(
+pub(crate) fn am_usage_to_openai(
     usage: Option<&Value>,
     input_key: &str,
     output_key: &str,
@@ -107,26 +107,47 @@ fn am_usage_to_openai(
     let output = number(usage.get("output_tokens"));
     let cache_read = number(usage.get("cache_read_input_tokens"));
     let cache_creation = number(usage.get("cache_creation_input_tokens"));
-    let total_input = input + cache_read + cache_creation;
-    json!({
+    let total_input = input
+        .saturating_add(cache_read)
+        .saturating_add(cache_creation);
+    let mut result = json!({
         input_key: total_input,
         output_key: output,
-        "total_tokens": total_input + output,
+        "total_tokens": total_input.saturating_add(output),
         details_key: {"cached_tokens": cache_read, "cache_creation_tokens": cache_creation},
-    })
+    });
+    if let Some(hour) = usage
+        .pointer("/cache_creation/ephemeral_1h_input_tokens")
+        .and_then(Value::as_u64)
+    {
+        result[details_key]["cache_creation_1h_tokens"] = json!(hour.min(cache_creation));
+    }
+    result
 }
 
-fn openai_usage_to_am(usage: Option<&Value>, input_key: &str, details_key: &str) -> Value {
+pub(crate) fn openai_usage_to_am(
+    usage: Option<&Value>,
+    input_key: &str,
+    details_key: &str,
+) -> Value {
     let usage = usage.cloned().unwrap_or(Value::Null);
     let total_input = number(usage.get(input_key));
     let cache_read = number(usage.pointer(&format!("/{details_key}/cached_tokens")));
     let cache_creation = number(usage.pointer(&format!("/{details_key}/cache_creation_tokens")));
-    json!({
+    let mut result = json!({
         "input_tokens": total_input.saturating_sub(cache_read).saturating_sub(cache_creation),
         "output_tokens": number(usage.get("output_tokens")).max(number(usage.get("completion_tokens"))),
         "cache_read_input_tokens": cache_read,
         "cache_creation_input_tokens": cache_creation,
-    })
+    });
+    if let Some(hour) = usage
+        .pointer(&format!("/{details_key}/cache_creation_1h_tokens"))
+        .and_then(Value::as_u64)
+    {
+        let hour = hour.min(cache_creation);
+        result["cache_creation"] = json!({"ephemeral_1h_input_tokens":hour,"ephemeral_5m_input_tokens":cache_creation-hour});
+    }
+    result
 }
 
 // --- AM -> CC -------------------------------------------------------------

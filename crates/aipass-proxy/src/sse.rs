@@ -78,9 +78,9 @@ pub(crate) fn sse_event_boundary_end(bytes: &[u8]) -> Option<usize> {
         .position(|window| window == b"\n\n")
         .map(|index| index + 2);
     let carriage_return = bytes
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .map(|index| index + 4);
+        .windows(3)
+        .position(|window| window == b"\n\r\n")
+        .map(|index| index + 3);
     match (line_feed, carriage_return) {
         (Some(left), Some(right)) => Some(left.min(right)),
         (Some(end), None) | (None, Some(end)) => Some(end),
@@ -522,7 +522,7 @@ where
     tokio::spawn(async move {
         let mut tail = Vec::new();
         let mut usage_event_buffer = Vec::new();
-        let mut observed_usage = TokenUsage::default();
+        let mut observed_usage = UsageAccumulator::default();
         let mut source_ended = false;
         let mut transport_failed = false;
         let mut protocol_completed = false;
@@ -558,7 +558,7 @@ where
                     protocol_failed |= signals.failed;
                     response_id = signals.response_id.or(response_id);
                 } else {
-                    merge_usage(&mut observed_usage, usage_from_wire_bytes(protocol, chunk));
+                    observe_usage_bytes(&mut observed_usage, protocol, chunk);
                 }
                 tail.extend_from_slice(chunk);
                 const USAGE_TAIL_LIMIT: usize = 256 * 1024;
@@ -612,7 +612,10 @@ where
                 "upstream stream ended before protocol completion".into(),
             );
         }
-        merge_usage(&mut observed_usage, usage_from_wire_bytes(protocol, &tail));
+        if !streaming {
+            observe_usage_bytes(&mut observed_usage, protocol, &tail);
+        }
+        let observed_usage = observed_usage.totals(protocol);
         if let Some(trace) = response_trace {
             trace.log(&store, record.id, "http_sse_upstream");
         }
@@ -635,6 +638,7 @@ where
         record.output_tokens = observed_usage.output_tokens;
         record.cache_read_tokens = observed_usage.cache_read_tokens;
         record.cache_creation_tokens = observed_usage.cache_creation_tokens;
+        record.cache_creation_1h_tokens = observed_usage.cache_creation_1h_tokens;
         record.estimated_cost_micros = pricing
             .as_ref()
             .map(|pricing| estimate_cost(&observed_usage, pricing))
@@ -658,6 +662,9 @@ where
 }
 
 pub(crate) fn estimate_cost(usage: &TokenUsage, pricing: &ModelPricing) -> u64 {
+    let hour = usage
+        .cache_creation_1h_tokens
+        .min(usage.cache_creation_tokens);
     let total = usage
         .input_tokens
         .saturating_mul(pricing.input_micros_per_million)
@@ -674,17 +681,31 @@ pub(crate) fn estimate_cost(usage: &TokenUsage, pricing: &ModelPricing) -> u64 {
         .saturating_add(
             usage
                 .cache_creation_tokens
+                .saturating_sub(hour)
                 .saturating_mul(pricing.cache_creation_micros_per_million),
         );
-    total / 1_000_000
+    total.saturating_add(
+        hour.saturating_mul(
+            pricing
+                .cache_creation_1h_micros_per_million
+                .unwrap_or(pricing.cache_creation_micros_per_million),
+        ),
+    ) / 1_000_000
 }
 
+#[cfg(test)]
 pub(crate) fn usage_from_wire_bytes(protocol: ProxyProtocol, bytes: &[u8]) -> TokenUsage {
+    let mut usage = UsageAccumulator::default();
+    observe_usage_bytes(&mut usage, protocol, bytes);
+    usage.totals(protocol)
+}
+
+fn observe_usage_bytes(usage: &mut UsageAccumulator, protocol: ProxyProtocol, bytes: &[u8]) {
     if let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) {
-        return usage_from_wire_value(protocol, &value);
+        usage.observe(protocol, &value);
+        return;
     }
     let text = String::from_utf8_lossy(bytes);
-    let mut total = TokenUsage::default();
     for line in text
         .lines()
         .filter_map(|line| line.strip_prefix("data:").map(str::trim))
@@ -692,28 +713,17 @@ pub(crate) fn usage_from_wire_bytes(protocol: ProxyProtocol, bytes: &[u8]) -> To
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
-        merge_usage(&mut total, usage_from_wire_value(protocol, &value));
+        usage.observe(protocol, &value);
     }
-    total
 }
 
 pub(crate) fn usage_from_wire_value(
     protocol: ProxyProtocol,
     value: &serde_json::Value,
 ) -> TokenUsage {
-    let mut usage = BuiltinConversionPlugin.extract_usage(protocol, value);
-    let nested = match protocol {
-        ProxyProtocol::OpenAiResponses => value.get("response"),
-        ProxyProtocol::AnthropicMessages => value.get("message"),
-        ProxyProtocol::OpenAiChatCompletions => None,
-    };
-    if let Some(nested) = nested {
-        merge_usage(
-            &mut usage,
-            BuiltinConversionPlugin.extract_usage(protocol, nested),
-        );
-    }
-    usage
+    let mut usage = UsageAccumulator::default();
+    usage.observe(protocol, value);
+    usage.totals(protocol)
 }
 
 #[derive(Default)]
@@ -729,7 +739,7 @@ pub(crate) fn observe_sse_usage(
     protocol: ProxyProtocol,
     buffer: &mut Vec<u8>,
     chunk: &[u8],
-    usage: &mut TokenUsage,
+    usage: &mut UsageAccumulator,
 ) -> SseSignals {
     observe_sse_usage_traced(protocol, buffer, chunk, usage, None)
 }
@@ -738,7 +748,7 @@ pub(crate) fn observe_sse_usage_traced(
     protocol: ProxyProtocol,
     buffer: &mut Vec<u8>,
     chunk: &[u8],
-    usage: &mut TokenUsage,
+    usage: &mut UsageAccumulator,
     mut trace: Option<&mut diagnostics::protocol::ResponseTrace>,
 ) -> SseSignals {
     buffer.extend_from_slice(chunk);
@@ -764,7 +774,7 @@ pub(crate) fn observe_sse_usage_traced(
                         signals.response_id = Some(id);
                     }
                 }
-                merge_usage(usage, usage_from_wire_value(protocol, &value));
+                usage.observe(protocol, &value);
             }
         }
         consumed = end;
@@ -780,11 +790,4 @@ pub(crate) fn observe_sse_usage_traced(
         buffer.clear();
     }
     signals
-}
-
-pub(crate) fn merge_usage(total: &mut TokenUsage, usage: TokenUsage) {
-    total.input_tokens = total.input_tokens.max(usage.input_tokens);
-    total.output_tokens = total.output_tokens.max(usage.output_tokens);
-    total.cache_read_tokens = total.cache_read_tokens.max(usage.cache_read_tokens);
-    total.cache_creation_tokens = total.cache_creation_tokens.max(usage.cache_creation_tokens);
 }

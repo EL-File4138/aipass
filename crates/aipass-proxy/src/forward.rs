@@ -1,4 +1,6 @@
+mod http_attempt;
 mod prepare;
+use self::http_attempt::run_http_attempt;
 use prepare::prepare_upstream_request;
 
 use super::*;
@@ -390,7 +392,7 @@ pub(crate) async fn forward_request(
 /// What the forwarding loop should do after one target attempt.
 enum AttemptDisposition {
     /// Outbound request is assembled and ready to send.
-    Dispatch(reqwest::RequestBuilder),
+    Dispatch(Box<http_attempt::Prepared>),
     /// Completed upstream response; the caller attaches the activity guard.
     Response(Response<BoxBody>),
     /// Client-visible failure returned immediately, without retrying.
@@ -500,91 +502,6 @@ async fn run_ws_attempt(
     }
 }
 
-/// Send the prepared request and turn the upstream response into the client
-/// response: classify the status, stream or buffer the body, convert and
-/// track usage. Retry dispositions carry whether generation may already have
-/// been submitted upstream.
-async fn run_http_attempt(ctx: &AttemptContext<'_>) -> AttemptDisposition {
-    if matches!(
-        ctx.target.upstream_kind,
-        UpstreamKind::ClaudeSubscription | UpstreamKind::CommunitySubscription
-    ) {
-        let backend = ctx
-            .state
-            .subscription_backend
-            .read()
-            .ok()
-            .and_then(|b| b.clone());
-        let Some(backend) = backend else {
-            return ctx.fail(None, None, false, "subscription bridge is unavailable");
-        };
-        let Some(payload) = ctx.request_json.cloned() else {
-            return AttemptDisposition::Abort(error_response(
-                StatusCode::BAD_REQUEST,
-                "subscription bridge requires JSON",
-            ));
-        };
-        let mut payload = if ctx.target.upstream_kind == UpstreamKind::CommunitySubscription {
-            payload
-        } else {
-            match BuiltinConversionPlugin.convert_request(
-                ctx.route.config.inbound_protocol,
-                if ctx.target.upstream_kind == UpstreamKind::ClaudeSubscription {
-                    ProxyProtocol::AnthropicMessages
-                } else {
-                    ProxyProtocol::OpenAiChatCompletions
-                },
-                payload,
-            ) {
-                Ok(value) => value,
-                Err(error) => {
-                    return AttemptDisposition::Abort(error_response(
-                        StatusCode::BAD_REQUEST,
-                        &error.to_string(),
-                    ))
-                }
-            }
-        };
-        if let Some(model) = &ctx.target.model_override {
-            payload["model"] = serde_json::json!(model);
-        }
-        let mut target = ctx.target.clone();
-        if target.upstream_proxy.is_none() {
-            target.upstream_proxy = ctx
-                .state
-                .config
-                .read()
-                .ok()
-                .map(|c| c.upstream_proxy.clone());
-        }
-        return match backend
-            .request_protocol(
-                target,
-                payload,
-                ctx.route.config.inbound_protocol,
-                ctx.session_key.map(str::to_owned),
-            )
-            .await
-        {
-            Ok(response) => deliver_upstream_response(ctx, response).await,
-            // A child may already have started generation. Never retry an
-            // ambiguous CLI failure on another billable account.
-            Err(error) => ctx.fail(None, None, true, error),
-        };
-    }
-    let upstream = match prepare_upstream_request(ctx).await {
-        AttemptDisposition::Dispatch(upstream) => upstream,
-        disposition => return disposition,
-    };
-    let response = match upstream.send().await {
-        Ok(response) => response,
-        // A connect failure proves no generation was submitted. A lost
-        // response or partial write does not: never replay it.
-        Err(err) => return ctx.fail(None, None, !err.is_connect(), err.to_string()),
-    };
-    deliver_upstream_response(ctx, response.into()).await
-}
-
 /// Process the upstream response body of an attempt and produce the final
 /// client-facing response, or a retry disposition.
 async fn deliver_upstream_response(
@@ -595,6 +512,25 @@ async fn deliver_upstream_response(
     let route = ctx.route;
     let target = ctx.target;
     let status = response.status;
+    if matches!(
+        target.upstream_kind,
+        UpstreamKind::ClaudeSubscription | UpstreamKind::CommunitySubscription
+    ) && response
+        .headers
+        .get("x-aipass-local-rejection")
+        .is_some_and(|v| v == "1")
+    {
+        let body = BodyExt::boxed_unsync(StreamBody::new(
+            response.body.map(|chunk| chunk.map(Frame::data)),
+        ));
+        return AttemptDisposition::Abort(
+            Response::builder()
+                .status(status)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(body)
+                .unwrap(),
+        );
+    }
     if let Ok(mut health) = state.health.lock() {
         health.entry(target.config.id).or_default().last_status = Some(status.as_u16());
     }
@@ -750,6 +686,7 @@ async fn deliver_upstream_response(
         output_tokens: 0,
         cache_read_tokens: 0,
         cache_creation_tokens: 0,
+        cache_creation_1h_tokens: 0,
         estimated_cost_micros: 0,
     };
     let mut converted_payload = None;
@@ -1062,7 +999,7 @@ pub(crate) async fn forward_request_inner(
                 .read()
                 .map_err(|_| "Claude session unavailable")?
                 .as_ref()
-                .map(|backend| backend.history_owner(payload))
+                .map(|backend| backend.history_owner_for_targets(payload, &route.targets))
                 .transpose()?
                 .flatten();
             if gemini.is_some() && claude.is_some() {
@@ -1093,7 +1030,7 @@ pub(crate) async fn forward_request_inner(
             break;
         }
         for _round in 0..silent_retry_rounds(&route.config.retry) {
-            let targets = ordered_route_targets_for_model(
+            let targets = live_route_targets_for_model(
                 &state,
                 &route,
                 session_key.as_deref(),
@@ -1284,6 +1221,7 @@ pub(crate) async fn forward_request_inner(
             output_tokens: 0,
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
+            cache_creation_1h_tokens: 0,
             estimated_cost_micros: 0,
         });
     }

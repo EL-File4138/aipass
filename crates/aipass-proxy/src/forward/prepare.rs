@@ -184,6 +184,32 @@ pub(super) async fn prepare_upstream_request(ctx: &AttemptContext<'_>) -> Attemp
             }
         }
     }
+    let grok = if target.profile == ProviderProfile::Grok {
+        let source = rewritten_payload
+            .take()
+            .or_else(|| ctx.body.bytes().cloned());
+        let prepared = source
+            .ok_or_else(|| "Grok requires a buffered JSON request".to_string())
+            .and_then(|source| {
+                serde_json::from_slice::<serde_json::Value>(&source)
+                    .map_err(|_| "Grok requires JSON".into())
+            })
+            .and_then(|mut body| {
+                aipass_proxy_conversion::providers::grok::Adapter::prepare(&mut body)
+                    .map(|adapter| (body, adapter))
+            });
+        match prepared {
+            Ok((body, adapter)) => {
+                rewritten_payload = Some(Bytes::from(body.to_string()));
+                Some(adapter)
+            }
+            Err(error) => {
+                return AttemptDisposition::Abort(error_response(StatusCode::BAD_REQUEST, &error))
+            }
+        }
+    } else {
+        None
+    };
     let payload_len = rewritten_payload
         .as_ref()
         .map_or_else(|| ctx.body.len(), |payload| payload.len() as u64);
@@ -200,10 +226,11 @@ pub(super) async fn prepare_upstream_request(ctx: &AttemptContext<'_>) -> Attemp
         }
         Err(err) => return ctx.fail(None, None, false, err.to_string()),
     }
-    AttemptDisposition::Dispatch(
-        client
+    AttemptDisposition::Dispatch(Box::new(http_attempt::Prepared {
+        request: client
             .request(ctx.method.clone(), url)
             .headers(upstream_headers)
             .body(payload),
-    )
+        grok,
+    }))
 }

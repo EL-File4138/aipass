@@ -9,6 +9,27 @@ pub struct SubscriptionResponse {
     pub headers: HeaderMap,
     pub body: SubscriptionStream,
 }
+impl SubscriptionResponse {
+    /// A local preflight rejection must not trip the vendor circuit or send the
+    /// same invalid continuation to another billable account.
+    pub fn rejected_request(status: StatusCode, message: &str) -> Self {
+        let bytes = Bytes::from(
+            serde_json::json!({"error":{"type":"invalid_request_error","message":message}})
+                .to_string(),
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
+        headers.insert("x-aipass-local-rejection", HeaderValue::from_static("1"));
+        Self {
+            status,
+            headers,
+            body: Box::pin(stream::once(async move { Ok(bytes) })),
+        }
+    }
+}
 pub trait SubscriptionBackend: Send + Sync {
     fn request_protocol(
         &self,
@@ -35,6 +56,13 @@ pub trait SubscriptionBackend: Send + Sync {
     }
     fn history_owner(&self, _payload: &serde_json::Value) -> Result<Option<Uuid>, String> {
         Ok(None)
+    }
+    fn history_owner_for_targets(
+        &self,
+        payload: &serde_json::Value,
+        _targets: &[ResolvedTarget],
+    ) -> Result<Option<Uuid>, String> {
+        self.history_owner(payload)
     }
 }
 impl From<reqwest::Response> for SubscriptionResponse {
@@ -196,10 +224,7 @@ impl SubscriptionCodec {
             };
             let mut source = convert_sse_stream(source, native, collect_protocol);
             let mut bytes = Vec::new();
-            while let Some(chunk) = tokio::time::timeout(Duration::from_secs(120), source.next())
-                .await
-                .map_err(|_| "community response idle timeout")?
-            {
+            while let Some(chunk) = source.next().await {
                 let chunk = chunk.map_err(|_| "community generation stream failed")?;
                 if bytes.len() + chunk.len() > 128 * 1024 * 1024 {
                     return Err("community generation exceeds bridge limit".into());
@@ -341,6 +366,45 @@ fn community_protocol(wire: &str) -> Result<ProxyProtocol, String> {
 mod tests {
     use super::*;
     use serde_json::{json, Value};
+    #[tokio::test(start_paused = true)]
+    async fn buffered_generation_survives_long_silent_reasoning() {
+        let (send, mut receive) = tokio::sync::mpsc::channel(1);
+        let (started, waiting) = tokio::sync::oneshot::channel();
+        let mut started = Some(started);
+        let mut response = response(String::new());
+        response.body = Box::pin(stream::poll_fn(move |cx| {
+            if let Some(started) = started.take() {
+                let _ = started.send(());
+            }
+            receive.poll_recv(cx)
+        }));
+        let task = tokio::spawn(async move {
+            SubscriptionCodec::default()
+                .normalize_protocol(
+                    response,
+                    "responses",
+                    Uuid::new_v4(),
+                    false,
+                    ProxyProtocol::OpenAiResponses,
+                )
+                .await
+        });
+        waiting.await.unwrap();
+        tokio::time::advance(std::time::Duration::from_secs(121)).await;
+        tokio::task::yield_now().await;
+        assert!(!task.is_finished());
+        // LF and CRLF are both valid line endings, including within one event.
+        let value = json!({"type":"response.completed","response":{"id":"slow","status":"completed","output":[]}});
+        send.send(Ok(Bytes::from(format!("data: {value}\n\r\n"))))
+            .await
+            .unwrap();
+        drop(send);
+        let output = collect(task.await.unwrap().unwrap()).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&output).unwrap()["id"],
+            "slow"
+        );
+    }
     fn response(text: String) -> SubscriptionResponse {
         SubscriptionResponse {
             status: StatusCode::OK,

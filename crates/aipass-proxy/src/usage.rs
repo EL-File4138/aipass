@@ -190,6 +190,8 @@ pub struct UsageRecord {
     pub output_tokens: u64,
     pub cache_read_tokens: u64,
     pub cache_creation_tokens: u64,
+    #[serde(default)]
+    pub cache_creation_1h_tokens: u64,
     pub estimated_cost_micros: u64,
 }
 
@@ -222,6 +224,7 @@ pub struct UsageRow {
     pub output_tokens: u64,
     pub cache_read_tokens: u64,
     pub cache_creation_tokens: u64,
+    pub cache_creation_1h_tokens: u64,
     pub status: u16,
     pub first_token_ms: Option<u64>,
 }
@@ -338,6 +341,18 @@ impl UsageStore {
                 )
                 .map_err(ProxyError::Sqlite)?;
         }
+        let has_hour_cache = connection
+            .prepare("PRAGMA table_info(proxy_usage)")
+            .map_err(ProxyError::Sqlite)?
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(ProxyError::Sqlite)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(ProxyError::Sqlite)?
+            .iter()
+            .any(|name| name == "cache_creation_1h_tokens");
+        if !has_hour_cache {
+            connection.execute("ALTER TABLE proxy_usage ADD COLUMN cache_creation_1h_tokens INTEGER NOT NULL DEFAULT 0", []).map_err(ProxyError::Sqlite)?;
+        }
         Self::init_diagnostics(&connection)?;
         Ok(Self {
             path,
@@ -352,7 +367,7 @@ impl UsageStore {
     pub fn record(&self, item: &UsageRecord) -> Result<(), ProxyError> {
         self.log_request(item);
         let conn = self.connection.lock().map_err(|_| ProxyError::Poisoned)?;
-        conn.execute("INSERT OR REPLACE INTO proxy_usage (id, started_at, duration_ms, first_token_ms, route_id, provider_entry_id, secret_id, model, inbound_protocol, upstream_protocol, status, attempts, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, estimated_cost_micros) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)", params![item.id.to_string(), item.started_at, item.duration_ms, item.first_token_ms, item.route_id.to_string(), item.provider_entry_id.to_string(), item.secret_id, item.model, serde_json::to_string(&item.inbound_protocol).unwrap_or_default(), serde_json::to_string(&item.upstream_protocol).unwrap_or_default(), item.status, item.attempts, item.input_tokens, item.output_tokens, item.cache_read_tokens, item.cache_creation_tokens, item.estimated_cost_micros]).map_err(ProxyError::Sqlite)?;
+        conn.execute("INSERT OR REPLACE INTO proxy_usage (id, started_at, duration_ms, first_token_ms, route_id, provider_entry_id, secret_id, model, inbound_protocol, upstream_protocol, status, attempts, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, estimated_cost_micros, cache_creation_1h_tokens) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)", params![item.id.to_string(), item.started_at, item.duration_ms, item.first_token_ms, item.route_id.to_string(), item.provider_entry_id.to_string(), item.secret_id, item.model, serde_json::to_string(&item.inbound_protocol).unwrap_or_default(), serde_json::to_string(&item.upstream_protocol).unwrap_or_default(), item.status, item.attempts, item.input_tokens, item.output_tokens, item.cache_read_tokens, item.cache_creation_tokens, item.estimated_cost_micros, item.cache_creation_1h_tokens.min(item.cache_creation_tokens)]).map_err(ProxyError::Sqlite)?;
         Ok(())
     }
 
@@ -750,7 +765,7 @@ impl UsageStore {
                 "strftime('%Y-%m-%dT%H:%M:%SZ', (started_at + {timezone_offset_seconds}) / 3600 * 3600 - {timezone_offset_seconds}, 'unixepoch')"
             ),
         };
-        let columns = format!("{bucket}, started_at, provider_entry_id, secret_id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, status, first_token_ms");
+        let columns = format!("{bucket}, started_at, provider_entry_id, secret_id, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, status, first_token_ms, cache_creation_1h_tokens");
         let sql = if since.is_some() {
             format!("SELECT {columns} FROM proxy_usage WHERE started_at >= ?1 ORDER BY started_at")
         } else {
@@ -825,6 +840,7 @@ pub(crate) fn decode_usage_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(Str
             output_tokens: row.get::<_, i64>(6)?.max(0) as u64,
             cache_read_tokens: row.get::<_, i64>(7)?.max(0) as u64,
             cache_creation_tokens: row.get::<_, i64>(8)?.max(0) as u64,
+            cache_creation_1h_tokens: row.get::<_, i64>(11)?.max(0) as u64,
             status: row.get::<_, i64>(9)?.clamp(0, u16::MAX as i64) as u16,
             first_token_ms: row
                 .get::<_, Option<i64>>(10)?
@@ -846,3 +862,6 @@ pub(crate) fn decode_attempt_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<At
             .map(|value| value.max(0) as u64),
     })
 }
+
+#[cfg(test)]
+mod ttl_tests;

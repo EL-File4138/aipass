@@ -1,5 +1,9 @@
 //! Copilot editor grants exchange sessions; CLI grants use their own integration.
 use super::*;
+pub(super) mod contract;
+pub fn cli_headers() -> HeaderMap {
+    headers(true)
+}
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -59,19 +63,9 @@ fn headers(cli: bool) -> HeaderMap {
     headers
 }
 fn trusted_api(value: &str) -> Result<String, String> {
-    let url = reqwest::Url::parse(value).map_err(|_| "invalid Copilot API endpoint")?;
-    if url.scheme() != "https"
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.port().is_some_and(|p| p != 443)
-        || !url
-            .host_str()
-            .is_some_and(|h| h == "githubcopilot.com" || h.ends_with(".githubcopilot.com"))
-    {
-        return Err("Copilot returned an untrusted API endpoint".into());
-    }
-    Ok(value.trim_end_matches('/').to_owned())
+    contract::api(Some(value), "")
 }
+
 async fn read(response: reqwest::Response) -> Result<Value, String> {
     let status = response.status();
     if !status.is_success() {
@@ -296,35 +290,7 @@ pub(crate) async fn resolve(
             return Err("model is not listed for this Copilot account".into());
         }
     }
-    extra.insert(
-        "openai-intent",
-        HeaderValue::from_static("conversation-panel"),
-    );
-    let user = body
-        .and_then(|b| b["messages"].as_array().and_then(|m| m.last()))
-        .is_some_and(|m| {
-            m["role"] == "user"
-                && !m["content"]
-                    .as_array()
-                    .is_some_and(|a| a.iter().all(|b| b["type"] == "tool_result"))
-        })
-        || body.is_some_and(|b| {
-            b["input"].is_string()
-                || b["input"]
-                    .as_array()
-                    .and_then(|i| i.last())
-                    .is_some_and(|i| i["role"] == "user")
-        });
-    extra.insert(
-        "x-initiator",
-        HeaderValue::from_static(if user { "user" } else { "agent" }),
-    );
-    if body.is_some_and(|b| {
-        let s = b.to_string();
-        s.contains("image_url") || s.contains("input_image") || s.contains("\"type\":\"image\"")
-    }) {
-        extra.insert("copilot-vision-request", HeaderValue::from_static("true"));
-    }
+    extra.extend(contract::request_headers(body.unwrap_or(&Value::Null)));
     for (name, value) in extra.iter() {
         target
             .config

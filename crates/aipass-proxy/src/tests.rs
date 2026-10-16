@@ -3,6 +3,7 @@ use std::io::{Read, Write};
 
 mod concurrency;
 mod image_api;
+mod local_proxy_review;
 mod model_routes;
 mod proxy_settings;
 mod runtime_status;
@@ -359,7 +360,7 @@ fn streaming_usage_is_extracted_incrementally_from_nested_events() {
         )
         .as_bytes();
     let mut buffer = Vec::new();
-    let mut usage = TokenUsage::default();
+    let mut usage = UsageAccumulator::default();
     for chunk in anthropic.chunks(23) {
         observe_sse_usage(
             ProxyProtocol::AnthropicMessages,
@@ -368,6 +369,7 @@ fn streaming_usage_is_extracted_incrementally_from_nested_events() {
             &mut usage,
         );
     }
+    let usage = usage.totals(ProxyProtocol::AnthropicMessages);
     assert_eq!(usage.input_tokens, 12);
     assert_eq!(usage.output_tokens, 7);
     assert_eq!(usage.cache_read_tokens, 4);
@@ -379,7 +381,7 @@ fn streaming_usage_is_extracted_incrementally_from_nested_events() {
     )
     .as_bytes();
     let mut buffer = Vec::new();
-    let mut usage = TokenUsage::default();
+    let mut usage = UsageAccumulator::default();
     let mut completed = false;
     let mut terminal = false;
     for chunk in chat.chunks(19) {
@@ -394,6 +396,7 @@ fn streaming_usage_is_extracted_incrementally_from_nested_events() {
     }
     assert!(completed);
     assert!(terminal);
+    let usage = usage.totals(ProxyProtocol::OpenAiChatCompletions);
     assert_eq!(usage.input_tokens, 9);
     assert_eq!(usage.output_tokens, 4);
 
@@ -897,6 +900,7 @@ fn usage_store_persists_records() {
             output_tokens: 2,
             cache_read_tokens: 3,
             cache_creation_tokens: 4,
+            cache_creation_1h_tokens: 0,
             estimated_cost_micros: 5,
         })
         .unwrap();
@@ -925,6 +929,7 @@ fn usage_store_can_clear_records_without_reopening_database() {
             output_tokens: 1,
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
+            cache_creation_1h_tokens: 0,
             estimated_cost_micros: 0,
         })
         .unwrap();
@@ -3094,6 +3099,7 @@ fn usage_timeseries_groups_records_by_day() {
         output_tokens: 2,
         cache_read_tokens: 0,
         cache_creation_tokens: 0,
+        cache_creation_1h_tokens: 0,
         estimated_cost_micros: 3,
     };
     let today_start = now_unix() / 86_400 * 86_400;
@@ -3156,6 +3162,7 @@ fn usage_timeseries_uses_the_requested_local_timezone() {
         output_tokens: 0,
         cache_read_tokens: 0,
         cache_creation_tokens: 0,
+        cache_creation_1h_tokens: 0,
         estimated_cost_micros: 3,
     };
     let offset_seconds = 8 * 60 * 60;
@@ -3197,6 +3204,7 @@ fn usage_timeseries_groups_the_last_24_hours_in_local_hour_buckets() {
             output_tokens: 2,
             cache_read_tokens: 3,
             cache_creation_tokens: 4,
+            cache_creation_1h_tokens: 0,
             estimated_cost_micros: 99,
         };
         for (timestamp, model) in [
@@ -3277,6 +3285,7 @@ fn usage_summary_matches_chart_periods_and_filters_attempts() {
                     output_tokens: 2,
                     cache_read_tokens: 3,
                     cache_creation_tokens: 4,
+                    cache_creation_1h_tokens: 0,
                     estimated_cost_micros: 99,
                 };
                 store.record(&record).unwrap();
@@ -3367,6 +3376,7 @@ fn usage_summary_recomputes_cost_with_injected_resolver() {
                 output_tokens: 2,
                 cache_read_tokens: 0,
                 cache_creation_tokens: 0,
+                cache_creation_1h_tokens: 0,
                 estimated_cost_micros: 0,
             }
         };
@@ -3451,6 +3461,7 @@ fn usage_summary_aggregates_attempt_health_and_first_token_latency() {
             output_tokens: 0,
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
+            cache_creation_1h_tokens: 0,
             estimated_cost_micros: 0,
         };
     store
@@ -3531,6 +3542,7 @@ fn request_stats_use_request_denominator_and_last_100_first_tokens() {
             output_tokens: 0,
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
+            cache_creation_1h_tokens: 0,
             status: if index == 0 { 502 } else { 200 },
             first_token_ms: Some(index as u64),
         });
@@ -3593,7 +3605,7 @@ fn codex_subscription_restores_nonstream_response_and_keeps_token_scope() {
     assert!(headers.starts_with("post /backend-api/codex/responses "));
     assert!(headers.contains("authorization: bearer upstream-secret"));
     assert!(headers.contains("chatgpt-account-id: workspace-1"));
-    assert!(headers.contains("session_id: conversation-1"));
+    assert!(headers.contains("session-id: conversation-1"));
     assert!(!headers.contains(token));
     let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(body["stream"], true);

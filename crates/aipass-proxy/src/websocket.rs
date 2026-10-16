@@ -132,6 +132,7 @@ pub(super) async fn handle_request(
                     break 'hold;
                 }
                 if !target.supports_websockets
+                    || target.profile == ProviderProfile::Grok
                     || target.upstream_kind != UpstreamKind::Standard
                     || target
                         .config
@@ -315,6 +316,7 @@ pub(super) async fn handle_request(
             output_tokens: 0,
             cache_read_tokens: 0,
             cache_creation_tokens: 0,
+            cache_creation_1h_tokens: 0,
             estimated_cost_micros: 0,
         });
     }
@@ -951,6 +953,7 @@ impl SessionUsage {
             output_tokens: usage.output_tokens,
             cache_read_tokens: usage.cache_read_tokens,
             cache_creation_tokens: usage.cache_creation_tokens,
+            cache_creation_1h_tokens: usage.cache_creation_1h_tokens,
             estimated_cost_micros: pricing
                 .map(|p| estimate_cost(&usage, p))
                 .unwrap_or_default(),

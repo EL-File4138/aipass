@@ -338,6 +338,40 @@ pub(crate) fn ordered_route_targets_for_model(
     targets
 }
 
+/// Keep the authenticated request snapshot, but refresh admission metadata
+/// between rejected attempts. Quota-only updates intentionally do not revoke
+/// active generations; held requests still need to see recovered allowances.
+pub(crate) fn live_route_targets_for_model(
+    state: &RuntimeState,
+    route: &ResolvedRoute,
+    session_key: Option<&str>,
+    model: Option<&str>,
+) -> Vec<ResolvedTarget> {
+    let mut snapshot = route.clone();
+    if let Ok(config) = state.config.read() {
+        if let Some(current) = config
+            .routes
+            .iter()
+            .find(|r| r.config.id == route.config.id)
+        {
+            for target in &mut snapshot.targets {
+                if let Some(latest) = current.targets.iter().find(|latest| {
+                    latest.config.id == target.config.id
+                        && latest.config.provider_entry_id == target.config.provider_entry_id
+                        && latest.config.secret_id == target.config.secret_id
+                        && tokens_match(&latest.api_key, &target.api_key)
+                }) {
+                    target.quota.clone_from(&latest.quota);
+                    target.max_concurrent_requests = latest.max_concurrent_requests;
+                    target.config.priority = latest.config.priority;
+                    target.config.weight = latest.config.weight;
+                }
+            }
+        }
+    }
+    ordered_route_targets_for_model(state, &snapshot, session_key, model)
+}
+
 pub(crate) fn round_robin_start(state: &RuntimeState, route_id: Uuid, weights: &[u32]) -> usize {
     let counter = {
         let Ok(mut counters) = state.rr_counters.lock() else {

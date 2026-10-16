@@ -5,6 +5,8 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+mod retained;
+pub use retained::PendingCall;
 
 const NAMESPACE: &str = "aipass";
 const CALL: &str = "CallDynamicTool";
@@ -198,9 +200,19 @@ fn pb_any(b: &[u8], depth: usize) -> Result<Value, String> {
         match (n, f) {
             (1, _) => return Ok(Value::Null),
             (2, Field::Fixed64(n)) => {
-                return serde_json::Number::from_f64(f64::from_bits(n))
+                let value = f64::from_bits(n);
+                // Protobuf Struct numbers are doubles, even when a tool's
+                // argument is an integer. Preserve exact integral values for
+                // clients that deserialize IDs/counts as Rust integer types.
+                if value.is_finite()
+                    && value.fract() == 0.0
+                    && value.abs() <= 9_007_199_254_740_991.0
+                {
+                    return Ok(json!(value as i64));
+                }
+                return serde_json::Number::from_f64(value)
                     .map(Value::Number)
-                    .ok_or_else(|| "invalid Cursor number".into())
+                    .ok_or_else(|| "invalid Cursor number".into());
             }
             (3, Field::Bytes(b)) => {
                 return Ok(json!(
@@ -545,6 +557,10 @@ pub struct CursorStream {
     listed: usize,
     ended: bool,
     usage: Option<Value>,
+    retained: bool,
+    parked: bool,
+    pending: Vec<PendingCall>,
+    answered: usize,
 }
 impl CursorStream {
     pub fn new(model: &str, id: &str, run: Run) -> Self {
@@ -556,6 +572,10 @@ impl CursorStream {
             listed: 0,
             ended: false,
             usage: None,
+            retained: false,
+            parked: false,
+            pending: Vec::new(),
+            answered: 0,
         }
     }
     pub fn done(&self) -> bool {
@@ -602,6 +622,11 @@ impl CursorStream {
                         for (n, f) in fields(b)? {
                             let Field::Bytes(b) = f else { continue };
                             let f = fields(b)?;
+                            if self.parked && n != 27 {
+                                return Err(
+                                    "Cursor generated output while waiting for tool results".into(),
+                                );
+                            }
                             match n {
                                 1 | 4 => {
                                     let t = field_text(&f, 1);
@@ -620,7 +645,7 @@ impl CursorStream {
                                         .checked_add(output)
                                         .ok_or("Cursor token usage overflow")?;
                                     self.usage = Some(
-                                        json!({"prompt_tokens":prompt,"completion_tokens":output,"total_tokens":total,"prompt_tokens_details":{"cached_tokens":field_int(&f,3),"cache_write_tokens":field_int(&f,4)},"completion_tokens_details":{"reasoning_tokens":field_int(&f,5)}}),
+                                        json!({"prompt_tokens":prompt,"completion_tokens":output,"total_tokens":total,"prompt_tokens_details":{"cached_tokens":field_int(&f,3),"cache_creation_tokens":field_int(&f,4)},"completion_tokens_details":{"reasoning_tokens":field_int(&f,5)}}),
                                     );
                                     if self.chat.tools == 0 {
                                         self.stop(&mut batch)?;
@@ -641,7 +666,12 @@ impl CursorStream {
                             }
                         }
                     }
-                    2 => self.exec(b, &mut batch)?,
+                    2 => {
+                        if self.parked {
+                            return Err("Cursor call arrived after its batch was sealed".into());
+                        }
+                        self.exec(b, &mut batch)?;
+                    }
                     4 => {
                         let f = fields(b)?;
                         let id = field_int(&f, 1);
@@ -658,7 +688,27 @@ impl CursorStream {
                                         };
                                         Some(bytes(2, &res))
                                     }
-                                    3 => Some(bytes(3, &[])),
+                                    3 => {
+                                        let entry = fields(b)?;
+                                        let key = field_bytes(&entry, 1)
+                                            .ok_or("Cursor blob key missing")?;
+                                        let data = field_bytes(&entry, 2).unwrap_or_default();
+                                        let total: usize = self
+                                            .blobs
+                                            .iter()
+                                            .filter(|(k, _)| k.as_slice() != key)
+                                            .map(|(k, v)| k.len() + v.len())
+                                            .sum();
+                                        if total
+                                            .saturating_add(key.len())
+                                            .saturating_add(data.len())
+                                            > 64 * 1024 * 1024
+                                        {
+                                            return Err("Cursor retained blobs exceed limit".into());
+                                        }
+                                        self.blobs.insert(key.to_vec(), data.to_vec());
+                                        Some(bytes(3, &[]))
+                                    }
                                     _ => None,
                                 };
                                 if let Some(res) = reply {
@@ -669,14 +719,42 @@ impl CursorStream {
                             }
                         }
                     }
+                    5 => {
+                        for (n, f) in fields(b)? {
+                            if let (1, Field::Bytes(cancel)) = (n, f) {
+                                let id = field_int(&fields(cancel)?, 1);
+                                if self.pending.iter().any(|call| call.request_id == id) {
+                                    return Err("Cursor cancelled a pending tool exec; late results cannot be submitted".into());
+                                }
+                            }
+                        }
+                    }
+                    7 if self.retained => return Err("unsupported Cursor interaction query".into()),
                     _ => {}
                 }
                 if self.ended {
                     break;
                 }
             }
-            if !self.ended && self.listed > 0 && self.chat.tools >= self.listed {
-                self.stop(&mut batch)?;
+            if !self.ended
+                && !self.parked
+                && self.listed > 0
+                && self.chat.tools + self.answered >= self.listed
+            {
+                if self.chat.tools + self.answered != self.listed {
+                    return Err("Cursor tool count does not match its batch".into());
+                }
+                if self.retained && self.pending.is_empty() {
+                    self.listed = 0;
+                    self.answered = 0;
+                    continue;
+                }
+                if self.retained {
+                    self.parked = true;
+                    batch.chunks.extend(self.chat.stop("tool_calls", None)?);
+                } else {
+                    self.stop(&mut batch)?;
+                }
             }
         }
         Ok(batch)
@@ -710,13 +788,27 @@ impl CursorStream {
                         }
                     }
                     let cid = field_text(&a, 3).replace('\n', "__");
-                    let cid = if cid.is_empty() {
+                    let cid = if self.retained {
+                        format!("call_aipass_cursor_{}", uuid::Uuid::new_v4().simple())
+                    } else if cid.is_empty() {
                         format!("call_{}", uuid::Uuid::new_v4().simple())
                     } else {
                         cid
                     };
                     let index = self.chat.tools;
                     self.chat.tools += 1;
+                    if self.retained {
+                        if self.pending.iter().any(|call| call.request_id == id) {
+                            return Err("duplicate Cursor exec request".into());
+                        }
+                        self.pending.push(PendingCall {
+                            id: cid.clone(),
+                            name: name.clone(),
+                            arguments: args.clone(),
+                            request_id: id,
+                            exec: exec.clone(),
+                        });
+                    }
                     batch.chunks.extend(self.chat.delta(json!({"tool_calls":[{"index":index,"id":cid,"type":"function","function":{"name":name,"arguments":args.to_string()}}]})));
                     return Ok(());
                 }
@@ -749,6 +841,9 @@ impl CursorStream {
             )
         };
         batch.outgoing.push(frame(0, &response));
+        if self.retained && !f.iter().any(|(n, _)| *n == 10) {
+            self.answered += 1;
+        }
         batch
             .outgoing
             .push(frame(0, &bytes(5, &bytes(1, &uint(1, id)))));
@@ -765,121 +860,4 @@ impl CursorStream {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn content_and_connect_failure_in_one_chunk_is_a_submitted_generation() {
-        let mut s = CursorStream::new("m", "id", request(&chat(), "m", "s").unwrap());
-        let body = [
-            frame(0, &bytes(1, &bytes(1, &string(1, "content")))),
-            frame(2, br#"{"error":{"code":"resource_exhausted"}}"#),
-        ]
-        .concat();
-        let batch = s.push(&body).unwrap();
-        assert!(batch.error.is_some());
-        assert!(!batch.chunks.is_empty());
-        assert!(s.has_output());
-    }
-    fn chat() -> Value {
-        json!({"messages":[{"role":"user","content":"hello"}],"tools":[{"type":"function","function":{"name":"search","parameters":{"type":"object"}}}]})
-    }
-    #[test]
-    fn model_family_keeps_fast_and_thinking_and_uses_nearest_effort() {
-        let raw = vec![
-            json!({"id":"grok-low","name":"Grok Low","run":"L"}),
-            json!({"id":"grok-high","name":"Grok High","run":"H"}),
-            json!({"id":"grok-high-fast","name":"Grok High Fast","run":"HF"}),
-        ];
-        assert_eq!(
-            split_model("claude-thinking-extra-high-fast"),
-            ("claude-thinking-fast".into(), "xhigh".into())
-        );
-        assert_eq!(model_id(&raw, "grok", "medium", false), "H");
-        assert_eq!(model_id(&raw, "grok", "high", true), "HF");
-    }
-    #[test]
-    fn protobuf_values_reject_lossy_large_integers() {
-        let v = json!({"flag":true,"items":[null,"text",4.5]});
-        assert_eq!(pb_any(&pb_value(&v, 0).unwrap(), 0).unwrap(), v);
-        assert!(pb_value(&json!(9007199254740993u64), 0).is_err());
-    }
-    #[test]
-    fn caller_tools_are_returned_and_foreign_execution_is_refused() {
-        let run = request(&chat(), "model", "session").unwrap();
-        let mut s = CursorStream::new("model", "id", run);
-        let unknown = bytes(2, &[uint(1, 1), bytes(11, &string(5, "shell"))].concat());
-        let out = s.push(&frame(0, &unknown)).unwrap();
-        assert_eq!(out.outgoing.len(), 2);
-        assert!(out.chunks.is_empty());
-        let args = bytes(
-            2,
-            &[
-                string(1, "q"),
-                bytes(2, &pb_value(&json!("needle"), 0).unwrap()),
-            ]
-            .concat(),
-        );
-        let call = bytes(
-            2,
-            &[
-                uint(1, 2),
-                bytes(
-                    11,
-                    &[string(5, "search"), string(3, "call_a\nfc_b"), args].concat(),
-                ),
-            ]
-            .concat(),
-        );
-        let out = s.push(&frame(0, &call)).unwrap();
-        let text = String::from_utf8(out.chunks.concat()).unwrap();
-        assert!(text.contains("call_a__fc_b"));
-        assert!(text.contains("needle"));
-        assert!(s.finish().is_err());
-        let count = bytes(1, &bytes(27, &uint(1, 1)));
-        s.push(&frame(0, &count)).unwrap();
-        s.finish().unwrap();
-    }
-    #[test]
-    fn completion_preserves_cache_and_reasoning_usage() {
-        let mut s = CursorStream::new("m", "id", request(&chat(), "m", "s").unwrap());
-        let payload = bytes(
-            1,
-            &[
-                bytes(1, &string(1, "hi")),
-                bytes(
-                    14,
-                    &[
-                        uint(1, 100),
-                        uint(2, 7),
-                        uint(3, 80),
-                        uint(4, 5),
-                        uint(5, 3),
-                    ]
-                    .concat(),
-                ),
-            ]
-            .concat(),
-        );
-        let mut out = vec![];
-        for b in frame(0, &payload) {
-            out.extend(s.push(&[b]).unwrap().chunks);
-        }
-        s.finish().unwrap();
-        let text = String::from_utf8(out.concat()).unwrap();
-        assert!(text.contains("\"prompt_tokens\":100"));
-        assert!(text.contains("\"cache_write_tokens\":5"));
-        assert!(text.contains("\"reasoning_tokens\":3"));
-    }
-    #[test]
-    fn conversation_is_session_bound_and_repairs_missing_tool_results() {
-        let mut c = chat();
-        c["messages"] = json!([{"role":"assistant","tool_calls":[{"id":"call_a","type":"function","function":{"name":"search","arguments":"{}"}}]},{"role":"user","content":"continue"}]);
-        let run = request(&c, "m", "s").unwrap();
-        assert!(run
-            .blobs
-            .values()
-            .any(|b| String::from_utf8_lossy(b).contains("interrupted")));
-        c["messages"] = json!([{"role":"tool","tool_call_id":"orphan","content":"x"}]);
-        assert!(request(&c, "m", "s").is_err());
-    }
-}
+mod tests;

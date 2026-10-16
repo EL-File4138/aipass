@@ -2,6 +2,28 @@ use super::*;
 use serde_json::{json, Value};
 
 #[test]
+fn claude_family_exhaustion_only_blocks_the_affected_model() {
+    let now = now_unix() as u64;
+    let mut target = test_target("http://127.0.0.1:1".into(), 0);
+    target.quota = vec![QuotaWindow {
+        model_family: Some("sonnet".into()),
+        models: None,
+        not_models: vec![],
+        used_basis_points: 10_000,
+        observed_at: now,
+        resets_at: Some(now + 300),
+    }];
+    for model in ["claude-sonnet-4-6", "claude-3-5-sonnet-20241022", "sonnet"] {
+        assert_eq!(target.quota_usage(now, Some(model)), Some(10_000));
+    }
+    for model in ["claude-opus-4-6", "other-sonnet-model"] {
+        assert_eq!(target.quota_usage(now, Some(model)), None);
+    }
+    assert_eq!(target.quota_usage(now, None), None);
+    assert_eq!(target.quota_usage(now + 301, Some("sonnet")), None);
+}
+
+#[test]
 fn gemini_native_generation_uses_native_path_auth_and_normalizes_response() {
     let (address,upstream)=mock_upstream("200 OK","application/json",json!({"modelVersion":"gemini-3","candidates":[{"content":{"parts":[{"text":"answer"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2,"thoughtsTokenCount":3}}).to_string());
     let mut target = conversion_target(
@@ -47,6 +69,7 @@ fn quota_order_excludes_only_fresh_exhaustion_and_affinity_stays_eligible() {
     let mut b = test_target("http://127.0.0.1:2".into(), 1);
     let mut c = test_target("http://127.0.0.1:3".into(), 2);
     a.quota = vec![QuotaWindow {
+        model_family: None,
         models: None,
         not_models: Vec::new(),
         used_basis_points: 10_000,
@@ -54,6 +77,7 @@ fn quota_order_excludes_only_fresh_exhaustion_and_affinity_stays_eligible() {
         resets_at: Some(now + 100),
     }];
     b.quota = vec![QuotaWindow {
+        model_family: None,
         models: None,
         not_models: Vec::new(),
         used_basis_points: 9_000,
@@ -61,6 +85,7 @@ fn quota_order_excludes_only_fresh_exhaustion_and_affinity_stays_eligible() {
         resets_at: None,
     }];
     c.quota = vec![QuotaWindow {
+        model_family: None,
         models: None,
         not_models: Vec::new(),
         used_basis_points: 1_000,
@@ -108,6 +133,7 @@ fn quota_scope_follows_the_effective_model_and_preserves_unrelated_models() {
     let mut target = test_target("http://127.0.0.1:1".into(), 0);
     target.quota = vec![
         QuotaWindow {
+            model_family: None,
             models: Some(vec!["premium".into()]),
             not_models: vec![],
             used_basis_points: 10_000,
@@ -115,6 +141,7 @@ fn quota_scope_follows_the_effective_model_and_preserves_unrelated_models() {
             resets_at: None,
         },
         QuotaWindow {
+            model_family: None,
             models: None,
             not_models: vec!["premium".into()],
             used_basis_points: 2_000,

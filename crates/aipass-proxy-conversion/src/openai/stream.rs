@@ -49,7 +49,7 @@ pub(crate) struct ChatToResponses {
     text: Option<usize>,
     reasoning: Option<usize>,
     refusal: Option<usize>,
-    usage: Value,
+    usage: crate::UsageAccumulator,
     finish_reason: Option<String>,
     choice: Option<u64>,
     sequence: u64,
@@ -171,7 +171,7 @@ impl ChatToResponses {
             return Ok(out);
         }
         if let Some(usage) = payload.get("usage").filter(|v| !v.is_null()) {
-            self.usage = usage.clone();
+            self.usage.update(usage);
         }
         let Some(choices) = payload.get("choices").and_then(Value::as_array) else {
             return Ok(out);
@@ -323,7 +323,7 @@ impl ChatToResponses {
             );
         }
         let incomplete = matches!(reason.as_str(), "length" | "content_filter");
-        let mut response = json!({"id":self.id, "object":"response", "model":self.model, "created_at":self.created, "status":if incomplete { "incomplete" } else { "completed" }, "output":self.output, "usage":usage(&self.usage, RS)});
+        let mut response = json!({"id":self.id, "object":"response", "model":self.model, "created_at":self.created, "status":if incomplete { "incomplete" } else { "completed" }, "output":self.output, "usage":usage(self.usage.wire(), RS)});
         if incomplete {
             response["incomplete_details"] = json!({"reason":if reason == "length" { "max_output_tokens" } else { "content_filter" }});
         }

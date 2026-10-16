@@ -47,10 +47,7 @@ fn validate_reasoning_origin(
                     && block
                         .get("signature")
                         .is_some_and(|v| v.as_str().is_some_and(|s| !s.is_empty()))
-                || kind == "reasoning"
-                    && block
-                        .get("encrypted_content")
-                        .is_some_and(|v| !v.is_null() && v.as_str() != Some(""))
+                || !crate::response_item_ciphertexts(block).is_empty()
             {
                 return Err(invalid(
                     protocol,

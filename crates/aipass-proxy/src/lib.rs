@@ -15,6 +15,11 @@
 
 mod codex;
 mod copilot;
+pub use copilot::cli_headers as copilot_cli_headers;
+pub use copilot::contract::{
+    api as copilot_api, host as copilot_host, request_headers as copilot_request_headers,
+    user_url as copilot_user_url, wire as copilot_model_wire,
+};
 mod gemini;
 mod provider;
 mod subscription;
@@ -42,6 +47,9 @@ mod util;
 mod websocket;
 
 pub use aipass_proxy_conversion::{supports, ConversionError, ProxyProtocol as Protocol};
+pub use codex::{
+    headers as codex_subscription_headers, models_url as codex_subscription_models_url,
+};
 pub use config::*;
 pub use runtime::*;
 pub use state::*;
@@ -54,6 +62,7 @@ pub use websocket::{probe_websocket, WebsocketProbeResult};
 
 pub(crate) use aipass_proxy_conversion::{
     BuiltinConversionPlugin, ConversionPlugin, ProxyProtocol, StreamConverter, TokenUsage,
+    UsageAccumulator,
 };
 pub(crate) use bytes::Bytes;
 pub(crate) use concurrency::{capacity_response, ProviderAtCapacity, ProviderPermit};

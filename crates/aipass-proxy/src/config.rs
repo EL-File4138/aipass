@@ -184,6 +184,8 @@ pub struct ModelPricing {
     pub output_micros_per_million: u64,
     pub cache_read_micros_per_million: u64,
     pub cache_creation_micros_per_million: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_creation_1h_micros_per_million: Option<u64>,
 }
 
 impl ProxyRouteConfig {

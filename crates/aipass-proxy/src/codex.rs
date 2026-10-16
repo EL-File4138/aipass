@@ -2,6 +2,7 @@
 //! These adaptations are selected by the agent's trusted credential metadata.
 
 use super::*;
+mod request;
 use serde_json::{json, Value};
 
 // Minimum catalog contract implemented by this adapter. A newer genuine client
@@ -37,7 +38,7 @@ pub(crate) fn client_version(headers: &HeaderMap) -> String {
         .to_owned()
 }
 
-pub(crate) fn models_url(base: &str, headers: &HeaderMap) -> Result<String, String> {
+pub fn models_url(base: &str, headers: &HeaderMap) -> Result<String, String> {
     let mut url = reqwest::Url::parse(&format!("{}/models", base.trim_end_matches('/')))
         .map_err(|_| "invalid Codex model endpoint".to_string())?;
     url.query_pairs_mut()
@@ -100,10 +101,14 @@ pub(crate) fn prepare(payload: Bytes) -> Result<Bytes, String> {
         "top_p",
         "user",
         "safety_identifier",
+        "prompt_cache_options",
     ] {
         object.remove(field);
     }
-    if object.get("service_tier").and_then(Value::as_str) != Some("priority") {
+    if !matches!(
+        object.get("service_tier").and_then(Value::as_str),
+        Some("priority" | "ultrafast")
+    ) {
         object.remove("service_tier");
     }
     object.insert("store".into(), json!(false));
@@ -127,13 +132,17 @@ pub(crate) fn prepare(payload: Bytes) -> Result<Bytes, String> {
             }
         }
     }
+    request::adapt(object)?;
     serde_json::to_vec(&payload)
         .map(Bytes::from)
         .map_err(|_| "could not encode Codex request".into())
 }
 
-pub(crate) fn headers(headers: &mut HeaderMap, payload: &[u8]) {
+pub fn headers(headers: &mut HeaderMap, payload: &[u8]) {
     let version = client_version(headers);
+    if let Ok(value) = HeaderValue::from_str(&format!("codex_cli_rs/{version}")) {
+        headers.insert(header::USER_AGENT, value);
+    }
     if let Ok(value) = HeaderValue::from_str(&version) {
         headers.insert("version", value);
     }
@@ -147,11 +156,13 @@ pub(crate) fn headers(headers: &mut HeaderMap, payload: &[u8]) {
     headers
         .entry("originator")
         .or_insert(HeaderValue::from_static("codex_cli_rs"));
+    headers.remove("session_id");
+    headers.remove("conversation_id");
     if let Ok(payload) = serde_json::from_slice::<Value>(payload) {
         if let Some(key) = payload.get("prompt_cache_key").and_then(Value::as_str) {
             if let Ok(value) = HeaderValue::from_str(key) {
-                headers.insert("session_id", value.clone());
-                headers.insert("conversation_id", value);
+                headers.insert("session-id", value.clone());
+                headers.insert("thread-id", value);
             }
         }
     }
@@ -218,6 +229,21 @@ pub(crate) fn collect_response(bytes: &[u8]) -> Result<Bytes, (bool, &'static st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_codex_headers_use_current_session_names_and_client_identity() {
+        let mut h = HeaderMap::new();
+        h.insert("user-agent", HeaderValue::from_static("another-client/1"));
+        h.insert("session_id", HeaderValue::from_static("old"));
+        headers(&mut h, br#"{"prompt_cache_key":"conversation-a"}"#);
+        assert_eq!(h.get("session-id").unwrap(), "conversation-a");
+        assert_eq!(h.get("thread-id").unwrap(), "conversation-a");
+        assert!(!h.contains_key("session_id"));
+        assert!(h["user-agent"]
+            .to_str()
+            .unwrap()
+            .starts_with("codex_cli_rs/"));
+    }
 
     #[test]
     fn account_catalog_preserves_capabilities_and_negotiates_version() {

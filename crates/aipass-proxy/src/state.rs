@@ -58,6 +58,8 @@ pub struct ResolvedTarget {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QuotaWindow {
+    /// Claude /usage may name a model family rather than concrete catalog IDs.
+    pub model_family: Option<String>,
     pub models: Option<Vec<String>>,
     pub not_models: Vec<String>,
     pub used_basis_points: u16,
@@ -80,9 +82,20 @@ impl ResolvedTarget {
             .iter()
             .filter(|w| {
                 let Some(model) = self.model_override.as_deref().or(model) else {
-                    return w.models.is_none() && w.not_models.is_empty();
+                    return w.models.is_none()
+                        && w.model_family.is_none()
+                        && w.not_models.is_empty();
                 };
-                w.models
+                w.model_family.as_ref().is_none_or(|family| {
+                    model.eq_ignore_ascii_case(family)
+                        || model
+                            .to_ascii_lowercase()
+                            .strip_prefix("claude-")
+                            .is_some_and(|id| {
+                                id.split('-').any(|part| part.eq_ignore_ascii_case(family))
+                            })
+                }) && w
+                    .models
                     .as_ref()
                     .is_none_or(|models| models.iter().any(|id| id.eq_ignore_ascii_case(model)))
                     && !w.not_models.iter().any(|id| id.eq_ignore_ascii_case(model))
@@ -353,6 +366,7 @@ mod quota_tests {
     #[test]
     fn stale_unknown_and_reset_quota_never_remain_exhausted() {
         let mut quota = QuotaWindow {
+            model_family: None,
             models: None,
             not_models: Vec::new(),
             used_basis_points: 10_000,

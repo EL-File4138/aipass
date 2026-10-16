@@ -11,6 +11,7 @@ pub enum ProviderProfile {
     Kimi,
     Mistral,
     GeminiCompatible,
+    Grok,
 }
 
 pub(crate) fn prepare(

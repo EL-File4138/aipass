@@ -96,10 +96,12 @@ fn has_bound_history(value: &Value) -> bool {
 }
 
 fn bound_block(value: &Value) -> bool {
+    if !aipass_proxy_conversion::response_item_ciphertexts(value).is_empty() {
+        return true;
+    }
     match value.get("type").and_then(Value::as_str) {
         Some("redacted_thinking") => true,
         Some("thinking") => value.get("signature").is_some_and(|v| !v.is_null()),
-        Some("reasoning") => value.get("encrypted_content").is_some_and(|v| !v.is_null()),
         _ => false,
     }
 }
