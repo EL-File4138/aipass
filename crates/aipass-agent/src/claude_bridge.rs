@@ -38,6 +38,10 @@ struct Run {
     entry_id: Uuid,
     owner: Uuid,
     fingerprint: [u8; 32],
+    marker: SensitiveString,
+    native_session: Uuid,
+    cli_home: Option<PathBuf>,
+    workspace: PathBuf,
     context: [u8; 32],
     model_binding: Option<String>,
     session: Option<String>,
@@ -81,6 +85,12 @@ pub(crate) struct ClaudeBridge {
     inner: Arc<Inner>,
 }
 impl ClaudeBridge {
+    pub(crate) fn active(&self, entry: Uuid) -> bool {
+        self.inner.runs.lock().map_or(true, |runs| {
+            runs.values()
+                .any(|r| r.entry_id == entry && (r.sender.is_some() || r.parked))
+        })
+    }
     pub(crate) fn new(vault: &Path) -> Self {
         let inner = Arc::new(Inner {
             runs: Mutex::new(HashMap::new()),
@@ -145,12 +155,22 @@ impl ClaudeBridge {
             }
         }
     }
+    #[cfg(all(test, unix))]
     fn open(
         &self,
         target: &ResolvedTarget,
         payload: &Value,
         session: Option<String>,
     ) -> Result<SubscriptionStream, String> {
+        self.open_report(target, payload, session)
+            .map(|(stream, _)| stream)
+    }
+    fn open_report(
+        &self,
+        target: &ResolvedTarget,
+        payload: &Value,
+        session: Option<String>,
+    ) -> Result<(SubscriptionStream, Option<String>), String> {
         if payload.to_string().len() > MAX_LINE as usize {
             return Err("Claude input exceeds bridge limit".into());
         }
@@ -171,15 +191,23 @@ impl ClaudeBridge {
         {
             return Err("Claude Code subscription requires automatic tool choice".into());
         }
+        let cache = cache::Plan::read(payload)?;
+        let mut normalized = payload.clone();
+        if !cache.client {
+            cache::strip_marks(&mut normalized);
+        }
+        let payload = &normalized;
         let messages = payload["messages"]
             .as_array()
             .ok_or("Claude messages are required")?;
         if messages.is_empty() {
             return Err("Claude messages are empty".into());
         }
-        let context = hash(
-            &json!({"model":payload["model"],"system":payload["system"],"tools":payload["tools"],"thinking":payload["thinking"],"output_config":payload["output_config"],"max_tokens":payload["max_tokens"]}),
-        );
+        let mut context = json!({"model":payload["model"],"system":payload["system"],"tools":payload["tools"],"thinking":payload["thinking"],"output_config":payload["output_config"],"max_tokens":payload["max_tokens"]});
+        if cache.client {
+            context["client_cache"] = cache.identity();
+        }
+        let context = hash(&context);
         let fingerprint: [u8; 32] = Sha256::digest(target.api_key.as_bytes()).into();
         let read_grant = || {
             let client = crate::AgentClient::for_vault(self.inner.vault.clone())
@@ -216,6 +244,12 @@ impl ClaudeBridge {
         } else {
             None
         };
+        let prefix = history_hash(&messages[..messages.len() - 1]);
+        let saved = if cli_home.is_some() {
+            checkpoint::load(&self.inner, target, context, prefix)
+        } else {
+            None
+        };
         let (sender, receiver) = tokio::sync::mpsc::channel(8);
         let mut runs = self
             .inner
@@ -233,7 +267,6 @@ impl ClaudeBridge {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let prefix = history_hash(&messages[..messages.len() - 1]);
         let key = runs
             .iter()
             .find(|(_, r)| {
@@ -272,12 +305,15 @@ impl ClaudeBridge {
             run.parked = false;
             run.history = history_hash(messages);
             run.history_messages = messages.clone();
-            return Ok(Box::pin(SegmentStream {
-                receiver,
-                inner: Arc::downgrade(&self.inner),
-                key,
-                complete: false,
-            }));
+            return Ok((
+                Box::pin(SegmentStream {
+                    receiver,
+                    inner: Arc::downgrade(&self.inner),
+                    key,
+                    complete: false,
+                }),
+                cache.report(false, !results.is_empty()),
+            ));
         }
         if !results.is_empty() {
             return Err(
@@ -304,6 +340,17 @@ impl ClaudeBridge {
         let key = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let directory =
             tempfile::tempdir().map_err(|_| "could not create isolated Claude workspace")?;
+        let workspace = if cli_home.is_some() {
+            checkpoint::workspace(&self.inner.vault)?
+        } else {
+            directory.path().to_owned()
+        };
+        let resumed = saved.as_ref().and_then(|saved| {
+            cli_home
+                .as_ref()
+                .and_then(|home| checkpoint::restore(saved, home, &workspace))
+        });
+        let native_session = resumed.unwrap_or_else(Uuid::new_v4);
         let tools = payload["tools"].as_array().map(|tools|tools.iter().map(|tool|json!({"name":tool["name"],"description":tool["description"],"inputSchema":tool["input_schema"]})).collect::<Vec<_>>()).unwrap_or_default();
         if tools.iter().any(|t| {
             t["name"].as_str().is_none_or(|n| {
@@ -344,7 +391,6 @@ impl ClaudeBridge {
                 "--strict-mcp-config",
                 "--setting-sources",
                 "",
-                "--no-session-persistence",
             ])
             .arg("--model")
             .arg(
@@ -356,10 +402,20 @@ impl ClaudeBridge {
             .arg(mcp.to_string())
             .arg("--allowedTools")
             .arg("mcp__aipass__*")
-            .current_dir(directory.path())
+            .current_dir(&workspace)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
+        if cli_home.is_none() {
+            command.arg("--no-session-persistence");
+        } else if let Some(session) = resumed {
+            command
+                .arg("--resume")
+                .arg(session.to_string())
+                .arg("--fork-session");
+        } else {
+            command.arg("--session-id").arg(native_session.to_string());
+        }
         if let Some(system) = payload.get("system").filter(|v| !v.is_null()) {
             let system = system
                 .as_str()
@@ -377,6 +433,7 @@ impl ClaudeBridge {
             command.arg("--effort").arg(effort);
         }
         crate::claude_cli::configure(&mut command, directory.path());
+        command.current_dir(&workspace);
         if let Some(environment) = target
             .upstream_proxy
             .as_ref()
@@ -398,11 +455,12 @@ impl ClaudeBridge {
         }
         command.env_remove("CLAUDE_CODE_SIMPLE");
         command.env_remove("CLAUDE_CONFIG_DIR");
+        cache.configure(&mut command)?;
         command.env("CLAUDE_CONFIG_DIR", directory.path());
         // The genuine CLI reads and rotates its own grant in place. The temp
         // workspace contains only tool capabilities and is never a grant holder.
-        if let Some(home) = cli_home {
-            crate::claude_cli::account_environment(&mut command, &home);
+        if let Some(home) = &cli_home {
+            crate::claude_cli::account_environment(&mut command, home);
         } else {
             #[cfg(test)]
             command.env("CLAUDE_CODE_OAUTH_TOKEN", &target.api_key);
@@ -430,6 +488,10 @@ impl ClaudeBridge {
             entry_id: target.config.provider_entry_id,
             owner: target.config.id,
             fingerprint,
+            marker: SensitiveString::new(&target.api_key),
+            native_session,
+            cli_home,
+            workspace,
             context,
             model_binding: target.config.model.clone(),
             session,
@@ -447,8 +509,9 @@ impl ClaudeBridge {
             parked: false,
             terminal: false,
         };
-        let prompt = if messages.len() == 1 && messages[0]["role"] == "user" {
-            messages[0]["content"].clone()
+        let prompt = if resumed.is_some() || (messages.len() == 1 && messages[0]["role"] == "user")
+        {
+            messages.last().unwrap()["content"].clone()
         } else {
             json!([{ "type":"text", "text":format!("Continue this conversation, preserving its tool results and user instructions:\n{}",json!(messages)) }])
         };
@@ -458,36 +521,64 @@ impl ClaudeBridge {
         let weak = Arc::downgrade(&self.inner);
         let reader_key = key.clone();
         std::thread::spawn(move || read_events(stdout, weak, reader_key));
-        Ok(Box::pin(SegmentStream {
-            receiver,
-            inner: Arc::downgrade(&self.inner),
-            key,
-            complete: false,
-        }))
+        let full_replay = resumed.is_none() && messages.len() > 1;
+        Ok((
+            Box::pin(SegmentStream {
+                receiver,
+                inner: Arc::downgrade(&self.inner),
+                key,
+                complete: false,
+            }),
+            cache.report(full_replay, false),
+        ))
     }
 }
 impl SubscriptionBackend for ClaudeBridge {
     fn history_owner(&self, payload: &Value) -> Result<Option<Uuid>, String> {
-        let ids = aipass_proxy::subscription_history_call_ids(payload);
-        let runs = self
-            .inner
-            .runs
-            .lock()
-            .map_err(|_| "Claude bridge unavailable")?;
-        let mut owner = None;
-        for id in ids
+        let ids = aipass_proxy::subscription_history_call_ids(payload)
             .into_iter()
             .filter(|id| id.starts_with("toolu_aipass_claude_"))
-        {
-            let target = runs
-                .values()
-                .find(|r| r.calls.iter().any(|c| c.id == id))
-                .map(|r| r.owner)
-                .ok_or("Claude tool session expired; restart the conversation")?;
-            if owner.is_some_and(|owner| owner != target) {
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let (mut owner, unknown) = {
+            let runs = self
+                .inner
+                .runs
+                .lock()
+                .map_err(|_| "Claude bridge unavailable")?;
+            let mut owner = None;
+            let mut unknown = Vec::new();
+            for id in ids {
+                let target = runs
+                    .values()
+                    .find(|r| {
+                        r.calls.iter().any(|c| c.id == id)
+                            || aipass_proxy::subscription_history_call_ids(
+                                &json!({"messages":r.history_messages}),
+                            )
+                            .contains(&id.as_str())
+                    })
+                    .map(|r| r.owner);
+                if let Some(target) = target {
+                    if owner.is_some_and(|owner| owner != target) {
+                        return Err("Claude history mixes accounts".into());
+                    }
+                    owner = Some(target);
+                } else {
+                    unknown.push(id);
+                }
+            }
+            (owner, unknown)
+        };
+        if !unknown.is_empty() {
+            let saved: Option<Uuid> = crate::AgentClient::for_vault(self.inner.vault.clone())
+                .map_err(|_| "Claude tool session expired; restart the conversation")?
+                .request(&AgentRequest::ClaudeSessionOwner {call_ids:unknown})
+                .map_err(|_| "Claude tool session expired or history mixes accounts; restart the conversation")?;
+            if owner.is_some() && saved != owner {
                 return Err("Claude history mixes accounts".into());
             }
-            owner = Some(target);
+            owner = saved;
         }
         Ok(owner)
     }
@@ -520,12 +611,25 @@ impl SubscriptionBackend for ClaudeBridge {
     ) -> SubscriptionFuture {
         let bridge = self.clone();
         Box::pin(async move {
+            if let Err(error) = cache::Plan::read(&payload) {
+                return Ok(SubscriptionResponse::rejected_request(
+                    hyper::StatusCode::BAD_REQUEST,
+                    &error,
+                ));
+            }
             let streaming = payload["stream"] == true;
-            let mut stream =
-                tokio::task::spawn_blocking(move || bridge.open(&target, &payload, session))
+            let (mut stream, cache_report) =
+                tokio::task::spawn_blocking(move || bridge.open_report(&target, &payload, session))
                     .await
                     .map_err(|_| "Claude process task failed")??;
             let mut headers = hyper::HeaderMap::new();
+            if let Some(report) = cache_report {
+                headers.insert(
+                    "x-aipass-cache-marks-dropped",
+                    hyper::header::HeaderValue::from_str(&report)
+                        .map_err(|_| "invalid cache report")?,
+                );
+            }
             if streaming {
                 headers.insert(
                     hyper::header::CONTENT_TYPE,
@@ -633,6 +737,9 @@ fn tool_result(value: &Value) -> Result<Value, String> {
     Ok(json!({"content":content,"isError":value["is_error"]==true}))
 }
 
+mod cache;
+mod checkpoint;
+mod feedback;
 mod mcp;
 mod native;
 mod stream;

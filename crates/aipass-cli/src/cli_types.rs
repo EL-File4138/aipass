@@ -500,6 +500,28 @@ pub enum SecretCommand {
 
 #[derive(Subcommand)]
 pub enum AccountsCommand {
+    /// Read or update this subscription's explicit account policy.
+    Policy {
+        id: Uuid,
+        #[arg(long)]
+        allow_paid_credits: Option<bool>,
+        #[arg(long)]
+        auto_reset_credits: Option<bool>,
+        #[arg(long, conflicts_with = "disable_native_switch")]
+        native_group: Option<Uuid>,
+        #[arg(long)]
+        disable_native_switch: bool,
+        #[arg(long)]
+        return_preferred: Option<bool>,
+    },
+    /// Spend one available Codex allowance reset credit. Retries reuse an unfinished operation.
+    Reset {
+        id: Uuid,
+        #[arg(long)]
+        credit_id: Option<String>,
+        #[arg(long)]
+        request_id: Option<Uuid>,
+    },
     /// Connect supported subscriptions from this device's existing vendor stores.
     Import {
         #[arg(long = "provider")]

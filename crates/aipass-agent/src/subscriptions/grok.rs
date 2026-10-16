@@ -95,40 +95,7 @@ pub(super) async fn usage(c: &mut Context) -> Result<Value> {
     Ok(json!({"windows":windows}))
 }
 pub(super) async fn generate(c: &mut Context, _: &Value, mut body: Value) -> Result<()> {
-    let allowed = [
-        "function",
-        "web_search",
-        "x_search",
-        "image_generation",
-        "collections_search",
-        "file_search",
-        "code_execution",
-        "code_interpreter",
-        "mcp",
-        "shell",
-        "tool_search",
-    ];
-    for t in body["tools"].as_array_mut().into_iter().flatten() {
-        if !allowed.contains(&s(t, "type")) {
-            return Err("Grok does not support this tool type; use a function tool".into());
-        }
-        if let Some(o) = t.as_object_mut() {
-            o.remove("external_web_access");
-        }
-    }
-    for item in body["input"].as_array_mut().into_iter().flatten() {
-        if item["type"] == "reasoning" && item["content"].is_null() {
-            if let Some(o) = item.as_object_mut() {
-                o.remove("content");
-            }
-        }
-    }
-    let req = sign(c, c.client.post(format!("{BASE}/responses")))?
-        .header("x-grok-model-override", s(&body, "model"))
-        .header(
-            "x-grok-conv-id",
-            body["prompt_cache_key"].as_str().unwrap_or(&c.session),
-        )
-        .json(&body);
-    c.pipe(send(req).await?).await
+    let mut adapter = aipass_proxy_conversion::providers::grok::Adapter::prepare(&mut body)?;
+    let req = sign(c, c.client.post(format!("{BASE}/responses")))?.json(&body);
+    c.converted(send(req).await?, &mut adapter).await
 }

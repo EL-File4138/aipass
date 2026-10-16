@@ -29,6 +29,7 @@ pub(crate) fn spawn_token_refresh(state: Arc<crate::session::AgentState>) {
                 );
             }
             crate::community::refresh_due(&state);
+            crate::tool_switch::refresh_automatic(&state);
             let _ = crate::provider_runtime::refresh(&state, &mut cache);
         }
     });

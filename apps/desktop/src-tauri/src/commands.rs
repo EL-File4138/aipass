@@ -1,3 +1,4 @@
+mod provider_runtime;
 use crate::auth_tasks::{
     auth_task_status_response, finish_vault_create_task, finish_vault_unlock_task,
     prune_auth_tasks, set_auth_task_state, VaultAuthTaskStartResponse, VaultAuthTaskState,
@@ -27,6 +28,7 @@ use aipass_provider_registry::{GatewayMetadata, OAuthProvider, QuotaInfo, Subscr
 use aipass_proxy::{ProxyConfig, ProxyStatus};
 use aipass_sync::SyncReport;
 use aipass_vault::{DeviceRecord, EntrySummary};
+pub(crate) use provider_runtime::*;
 use serde::de::DeserializeOwned;
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
@@ -1275,37 +1277,6 @@ pub(crate) async fn sync_discard_conflict(
     )
     .await?;
     Ok(())
-}
-
-#[tauri::command]
-pub(crate) async fn provider_runtime_get(
-    app: AppHandle,
-    id: Uuid,
-) -> Result<aipass_agent_protocol::ProviderRuntimeOptions, String> {
-    agent_request_async(app, AgentRequest::ProviderRuntimeGet { id }).await
-}
-#[tauri::command]
-pub(crate) async fn provider_runtime_set(
-    app: AppHandle,
-    id: Uuid,
-    options: aipass_agent_protocol::ProviderRuntimeOptions,
-) -> Result<aipass_agent_protocol::ProviderRuntimeOptions, String> {
-    agent_request_async(app, AgentRequest::ProviderRuntimeSet { id, options }).await
-}
-#[tauri::command]
-pub(crate) async fn provider_runtime_probe(
-    app: AppHandle,
-    id: Uuid,
-) -> Result<serde_json::Value, String> {
-    agent_request_async(app, AgentRequest::ProviderRuntimeProbe { id }).await
-}
-#[tauri::command]
-pub(crate) async fn provider_webhook_test(
-    app: AppHandle,
-    id: Uuid,
-    webhook_id: Uuid,
-) -> Result<(), String> {
-    agent_request_async(app, AgentRequest::ProviderWebhookTest { id, webhook_id }).await
 }
 
 #[tauri::command]

@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 pub fn tool_definitions() -> Vec<Value> {
-    vec![
+    let mut tools = vec![
         json!({
             "name": "proxy_status",
             "description": "Get the current status of the proxy server",
@@ -563,5 +563,7 @@ pub fn tool_definitions() -> Vec<Value> {
                 "required": ["route_id", "target_id"]
             }
         }),
-    ]
+    ];
+    tools.extend(crate::subscription::tools());
+    tools
 }

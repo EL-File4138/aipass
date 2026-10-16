@@ -454,6 +454,7 @@ fn newapi_model_rule(model: &Value, group_name: &str, group_ratio: f64) -> Optio
         output_micros_per_million: rounded_price(input * completion),
         cache_read_micros_per_million: rounded_price(input * cache),
         cache_creation_micros_per_million: rounded_price(input * cache_creation),
+        cache_creation_1h_micros_per_million: None,
         off_peak: None,
     })
 }
@@ -474,165 +475,8 @@ fn rounded_price(value: f64) -> u64 {
     }
 }
 
-/// Recompute the cost of a single usage row at query time. Group rules win
-/// when the credential is assigned to a group with a matching version/rule;
-/// otherwise per-config overrides win over the official list prices. A
-/// credential multiplier applies in every branch.
-#[allow(clippy::too_many_arguments)]
-pub fn resolve_cost(
-    config: &PricingConfig,
-    overrides: &[ModelPricing],
-    list_prices: &[ModelPriceRule],
-    entry_id: Uuid,
-    secret_id: &str,
-    model: Option<&str>,
-    started_at: i64,
-    input_tokens: u64,
-    output_tokens: u64,
-    cache_read_tokens: u64,
-    cache_creation_tokens: u64,
-) -> u64 {
-    let assignment = config
-        .assignments
-        .iter()
-        .find(|item| item.entry_id == entry_id && item.secret_id == secret_id);
-    let group_cost = assignment
-        .and_then(|item| item.group_id)
-        .and_then(|group_id| config.groups.iter().find(|group| group.id == group_id))
-        .and_then(|group| {
-            group
-                .versions
-                .iter()
-                .rev()
-                .find(|version| version.effective_from <= started_at)
-        })
-        .and_then(|version| model.and_then(|model| find_rule(&version.rules, model)))
-        .map(|rule| {
-            rule_cost(
-                rule,
-                started_at,
-                input_tokens,
-                output_tokens,
-                cache_read_tokens,
-                cache_creation_tokens,
-            )
-        });
-    let base = group_cost.unwrap_or_else(|| {
-        model
-            .and_then(|model| {
-                overrides
-                    .iter()
-                    .filter(|item| item.model == model || model.starts_with(&item.model))
-                    .max_by_key(|item| item.model.len())
-            })
-            .map(|pricing| {
-                tokens_cost(
-                    pricing.input_micros_per_million,
-                    pricing.output_micros_per_million,
-                    pricing.cache_read_micros_per_million,
-                    pricing.cache_creation_micros_per_million,
-                    input_tokens,
-                    output_tokens,
-                    cache_read_tokens,
-                    cache_creation_tokens,
-                )
-            })
-            .or_else(|| {
-                model
-                    .and_then(|model| find_rule(list_prices, model))
-                    .map(|rule| {
-                        rule_cost(
-                            rule,
-                            started_at,
-                            input_tokens,
-                            output_tokens,
-                            cache_read_tokens,
-                            cache_creation_tokens,
-                        )
-                    })
-            })
-            .unwrap_or(0)
-    });
-    let multiplier = assignment.map(|item| item.multiplier).unwrap_or(1.0);
-    if multiplier == 1.0 {
-        return base;
-    }
-    let scaled = base as f64 * multiplier;
-    if scaled.is_finite() && scaled > 0.0 {
-        scaled.round() as u64
-    } else {
-        0
-    }
-}
-
-fn find_rule<'a>(rules: &'a [ModelPriceRule], model: &str) -> Option<&'a ModelPriceRule> {
-    rules
-        .iter()
-        .filter(|rule| rule.model == model || model.starts_with(&rule.model))
-        .max_by_key(|rule| rule.model.len())
-}
-
-fn rule_cost(
-    rule: &ModelPriceRule,
-    started_at: i64,
-    input_tokens: u64,
-    output_tokens: u64,
-    cache_read_tokens: u64,
-    cache_creation_tokens: u64,
-) -> u64 {
-    let (input, output, cache_read, cache_creation) = match &rule.off_peak {
-        Some(window) if off_peak_contains(window, started_at) => (
-            window.input_micros_per_million,
-            window.output_micros_per_million,
-            window.cache_read_micros_per_million,
-            window.cache_creation_micros_per_million,
-        ),
-        _ => (
-            rule.input_micros_per_million,
-            rule.output_micros_per_million,
-            rule.cache_read_micros_per_million,
-            rule.cache_creation_micros_per_million,
-        ),
-    };
-    tokens_cost(
-        input,
-        output,
-        cache_read,
-        cache_creation,
-        input_tokens,
-        output_tokens,
-        cache_read_tokens,
-        cache_creation_tokens,
-    )
-}
-
-fn off_peak_contains(window: &OffPeakWindow, started_at: i64) -> bool {
-    let minute = (started_at.rem_euclid(86_400) / 60) as u16;
-    if window.start_minute_utc <= window.end_minute_utc {
-        minute >= window.start_minute_utc && minute < window.end_minute_utc
-    } else {
-        minute >= window.start_minute_utc || minute < window.end_minute_utc
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn tokens_cost(
-    input_micros: u64,
-    output_micros: u64,
-    cache_read_micros: u64,
-    cache_creation_micros: u64,
-    input_tokens: u64,
-    output_tokens: u64,
-    cache_read_tokens: u64,
-    cache_creation_tokens: u64,
-) -> u64 {
-    input_tokens
-        .saturating_mul(input_micros)
-        .saturating_add(output_tokens.saturating_mul(output_micros))
-        .saturating_add(cache_read_tokens.saturating_mul(cache_read_micros))
-        .saturating_add(cache_creation_tokens.saturating_mul(cache_creation_micros))
-        / 1_000_000
-}
+mod cost;
+pub use cost::{resolve_cost, resolve_row_cost};
 
 #[cfg(test)]
 mod tests {
@@ -847,6 +691,7 @@ mod tests {
             output_micros_per_million: output,
             cache_read_micros_per_million: 0,
             cache_creation_micros_per_million: 0,
+            cache_creation_1h_micros_per_million: None,
             off_peak: None,
         }
     }
@@ -952,6 +797,7 @@ mod tests {
             output_micros_per_million: 0,
             cache_read_micros_per_million: 0,
             cache_creation_micros_per_million: 0,
+            cache_creation_1h_micros_per_million: None,
         });
         let group = PricingGroup {
             manual: false,
@@ -1056,6 +902,7 @@ mod tests {
             output_micros_per_million: 0,
             cache_read_micros_per_million: 0,
             cache_creation_micros_per_million: 0,
+            cache_creation_1h_micros_per_million: None,
         }];
         let list = vec![rule("gpt-x", 9_000_000, 0)];
         assert_eq!(
@@ -1091,6 +938,7 @@ mod tests {
             output_micros_per_million: 15_000_000,
             cache_read_micros_per_million: 300_000,
             cache_creation_micros_per_million: 3_750_000,
+            cache_creation_1h_micros_per_million: None,
             off_peak: None,
         }];
         // input_tokens is normalized to exclude cache reads and creation.

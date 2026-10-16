@@ -2,7 +2,25 @@
 use super::*;
 
 pub(super) fn operation(op: &str, account: &Account) -> Value {
-    json!({"op":op,"provider":account.provider,"auth":serde_json::from_str::<Value>(account.auth.expose()).unwrap_or(Value::Null),"models":account.models,"nativeMethod":account.native_method})
+    json!({"op":op,"provider":account.provider,"auth":serde_json::from_str::<Value>(account.auth.expose()).unwrap_or(Value::Null),"models":account.models,"nativeMethod":account.native_method,"feedback":account.feedback})
+}
+impl CommunityBridge {
+    pub(super) fn initial_operation(
+        &self,
+        op: &str,
+        account: &Account,
+        id: Uuid,
+    ) -> Result<Value, String> {
+        let policy: aipass_agent_protocol::SubscriptionPolicy =
+            crate::AgentClient::for_vault(self.inner.vault_dir.clone())
+                .map_err(|_| "Agent unavailable")?
+                .request(&AgentRequest::SubscriptionPolicyRead { entry_id: id })
+                .map_err(|_| "Subscription preferences are unavailable")?;
+        let mut initial = operation(op, account);
+        initial["policy"] =
+            serde_json::to_value(policy).map_err(|_| "Invalid subscription policy")?;
+        Ok(initial)
+    }
 }
 type BodyItem = Result<Bytes, Box<dyn std::error::Error + Send + Sync>>;
 pub(super) struct GenerationOutput {
@@ -134,9 +152,36 @@ impl SubscriptionBackend for CommunityBridge {
         })
     }
     fn history_owner(&self, payload: &Value) -> Result<Option<Uuid>, String> {
-        self.inner.codec.history_owner(payload)
+        self.history_owner_for_targets(payload, &[])
+    }
+    fn history_owner_for_targets(
+        &self,
+        payload: &Value,
+        targets: &[ResolvedTarget],
+    ) -> Result<Option<Uuid>, String> {
+        let mut owner = self.inner.codec.history_owner(payload)?;
+        let cursor_owner = crate::subscriptions::cursor::history_owner(payload, targets)?;
+        if owner.is_some() && cursor_owner.is_some() && owner != cursor_owner {
+            return Err("Subscription history mixes accounts".into());
+        }
+        owner = owner.or(cursor_owner);
+        let digests = super::history::digests(payload);
+        if !digests.is_empty() {
+            let saved: Option<Uuid> = crate::AgentClient::for_vault(self.inner.vault_dir.clone())
+                .map_err(|_| "Encrypted subscription history is unavailable")?
+                .request(&AgentRequest::SubscriptionHistoryOwner {digests, targets:targets.iter().map(|t| t.config.id).collect()})
+                .map_err(|_| "Encrypted subscription history is unavailable or mixes accounts; start a new conversation")?;
+            if owner.is_some() && owner != saved {
+                return Err("Subscription history mixes accounts".into());
+            }
+            owner = saved;
+        }
+        Ok(owner)
     }
     fn revoke(&self) {
+        if let Ok(owners) = self.inner.owners.lock() {
+            crate::subscriptions::cursor::revoke_owners(&owners.keys().copied().collect());
+        }
         if let Ok(mut recovery) = self.inner.recovery.lock() {
             recovery.epoch = recovery.epoch.wrapping_add(1);
             recovery.pending.clear();
@@ -154,18 +199,24 @@ impl SubscriptionBackend for CommunityBridge {
         }
     }
     fn retain_targets(&self, targets: &[&ResolvedTarget]) -> Vec<Uuid> {
+        // A parked Cursor Run outlives its request adapter. Reconcile the
+        // retained connection even when that adapter's Weak pointer is gone.
+        crate::subscriptions::cursor::retain_targets(targets);
         let mut ids: HashSet<Uuid> = targets
             .iter()
             .filter(|t| t.upstream_kind == UpstreamKind::CommunitySubscription)
             .map(|t| t.config.id)
             .collect();
         if let Ok(mut owners) = self.inner.owners.lock() {
+            let previous: HashSet<Uuid> = owners.keys().copied().collect();
             owners.retain(|id, generation| {
                 targets.iter().any(|t| {
                     t.config.id == *id && t.api_key == format!("aipass:community:{generation}")
                 })
             });
             ids.retain(|id| owners.contains_key(id));
+            let removed = previous.difference(&ids).copied().collect();
+            crate::subscriptions::cursor::revoke_owners(&removed);
         }
         self.inner.codec.retain_targets(&ids);
         if let Ok(mut runs) = self.inner.runs.lock() {
@@ -180,6 +231,9 @@ impl SubscriptionBackend for CommunityBridge {
                             && t.upstream_proxy == old.upstream_proxy
                             && t.upstream_kind == old.upstream_kind
                     }) {
+                        crate::subscriptions::cursor::revoke_owners(&HashSet::from([old
+                            .config
+                            .id]));
                         p.kill();
                         return false;
                     }
@@ -232,8 +286,15 @@ impl SubscriptionBackend for Dispatch {
         ids
     }
     fn history_owner(&self, p: &Value) -> Result<Option<Uuid>, String> {
+        self.history_owner_for_targets(p, &[])
+    }
+    fn history_owner_for_targets(
+        &self,
+        p: &Value,
+        targets: &[ResolvedTarget],
+    ) -> Result<Option<Uuid>, String> {
         let a = self.claude.history_owner(p)?;
-        let b = self.community.history_owner(p)?;
+        let b = self.community.history_owner_for_targets(p, targets)?;
         if a.is_some() && b.is_some() && a != b {
             Err("conversation mixes subscription accounts".into())
         } else {

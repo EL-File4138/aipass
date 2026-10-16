@@ -453,11 +453,15 @@ pub(super) async fn usage(c: &mut Context) -> Result<Value> {
     }
     Ok(json!({"plan":c.auth["plan"],"windows":windows}))
 }
-async fn agent_url(c: &Context) -> String {
-    if let Ok(v) = unary(
-        c,
-        "aiserver.v1.ServerConfigService/GetServerConfig",
-        c.token().unwrap_or(""),
+async fn agent_url_transport(client: &Client, token: &str) -> String {
+    if let Ok(v) = json_request(
+        headers(
+            client.post(format!(
+                "{API}/aiserver.v1.ServerConfigService/GetServerConfig"
+            )),
+            token,
+        )
+        .json(&json!({})),
     )
     .await
     {
@@ -489,96 +493,23 @@ async fn error(c: &mut Context, status: u16, message: &str) -> Result<()> {
     .await?;
     c.emit(json!({"type":"end"})).await
 }
+mod pool;
+pub(crate) use pool::{history_owner, retain_targets, revoke_owners};
 pub(super) async fn generate(c: &mut Context, m: &Value, body: Value) -> Result<()> {
-    let raw = m["cursor_models"].as_array().cloned().unwrap_or_default();
-    let id = codec::model_id(
-        &raw,
-        s(&body, "model"),
-        s(&body, "reasoning_effort"),
-        matches!(s(&body, "service_tier"), "priority" | "fast"),
-    );
-    let mut base = agent_url(c).await;
-    for attempt in 0..2 {
-        let run = codec::request(&body, &id, &c.session)?;
-        let (tx, response) = open(c, &base, run.first.clone()).await?;
-        let mut converter =
-            codec::CursorStream::new(s(&body, "model"), &format!("chatcmpl-{}", hex_id()), run);
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let data = read_bytes(response, LIMIT).await?;
-            let v =
-                serde_json::from_slice(&data).unwrap_or(json!({"message":"Cursor request failed"}));
-            let (status, message) = codec::failure(status, &v);
-            if attempt == 0 && message.to_lowercase().contains("region") {
-                let new = agent_url(c).await;
-                if new != base {
-                    base = new;
-                    continue;
-                }
-            }
-            return error(c, status, &message).await;
-        }
-        if response.version() != reqwest::Version::HTTP_2 {
-            return Err("Cursor requires bidirectional HTTP/2".into());
-        }
-        let mut stream = response.bytes_stream();
-        let mut heartbeat = tokio::time::interval(Duration::from_secs(5));
-        heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        let mut sent = false;
-        let mut count = 0usize;
-        let mut retry = false;
-        loop {
-            let data = tokio::select! {_ = heartbeat.tick()=>{tx.try_send(Ok(codec::CursorStream::heartbeat())).map_err(|_|"Cursor request stalled")?;continue;},v=stream.next()=>v};
-            let Some(data) = data else { break };
-            let data = data.map_err(|_| "Cursor stream interrupted")?;
-            count += data.len();
-            if count > 128 * 1024 * 1024 {
-                return Err("Cursor reply exceeds limit".into());
-            }
-            let batch = converter.push(&data)?;
-            if let Some((status, message)) = batch.error {
-                if sent || converter.has_output() {
-                    return Err(format!("Cursor stream failed (HTTP {status})"));
-                }
-                if attempt == 0 && message.to_lowercase().contains("region") {
-                    let new = agent_url(c).await;
-                    if new != base {
-                        base = new;
-                        retry = true;
-                        break;
-                    }
-                }
-                return error(c, status, &message).await;
-            }
-            for msg in batch.outgoing {
-                tokio::time::timeout(Duration::from_secs(30), tx.send(Ok(msg)))
-                    .await
-                    .map_err(|_| "Cursor upload stalled")?
-                    .map_err(|_| "Cursor upload closed")?;
-            }
-            if !batch.chunks.is_empty() && !sent {
-                c.headers(200, json!([["content-type", "text/event-stream"]]))
-                    .await?;
-                sent = true;
-            }
-            for chunk in batch.chunks {
-                c.data(&chunk).await?;
-            }
-            if converter.done() {
-                break;
-            }
-        }
-        if retry {
-            continue;
-        }
-        converter.finish()?;
-        return c.emit(json!({"type":"end"})).await;
-    }
-    Err("Cursor regional endpoint unavailable".into())
+    pool::generate(c, m, body).await
 }
 
 type Upload = mpsc::Sender<std::result::Result<Vec<u8>, std::io::Error>>;
+#[cfg(test)]
 async fn open(c: &Context, base: &str, first: Vec<u8>) -> Result<(Upload, Response)> {
+    open_transport(&c.client, c.token()?, base, first).await
+}
+async fn open_transport(
+    client: &Client,
+    token: &str,
+    base: &str,
+    first: Vec<u8>,
+) -> Result<(Upload, Response)> {
     let (tx, rx) = mpsc::channel(8);
     tx.send(Ok(first))
         .await
@@ -587,8 +518,8 @@ async fn open(c: &Context, base: &str, first: Vec<u8>) -> Result<(Upload, Respon
         futures_util::stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|v| (v, rx)) });
     let response = send(
         headers(
-            c.client.post(format!("{base}/agent.v1.AgentService/Run")),
-            c.token()?,
+            client.post(format!("{base}/agent.v1.AgentService/Run")),
+            token,
         )
         .version(reqwest::Version::HTTP_2)
         .header("content-type", "application/connect+proto")

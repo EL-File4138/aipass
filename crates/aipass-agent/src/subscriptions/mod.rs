@@ -18,14 +18,19 @@ use std::{
 };
 use tokio::sync::{mpsc, watch};
 
+mod allowance;
+use allowance::timestamp;
 pub(crate) mod cli_accounts;
 mod commandcode;
-mod cursor;
+pub(crate) mod cursor;
 mod devin;
 mod factory;
+pub(crate) mod feedback;
 mod grok;
 mod kiro;
+mod lifecycle;
 mod loopback;
+use lifecycle::{run_cancellable, transport};
 mod mimo;
 mod native_cli;
 pub(crate) mod native_import;
@@ -70,20 +75,12 @@ pub(super) struct Adapter {
 }
 impl Adapter {
     pub fn start(proxy: Option<&UpstreamProxyConfig>) -> Result<Self> {
-        let mut builder = Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(Duration::from_secs(15))
-            .read_timeout(Duration::from_secs(90));
-        if let Some(proxy) = proxy {
-            builder = aipass_proxy::apply_upstream_proxy(builder, proxy)?;
-        }
-        let client = builder
-            .build()
-            .map_err(|_| "cannot create subscription transport")?;
+        let client = transport(proxy)?;
         let (input, rx) = mpsc::channel(8);
         let (tx, output) = mpsc::channel(8);
         let (cancel, cancelled) = watch::channel(false);
         let (refreshing, refresh_phase) = watch::channel(false);
+        let (generating, generation_phase) = watch::channel(false);
         let outbound = proxy.cloned();
         std::thread::Builder::new()
             .name("subscription-adapter".into())
@@ -110,11 +107,17 @@ impl Adapter {
                         models: json!({}),
                         session: String::new(),
                         sequence: 0,
+                        feedback: Default::default(),
+                        policy: Default::default(),
+                        history_owner: None,
+                        session_binding: String::new(),
                         cancellation: cancelled.clone(),
                         refreshing,
+                        generating,
                     };
                     if let Err(message) =
-                        run_cancellable(context.run(), cancelled, refresh_phase).await
+                        run_cancellable(context.run(), cancelled, refresh_phase, generation_phase)
+                            .await
                     {
                         let _ = tx.send(json!({"type":"error","message":message})).await;
                     }
@@ -163,31 +166,13 @@ struct Context {
     models: Value,
     session: String,
     sequence: u64,
+    feedback: feedback::Feedback,
+    policy: aipass_agent_protocol::SubscriptionPolicy,
+    history_owner: Option<uuid::Uuid>,
+    session_binding: String,
     cancellation: watch::Receiver<bool>,
     refreshing: watch::Sender<bool>,
-}
-
-/// Once a refresh request has started, keep polling it through its bounded
-/// HTTP timeout and durable ACK. Dropping it with the user's generation would
-/// lose a one-use refresh token that the issuer has already rotated.
-async fn run_cancellable(
-    operation: impl std::future::Future<Output = Result<()>>,
-    mut cancellation: watch::Receiver<bool>,
-    mut refreshing: watch::Receiver<bool>,
-) -> Result<()> {
-    let operation = tokio::time::timeout(Duration::from_secs(1200), operation);
-    tokio::pin!(operation);
-    loop {
-        let canceled = *cancellation.borrow();
-        if canceled && !*refreshing.borrow() {
-            return Err("subscription operation cancelled".into());
-        }
-        tokio::select! {
-            result = &mut operation => return result.map_err(|_| "subscription operation timed out")?,
-            _ = cancellation.changed(), if !canceled => {},
-            _ = refreshing.changed() => {},
-        }
-    }
+    generating: watch::Sender<bool>,
 }
 
 struct RefreshGuard(watch::Sender<bool>);
@@ -348,6 +333,12 @@ impl Context {
             .and_then(|a| a.iter().find(|p| p["id"] == self.provider))
             .ok_or("unknown subscription provider")?;
         self.auth = initial["auth"].clone();
+        self.session_binding = initial["binding"].as_str().unwrap_or("").into();
+        self.feedback = serde_json::from_value(initial["feedback"].clone()).unwrap_or_default();
+        self.policy = serde_json::from_value(initial["policy"].clone()).unwrap_or_default();
+        self.history_owner = initial["owner"]
+            .as_str()
+            .and_then(|s| uuid::Uuid::parse_str(s).ok());
         if !self.auth["nativeSource"].is_null()
             && self.auth["nativeDevice"] != cli_accounts::device()?
         {
@@ -372,6 +363,9 @@ impl Context {
                     _ => "chat",
                 });
             }
+        }
+        if self.provider == "factory" {
+            factory::normalize_models(&mut self.models);
         }
         self.session = initial["session"]
             .as_str()
@@ -436,6 +430,16 @@ impl Context {
                 .await;
         }
         self.fresh().await?;
+        self.check_revoked()?;
+        if initial["op"] == "reset" {
+            if self.provider != "codex" {
+                return Err("Reset credits require Codex".into());
+            }
+            let request = serde_json::from_value(initial["reset"].clone())
+                .map_err(|_| "Invalid reset request")?;
+            let value = cli_accounts::consume_reset(self, request).await?;
+            return self.emit(json!({"type":"result","value":value})).await;
+        }
         if initial["op"] == "refresh" {
             self.catalog().await?;
             let usage = match self.provider.as_str() {
@@ -473,6 +477,7 @@ impl Context {
         }
         let body = request["body"].clone();
         aipass_proxy_conversion::providers::validate_request(&body)?;
+        self.generating.send_replace(true);
         match self.provider.as_str() {
             "factory" => factory::generate(self, &model, body).await,
             "workbuddy" | "workbuddy-ai" => workbuddy::generate(self, &model, body).await,
@@ -501,20 +506,45 @@ impl Context {
         Ok(())
     }
     async fn pipe(&mut self, response: Response) -> Result<()> {
+        if response.status().is_success() {
+            let _ = self.served().await;
+        }
+        let _ = self.observe_headers(response.headers()).await;
+        let status = response.status().as_u16();
         let headers: Vec<_> = response
             .headers()
             .iter()
             .filter_map(|(k, v)| v.to_str().ok().map(|v| json!([k.as_str(), v])))
             .collect();
-        self.headers(response.status().as_u16(), json!(headers))
-            .await?;
+        if status == 401 {
+            let mut stream = response.bytes_stream();
+            let mut body = Vec::new();
+            while let Some(bytes) = stream.next().await {
+                let bytes = bytes.map_err(|_| "subscription response interrupted")?;
+                if body.len() + bytes.len() > 64 * 1024 {
+                    return Err("subscription error exceeds limit".into());
+                }
+                body.extend_from_slice(&bytes);
+            }
+            let _ = self.refused(&body).await;
+            self.headers(status, json!(headers)).await?;
+            self.data(&body).await?;
+            return self.emit(json!({"type":"end"})).await;
+        }
+        self.headers(status, json!(headers)).await?;
         let mut stream = response.bytes_stream();
         let mut count = 0;
+        let mut events = feedback::Events::default();
         while let Some(bytes) = stream.next().await {
             let bytes = bytes.map_err(|_| "subscription stream interrupted")?;
             count += bytes.len();
             if count > 128 * 1024 * 1024 {
                 return Err("subscription reply exceeds limit".into());
+            }
+            if self.provider == "codex" {
+                for event in events.push(&bytes) {
+                    let _ = self.observe_event(&event).await;
+                }
             }
             self.data(&bytes).await?;
         }
@@ -528,6 +558,7 @@ impl Context {
         if !response.status().is_success() {
             return self.pipe(response).await;
         }
+        let _ = self.served().await;
         let mut stream = response.bytes_stream();
         let mut sent = false;
         let mut count = 0usize;

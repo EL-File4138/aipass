@@ -209,10 +209,7 @@ pub(super) async fn fresh(c: &mut Context) -> Result<()> {
     }
     let cr = creds(c)?;
     let (cookies, me) = session(c, &cr, base(s(&cr, "region"))).await?;
-    if me["userId"]
-        .as_str()
-        .is_some_and(|id| id != s(&cr, "userId"))
-    {
+    if !me["userId"].is_null() && identifier(&me["userId"]) != identifier(&cr["userId"]) {
         return Err("Xiaomi account changed".into());
     }
     c.save(auth(cr, cookies)).await

@@ -198,7 +198,7 @@ impl ProxyService {
                         {
                             crate::community::quota(vault, entry.id)
                         } else {
-                            account_quota(&entry)
+                            account_quota_with_observations(vault, &entry)
                         },
                         profile: provider_profile(&entry),
                         model_override: target_config.model.clone(),

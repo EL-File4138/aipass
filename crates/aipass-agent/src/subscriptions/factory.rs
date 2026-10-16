@@ -213,6 +213,7 @@ pub(super) async fn usage(c: &mut Context) -> Result<Value> {
             !id.starts_with("claude")
                 && !id.starts_with("gpt")
                 && !id.starts_with("grok")
+                && !id.starts_with("gemini")
                 && !id.starts_with("o3")
                 && !id.starts_with("o4")
         })
@@ -243,6 +244,14 @@ pub(super) async fn usage(c: &mut Context) -> Result<Value> {
     }
     Ok(json!({"windows":windows}))
 }
+pub(super) fn normalize_models(models: &mut Value) {
+    for (_, model) in models.as_object_mut().into_iter().flatten() {
+        if model["wire"] == "responses" {
+            model["temperature"] = json!(false);
+        }
+    }
+}
+
 pub(super) async fn generate(c: &mut Context, model: &Value, mut body: Value) -> Result<()> {
     let wire = s(model, "wire");
     aipass_proxy_conversion::providers::factory_request(wire, &mut body)?;
@@ -356,28 +365,33 @@ fn generation(c: &Context, wire: &str, body: &Value) -> Result<RequestBuilder> {
     }
     Ok(req.json(body))
 }
-fn timestamp(v: &Value) -> Value {
-    let time = if let Some(n) = v
-        .as_i64()
-        .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
-    {
-        time::OffsetDateTime::from_unix_timestamp(n / if n > 100000000000 { 1000 } else { 1 }).ok()
-    } else {
-        v.as_str().and_then(|s| {
-            time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok()
-        })
-    };
-    time.and_then(|t| {
-        t.format(&time::format_description::well_known::Rfc3339)
-            .ok()
-    })
-    .map(Value::String)
-    .unwrap_or(Value::Null)
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cached_openai_catalog_and_request_agree_about_sampling() {
+        let mut models = json!({"gpt":{"wire":"responses","temperature":true,"variants":{"high":{}}},"claude":{"wire":"anthropic","temperature":true}});
+        normalize_models(&mut models);
+        assert_eq!(models["gpt"]["temperature"], false);
+        assert_eq!(models["gpt"]["variants"], json!({"high":{}}));
+        assert_eq!(models["claude"]["temperature"], true);
+        let mut body = json!({"instructions":"keep policy","temperature":0.3,"top_p":0.8,"reasoning":{"effort":"high"},"input":"hello"});
+        aipass_proxy_conversion::providers::factory_request("responses", &mut body).unwrap();
+        assert!(body.get("temperature").is_none() && body.get("top_p").is_none());
+        assert_eq!(body["reasoning"], json!({"effort":"high"}));
+        assert!(body["instructions"]
+            .as_str()
+            .unwrap()
+            .ends_with("keep policy"));
+        let stable = body.clone();
+        aipass_proxy_conversion::providers::factory_request("responses", &mut body).unwrap();
+        assert_eq!(body, stable);
+        let mut claude = json!({"temperature":0.3,"top_p":0.8});
+        aipass_proxy_conversion::providers::factory_request("anthropic", &mut claude).unwrap();
+        assert_eq!(claude["temperature"], 0.3);
+        assert_eq!(claude["top_p"], 0.8);
+    }
     #[test]
     fn rotation_preserves_omitted_refresh_and_transient_failures_keep_only_unexpired_access() {
         let auth =

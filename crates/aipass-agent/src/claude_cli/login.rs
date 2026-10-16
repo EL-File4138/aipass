@@ -103,7 +103,7 @@ impl LoginManager {
         if self.epoch() != epoch {
             return Err("Claude sign-in was cancelled".into());
         }
-        if flows.len() >= 4 {
+        if flows.values().filter(|flow| flow.saved.is_none()).count() >= 4 {
             return Err("Close another Claude sign-in before adding an account".into());
         }
         flows.insert(ticket, flow);
@@ -190,15 +190,23 @@ impl LoginManager {
     ) -> Result<Uuid, crate::session::ServiceError> {
         use crate::session::ServiceError;
         let mut flows = self.flows.lock().unwrap();
-        let account = flows
-            .get(&ticket)
-            .and_then(|f| f.ready.as_ref())
+        if let Some(id) = flows.get(&ticket).and_then(|flow| flow.saved) {
+            return Ok(id);
+        }
+        let flow = flows
+            .get_mut(&ticket)
+            .filter(|f| f.ready.is_some())
             .ok_or_else(|| {
                 ServiceError::new(
                     aipass_agent_protocol::AgentErrorCode::ValidationFailed,
                     "Claude sign-in was cancelled",
                 )
             })?;
+        // A failed vault write can be ambiguous (record committed, audit failed).
+        // Once persistence is attempted, cancellation must not delete a CLI home
+        // that a durable provider may already reference.
+        flow.directory.keep();
+        let account = flow.ready.as_ref().unwrap();
         let result = write(account)?;
         if let Some(flow) = flows.get_mut(&ticket) {
             flow.saved = Some(result);
@@ -283,6 +291,19 @@ pub(super) fn read_bounded(path: &Path) -> Result<String, String> {
 }
 
 pub(super) fn signed_in(binary: &Path, directory: &ConfigDir) -> Result<NativeAccount, String> {
+    let default = directories::BaseDirs::new()
+        .ok_or("home directory unavailable")?
+        .home_dir()
+        .join(".claude");
+    signed_in_at(binary, directory, &default)
+}
+
+fn signed_in_at(
+    binary: &Path,
+    directory: &ConfigDir,
+    default: &Path,
+) -> Result<NativeAccount, String> {
+    use aipass_config_writers::native_auth::{claude_identity, parse, PrivateJson, Resource};
     let mut command = Command::new(binary);
     configure(&mut command, directory.path());
     command.args(["auth", "status", "--json"]);
@@ -294,23 +315,138 @@ pub(super) fn signed_in(binary: &Path, directory: &ConfigDir) -> Result<NativeAc
     {
         return Err("Claude Code did not sign in to a Claude subscription".into());
     }
-    let profile: Value = read_bounded(&directory.path().join(".claude.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or(Value::Null);
-    let identity = status["email"]
-        .as_str()
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            profile
-                .pointer("/oauthAccount/emailAddress")
-                .and_then(Value::as_str)
-        })
-        .ok_or("Claude Code returned no account identity")?
-        .to_owned();
+    let profile = Resource::File(claude_identity::profile_path(directory.path(), default))
+        .read()
+        .map_err(|_| "Claude account profile unavailable")?
+        .map(|bytes| parse(&bytes).map_err(|_| "Claude account profile is invalid"))
+        .transpose()?
+        .unwrap_or(PrivateJson(Value::Null));
+    let identity = claude_identity::identity(&status, &profile.0).map_err(|e| e.to_string())?;
     Ok(NativeAccount {
         home: directory.path().to_owned(),
         identity,
         plan: status["subscriptionType"].as_str().map(str::to_owned),
     })
+}
+
+#[cfg(all(test, unix))]
+mod review_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn default_profile_identity_matches_native_switches_and_malformed_profiles_fail() {
+        use aipass_config_writers::native_auth::{claude_identity, NativeStore, Resource};
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(".claude");
+        std::fs::create_dir(&path).unwrap();
+        let binary = root.path().join("cli");
+        std::fs::write(
+            &binary,
+            "#!/bin/sh\necho '{\"loggedIn\":true,\"email\":\"alice@example.test\"}'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let profile = claude_identity::profile_path(&path, &path);
+        std::fs::write(
+            &profile,
+            json!({"oauthAccount":{"emailAddress":"alice@example.test","organizationUuid":"a"}})
+                .to_string(),
+        )
+        .unwrap();
+        let directory = ConfigDir {
+            path: path.clone(),
+            temporary: None,
+        };
+        let account = signed_in_at(&binary, &directory, &path).unwrap();
+        let primary = Resource::File(path.join(".credentials.json"));
+        primary.write(Some(br#"{"claudeAiOauth":{}}"#)).unwrap();
+        let store = NativeStore {
+            tool: "claude-code".into(),
+            home: path,
+            primary,
+            fallback: None,
+            profile: Some(Resource::File(profile.clone())),
+        };
+        assert_eq!(Some(account.identity), store.identity().unwrap());
+        std::fs::write(profile, "invalid profile").unwrap();
+        assert!(signed_in_at(&binary, &directory, &directory.path).is_err());
+    }
+
+    #[test]
+    fn canceled_login_removes_its_owned_directory() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let binary = root.path().join("cli");
+        std::fs::write(&binary, "#!/bin/sh\nsleep 30\n").unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let manager = LoginManager {
+            flows: Arc::new(Mutex::new(HashMap::new())),
+            epoch: AtomicU64::new(0),
+        };
+        let login = manager.start_with(binary, 0).unwrap();
+        let directory = manager.flows.lock().unwrap()[&login.ticket]
+            .directory
+            .path
+            .clone();
+        assert!(directory.is_dir());
+        assert!(manager.cancel(login.ticket));
+        assert!(!directory.exists());
+    }
+
+    #[test]
+    fn failed_commit_retains_the_home_after_cancellation_for_ambiguous_writes() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let binary = root.path().join("cli");
+        std::fs::write(&binary, "#!/bin/sh\nsleep 30\n").unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let manager = LoginManager {
+            flows: Arc::new(Mutex::new(HashMap::new())),
+            epoch: AtomicU64::new(0),
+        };
+        let login = manager.start_with(binary, 0).unwrap();
+        let path = {
+            let mut flows = manager.flows.lock().unwrap();
+            let flow = flows.get_mut(&login.ticket).unwrap();
+            flow.ready = Some(NativeAccount {
+                home: flow.directory.path.clone(),
+                identity: "alice@example.test".into(),
+                plan: None,
+            });
+            flow.directory.path.clone()
+        };
+        assert!(manager
+            .commit(login.ticket, |_| Err(
+                crate::session::ServiceError::internal(anyhow::anyhow!("ambiguous write"))
+            ))
+            .is_err());
+        manager.cancel(login.ticket);
+        assert!(path.is_dir());
+        std::fs::remove_dir_all(path).unwrap();
+    }
+    #[test]
+    fn completed_logins_do_not_block_a_fifth_account() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let binary = root.path().join("claude");
+        std::fs::write(&binary, "#!/bin/sh\nsleep 30\n").unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let manager = LoginManager {
+            flows: Arc::new(Mutex::new(HashMap::new())),
+            epoch: AtomicU64::new(0),
+        };
+        for _ in 0..4 {
+            let flow = manager.start_with(binary.clone(), 0).unwrap();
+            manager
+                .flows
+                .lock()
+                .unwrap()
+                .get_mut(&flow.ticket)
+                .unwrap()
+                .saved = Some(Uuid::new_v4());
+        }
+        assert!(manager.start_with(binary, 0).is_ok());
+        manager.clear();
+    }
 }

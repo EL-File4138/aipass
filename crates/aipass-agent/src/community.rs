@@ -20,6 +20,7 @@ use bytes::Bytes;
 use futures_util::{stream, Stream};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::Digest;
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
@@ -187,6 +188,10 @@ impl CommunityBridge {
         match frame["type"].as_str() {
             Some("auth") => next.auth = SensitiveString::new(frame["value"].to_string()),
             Some("models") => next.models = frame["value"].clone(),
+            Some("feedback") => {
+                next.feedback = serde_json::from_value(frame["value"].clone())
+                    .map_err(|_| "invalid subscription observation")?
+            }
             _ => return Err("invalid account update".into()),
         }
         next.revision = next
@@ -227,6 +232,7 @@ impl CommunityBridge {
                 || saved.revision != next.revision
                 || saved.auth.expose() != next.auth.expose()
                 || saved.models != next.models
+                || saved.feedback != next.feedback
             {
                 return Err("account update refused; account is locked or changed".into());
             }
@@ -367,6 +373,7 @@ impl CommunityBridge {
                         auth: auth.ok_or("sign-in returned no credentials")?,
                         models,
                         revision: 0,
+                        feedback: Default::default(),
                         native_method: frame["value"]["nativeMethod"].as_u64().map(|v| v as usize),
                         identity: frame["value"]["identity"].as_str().unwrap_or("").to_owned(),
                     };
@@ -500,6 +507,57 @@ impl CommunityBridge {
         proxy: &UpstreamProxyConfig,
         op: &str,
     ) -> Result<Value, String> {
+        self.account_operation_extra(id, marker, proxy, op, None)
+    }
+    pub(crate) fn reset(
+        &self,
+        id: Uuid,
+        marker: &str,
+        proxy: &UpstreamProxyConfig,
+        request_id: Option<Uuid>,
+        credit_id: Option<String>,
+    ) -> Result<Value, String> {
+        let account = self.load(id, marker)?;
+        let attempt = if let Some(pending) = account
+            .feedback
+            .reset
+            .as_ref()
+            .filter(|r| r.outcome.is_none())
+        {
+            if request_id.is_some_and(|id| id != pending.request_id)
+                || credit_id
+                    .as_ref()
+                    .is_some_and(|id| Some(id) != pending.credit_id.as_ref())
+            {
+                return Err(format!(
+                    "Reset outcome unknown; retry operation {}",
+                    pending.request_id
+                ));
+            }
+            pending.clone()
+        } else {
+            crate::subscriptions::feedback::ResetAttempt {
+                request_id: request_id.unwrap_or_else(Uuid::new_v4),
+                credit_id,
+                outcome: None,
+            }
+        };
+        self.account_operation_extra(
+            id,
+            marker,
+            proxy,
+            "reset",
+            Some(serde_json::to_value(attempt).map_err(|_| "Invalid reset")?),
+        )
+    }
+    fn account_operation_extra(
+        &self,
+        id: Uuid,
+        marker: &str,
+        proxy: &UpstreamProxyConfig,
+        op: &str,
+        reset: Option<Value>,
+    ) -> Result<Value, String> {
         let lock = self.account_lock(id)?;
         let _guard = lock.try_lock().map_err(|_| ACCOUNT_BUSY)?;
         let mut account = self.load(id, marker)?;
@@ -511,14 +569,18 @@ impl CommunityBridge {
             .epoch;
         let mut worker = Adapter::start(Some(proxy))?;
         self.register(&worker.process, None)?;
-        worker.process.send(&operation(op, &account))?;
+        let mut initial = self.initial_operation(op, &account, id)?;
+        initial["reset"] = json!(reset);
+        worker.process.send(&initial)?;
         loop {
             let frame = worker.next()?;
             match frame["type"].as_str() {
-                Some("auth" | "models") => {
+                Some("auth" | "models" | "feedback") => {
                     let result = self.update(id, marker, &mut account, &frame, epoch);
                     worker.ack(&frame, result.is_ok())?;
-                    result?;
+                    if frame["type"] != "feedback" {
+                        result?;
+                    }
                 }
                 Some("result") => return Ok(frame["value"].clone()),
                 _ => return Err("invalid refresh response".into()),
@@ -562,9 +624,14 @@ impl CommunityBridge {
             let mut worker = Adapter::start(target.upstream_proxy.as_ref())?;
             cancel.attach(&worker.process);
             self.register(&worker.process, Some(target.clone()))?;
-            let mut initial = operation("request", &account);
+            let mut initial = self.initial_operation("request", &account, id)?;
             initial["model"] = payload["model"].clone();
             initial["session"] = json!(session);
+            initial["owner"] = json!(target.config.id);
+            initial["binding"] = json!(format!(
+                "{:x}",
+                sha2::Sha256::digest(target.api_key.as_bytes())
+            ));
             worker.process.send(&initial)?;
             let mut receiver = Some(body_rx);
             let mut wire = String::new();
@@ -572,10 +639,12 @@ impl CommunityBridge {
             loop {
                 let frame = worker.next()?;
                 match frame["type"].as_str() {
-                    Some("auth" | "models") => {
+                    Some("auth" | "models" | "feedback") => {
                         let result = self.update(id, &target.api_key, &mut account, &frame, epoch);
                         worker.ack(&frame, result.is_ok())?;
-                        result?;
+                        if frame["type"] != "feedback" {
+                            result?;
+                        }
                     }
                     Some("prepared") => {
                         wire = frame["value"]["wire"]
@@ -667,6 +736,9 @@ impl CommunityBridge {
 mod account;
 mod backend;
 mod display;
+mod feedback;
+mod history;
+pub(crate) use history::owner as history_owner;
 mod quota;
 pub(crate) use account::{
     bind_cli, ensure_owner, identity, identity_value, is_account, legacy_scope_matches, read,
@@ -676,9 +748,10 @@ use account::{decode, invalid, persist, register_cli_with_models, Account};
 #[cfg(test)]
 use backend::Cancel;
 pub(crate) use backend::Dispatch;
-use backend::{operation, Body, GenerationOutput};
+use backend::{Body, GenerationOutput};
+pub(crate) use feedback::write_runtime;
 use quota::now;
-pub(crate) use quota::{quota, refresh, refresh_due};
+pub(crate) use quota::{native_quota, quota, refresh, refresh_due};
 
 #[cfg(test)]
 mod tests;

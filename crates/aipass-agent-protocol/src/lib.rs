@@ -31,7 +31,11 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use uuid::Uuid;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::Zeroize;
+mod sensitive;
+pub use sensitive::SensitiveString;
+mod subscription_runtime;
+pub use subscription_runtime::*;
 
 pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 // Version 4 requires authenticated vault snapshots, first-run sync import,
@@ -48,7 +52,8 @@ pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 // Version 15 delegates official subscription ownership to local vendor CLIs.
 // Version 16 adds cancellable, source-bound native subscription imports.
 // Version 17 adds native credential switching and target-bound reauthentication.
-pub const AGENT_PROTOCOL_VERSION: u32 = 17;
+// Version 18 requires credential-bound subscription response feedback.
+pub const AGENT_PROTOCOL_VERSION: u32 = 18;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "method", rename_all = "snake_case")]
@@ -61,42 +66,6 @@ pub enum ClaudeBridgeRequest {
     Poll {
         call_id: String,
     },
-}
-
-#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
-#[serde(transparent)]
-pub struct SensitiveString(String);
-
-impl SensitiveString {
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    pub fn expose(&self) -> &str {
-        &self.0
-    }
-
-    pub fn into_inner(mut self) -> String {
-        std::mem::take(&mut self.0)
-    }
-}
-
-impl std::fmt::Debug for SensitiveString {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("[redacted]")
-    }
-}
-
-impl From<String> for SensitiveString {
-    fn from(value: String) -> Self {
-        Self(value)
-    }
-}
-
-impl From<&str> for SensitiveString {
-    fn from(value: &str) -> Self {
-        Self(value.to_string())
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -523,6 +492,33 @@ pub struct AuthenticatedAgentRequest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", deny_unknown_fields)]
 pub enum AgentRequest {
+    #[serde(rename = "subscription.history_owner")]
+    SubscriptionHistoryOwner {
+        digests: Vec<String>,
+        targets: Vec<Uuid>,
+    },
+    #[serde(rename = "claude_native.session_owner")]
+    ClaudeSessionOwner { call_ids: Vec<String> },
+    #[serde(rename = "claude_native.session")]
+    ClaudeNativeSession {
+        entry_id: Uuid,
+        marker: SensitiveString,
+        operation: ClaudeSessionOperation,
+    },
+    #[serde(rename = "subscription.policy.read")]
+    SubscriptionPolicyRead { entry_id: Uuid },
+    #[serde(rename = "subscription.reset")]
+    SubscriptionReset {
+        entry_id: Uuid,
+        request_id: Option<Uuid>,
+        credit_id: Option<String>,
+    },
+    #[serde(rename = "claude_native.observe")]
+    ClaudeNativeObserve {
+        entry_id: Uuid,
+        marker: SensitiveString,
+        windows: Vec<ClaudeAllowanceObservation>,
+    },
     #[serde(rename = "claude_native.read")]
     ClaudeNativeRead {
         entry_id: Uuid,
@@ -966,6 +962,12 @@ impl AgentRequest {
     pub fn event_name(&self) -> &'static str {
         match self {
             Self::ClaudeNativeRead { .. } => "claude_native.read",
+            Self::ClaudeNativeSession { .. } => "claude_native.session",
+            Self::ClaudeSessionOwner { .. } => "claude_native.session_owner",
+            Self::SubscriptionReset { .. } => "subscription.reset",
+            Self::SubscriptionPolicyRead { .. } => "subscription.policy.read",
+            Self::SubscriptionHistoryOwner { .. } => "subscription.history_owner",
+            Self::ClaudeNativeObserve { .. } => "claude_native.observe",
             Self::ClaudeNativeWrite { .. } => "claude_native.write",
             Self::ClaudeBridgeMcp { .. } => "claude_bridge.mcp",
             Self::ControlPanelStatus => "control_panel.status",
@@ -1105,9 +1107,14 @@ impl AgentRequest {
         matches!(
             self,
             Self::CommunityAccountRead { .. }
+                | Self::SubscriptionPolicyRead { .. }
+                | Self::SubscriptionHistoryOwner { .. }
                 | Self::CommunityAccountWrite { .. }
                 | Self::CommunityLoginPoll { .. }
                 | Self::ClaudeNativeRead { .. }
+                | Self::ClaudeNativeSession { .. }
+                | Self::ClaudeSessionOwner { .. }
+                | Self::ClaudeNativeObserve { .. }
                 | Self::ClaudeNativeWrite { .. }
                 | Self::ClaudeBridgeMcp { .. }
                 | Self::CloudKitExchange { .. }
@@ -1365,71 +1372,8 @@ pub struct ServerUsageSummary {
     pub models: Vec<ModelUsageAggregate>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", default)]
-pub struct OffPeakWindow {
-    pub start_minute_utc: u16,
-    pub end_minute_utc: u16,
-    pub input_micros_per_million: u64,
-    pub output_micros_per_million: u64,
-    pub cache_read_micros_per_million: u64,
-    pub cache_creation_micros_per_million: u64,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", default)]
-pub struct ModelPriceRule {
-    pub model: String,
-    pub input_micros_per_million: u64,
-    pub output_micros_per_million: u64,
-    pub cache_read_micros_per_million: u64,
-    pub cache_creation_micros_per_million: u64,
-    pub off_peak: Option<OffPeakWindow>,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", default)]
-pub struct GroupPriceVersion {
-    pub effective_from: i64,
-    pub rules: Vec<ModelPriceRule>,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", default)]
-pub struct PricingGroup {
-    /// Manual rule edits survive gateway price refreshes.
-    pub manual: bool,
-    pub id: Uuid,
-    pub name: String,
-    pub versions: Vec<GroupPriceVersion>,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase", default)]
-pub struct CredentialAssignment {
-    pub entry_id: Uuid,
-    pub secret_id: String,
-    pub group_id: Option<Uuid>,
-    pub multiplier: f64,
-    /// Explicit user settings must survive automatic gateway refreshes.
-    #[serde(default)]
-    pub manual: bool,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase", default)]
-pub struct PricingConfig {
-    pub groups: Vec<PricingGroup>,
-    pub assignments: Vec<CredentialAssignment>,
-    pub list_price_updated_at: Option<i64>,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum PricingApplyScope {
-    AllHistory,
-    FromNow,
-}
+mod pricing;
+pub use pricing::*;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

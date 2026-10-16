@@ -11,6 +11,8 @@ pub(crate) struct Account {
     pub(super) revision: u64,
     pub(super) native_method: Option<usize>,
     pub(super) identity: String,
+    #[serde(default)]
+    pub(super) feedback: crate::subscriptions::feedback::Feedback,
 }
 pub(super) fn invalid(message: impl Into<String>) -> ServiceError {
     ServiceError::new(AgentErrorCode::ValidationFailed, message)
@@ -21,7 +23,8 @@ pub(super) fn decode(raw: &str) -> ServiceResult<Account> {
     }
     let account: Account =
         serde_json::from_str(raw).map_err(|_| invalid("invalid community account"))?;
-    if !PROVIDERS.contains(&account.provider.as_str())
+    if !account.feedback.valid()
+        || !PROVIDERS.contains(&account.provider.as_str())
         || !account.models.is_object()
         || account.models.as_object().is_some_and(|m| m.len() > 4096)
     {
@@ -243,6 +246,7 @@ pub(super) fn bind_cli_with_models(
         auth: SensitiveString::new(auth.to_string()),
         models,
         revision: 0,
+        feedback: Default::default(),
         native_method: Some(crate::subscriptions::native_import::method(provider)),
         identity: identity.clone(),
     };
@@ -401,6 +405,7 @@ pub(super) fn register_cli_with_models(
             auth: SensitiveString::new(auth.to_string()),
             models,
             revision: 0,
+            feedback: Default::default(),
             native_method: Some(crate::subscriptions::native_import::method(provider)),
             identity,
         },

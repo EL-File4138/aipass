@@ -143,8 +143,35 @@ pub(super) fn read_events(stdout: std::process::ChildStdout, inner: Weak<Inner>,
         let Ok(value) = parsed else {
             break;
         };
+        if value["type"] == "system" && value["subtype"] == "init" {
+            if let Some(session) = value["session_id"]
+                .as_str()
+                .and_then(|s| Uuid::parse_str(s).ok())
+            {
+                if let Some(inner) = inner.upgrade() {
+                    if let Ok(mut runs) = inner.runs.lock() {
+                        if let Some(run) = runs.get_mut(&key) {
+                            run.native_session = session;
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        if value["type"] == "rate_limit_event" {
+            if let Some(inner) = inner.upgrade() {
+                super::feedback::observe(&inner, &key, &value["rate_limit_info"]);
+            }
+            continue;
+        }
         if value["type"] == "result" && value["is_error"] == true {
             break;
+        }
+        if value["type"] == "result" {
+            if let Some(inner) = inner.upgrade() {
+                super::checkpoint::save(&inner, &key);
+            }
+            continue;
         }
         if value["type"] != "stream_event" {
             continue;

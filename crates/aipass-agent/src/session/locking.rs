@@ -26,6 +26,7 @@ pub fn lock_session(state: &Arc<AgentState>, reason: LockReason) {
         *session = SessionState::Locked;
     }
     state.subscription_imports.clear();
+    aipass_config_writers::native_auth::invalidate_reads();
     crate::tool_switch::cancel_logins(state);
     crate::claude_cli::logins().clear();
     state.session_changed.notify_all();

@@ -7,6 +7,69 @@ pub(crate) fn handle_accounts_command(
     command: AccountsCommand,
 ) -> Result<()> {
     match command {
+        AccountsCommand::Policy {
+            id,
+            allow_paid_credits,
+            auto_reset_credits,
+            native_group,
+            disable_native_switch,
+            return_preferred,
+        } => {
+            let agent = CliAgent::from_parts(vault, cli_password)?;
+            let mut options: aipass_agent_protocol::ProviderRuntimeOptions =
+                agent.request(AgentRequest::ProviderRuntimeGet { id })?;
+            let changed = allow_paid_credits.is_some()
+                || auto_reset_credits.is_some()
+                || native_group.is_some()
+                || disable_native_switch
+                || return_preferred.is_some();
+            if let Some(value) = allow_paid_credits {
+                options.subscription.allow_paid_credits = value;
+            }
+            if let Some(value) = auto_reset_credits {
+                options.subscription.auto_reset_credits = value;
+            }
+            if let Some(route_id) = native_group {
+                options.subscription.native_switch =
+                    Some(aipass_agent_protocol::NativeSwitchPolicy {
+                        route_id,
+                        return_preferred: return_preferred.unwrap_or(true),
+                    });
+            }
+            if disable_native_switch {
+                options.subscription.native_switch = None;
+            }
+            if let Some(value) = return_preferred {
+                options
+                    .subscription
+                    .native_switch
+                    .as_mut()
+                    .context("--return-preferred requires an enabled native group")?
+                    .return_preferred = value;
+            }
+            if changed {
+                options = agent.request(AgentRequest::ProviderRuntimeSet { id, options })?;
+            }
+            output(
+                json,
+                serde_json::to_value(options.subscription)?,
+                "Subscription policy",
+            )
+        }
+        AccountsCommand::Reset {
+            id,
+            credit_id,
+            request_id,
+        } => {
+            let agent = CliAgent::from_parts(vault, cli_password)?;
+            let result: serde_json::Value = agent.request(AgentRequest::SubscriptionReset {
+                entry_id: id,
+                request_id,
+                credit_id,
+            })?;
+            let text = result["outcome"].as_str().unwrap_or("unknown").to_owned();
+            output(json, result, &text)
+        }
         AccountsCommand::Import {
             provider_ids,
             directory,

@@ -1,23 +1,46 @@
 //! Subscription HTTP contracts using immediate CLI access.
 use super::*;
 
-pub(crate) async fn generate(c: &mut Context, _: &Value, mut body: Value) -> Result<()> {
+pub(crate) async fn generate(c: &mut Context, model: &Value, mut body: Value) -> Result<()> {
+    if c.provider == "codex" {
+        // Attributes can have coarse timestamp resolution. Never submit a paid
+        // generation using a completed discovery cache entry.
+        super::session::fresh_for_generation(c).await?;
+    }
+    if c.provider == "codex" && !super::reset::admit(c).await? {
+        return Ok(());
+    }
     let req = match c.provider.as_str() {
         "codex" => {
             body = aipass_proxy::prepare_codex_subscription(body)?;
+            let mut headers = reqwest::header::HeaderMap::new();
+            if let Ok(session) = reqwest::header::HeaderValue::from_str(&c.session) {
+                headers.insert("session-id", session.clone());
+                headers.insert("thread-id", session);
+            }
+            aipass_proxy::codex_subscription_headers(&mut headers, body.to_string().as_bytes());
             signed(c, c.client.post(format!("{CODEX}/responses")))?
-                .header("session_id", &c.session)
-                .header("Accept", "text/event-stream")
+                .headers(headers)
                 .json(&body)
         }
-        "copilot" => signed(
-            c,
-            c.client
-                .post(format!("{}/chat/completions", copilot_api(c).await?)),
-        )?
-        .header("x-request-id", uuid::Uuid::new_v4().to_string())
-        .header("x-initiator", "user")
-        .json(&body),
+        "copilot" => {
+            let r = signed(
+                c,
+                c.client.post(format!(
+                    "{}{}",
+                    copilot_api(c).await?,
+                    path(s(model, "wire"))
+                )),
+            )?
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
+            .headers(aipass_proxy::copilot_request_headers(&body));
+            let r = if s(model, "wire") == "anthropic" {
+                r.header("anthropic-version", "2023-06-01")
+            } else {
+                r
+            };
+            r.json(&body)
+        }
         "gemini-cli" => {
             let model = s(&body, "model").to_owned();
             body.as_object_mut()
@@ -32,24 +55,21 @@ pub(crate) async fn generate(c: &mut Context, _: &Value, mut body: Value) -> Res
 }
 
 const CODEX: &str = "https://chatgpt.com/backend-api/codex";
-const COPILOT: &str = "https://api.githubcopilot.com";
 const GEMINI: &str = "https://cloudcode-pa.googleapis.com/v1internal";
 
 pub(super) fn signed(c: &Context, r: RequestBuilder) -> Result<RequestBuilder> {
     let mut r = r.bearer_auth(c.token()?);
     if c.provider == "codex" {
+        let mut headers = reqwest::header::HeaderMap::new();
+        aipass_proxy::codex_subscription_headers(&mut headers, b"{}");
         r = r
             .header("chatgpt-account-id", &c.native_workspace)
-            .header("originator", "codex_cli_rs")
-            .header("User-Agent", "codex_cli_rs/0.116.0");
+            .headers(headers);
     }
     if c.provider == "copilot" {
-        r = r
-            .header("copilot-integration-id", "copilot-developer-cli")
-            .header("editor-version", "copilot/1.0.88")
-            .header("user-agent", "copilot/1.0.88")
-            .header("x-github-api-version", "2026-07-01");
+        r = r.headers(aipass_proxy::copilot_cli_headers());
     }
+
     Ok(r)
 }
 
@@ -65,10 +85,15 @@ pub(crate) async fn models(c: &mut Context) -> Result<Value> {
         }
         return Ok(models);
     }
-    let url = if c.provider == "codex" {
-        format!("{CODEX}/models?client_version=0.116.0")
+    let api = if c.provider == "codex" {
+        CODEX.to_owned()
     } else {
-        format!("{}/models", copilot_api(c).await?)
+        copilot_api(c).await?
+    };
+    let url = if c.provider == "codex" {
+        aipass_proxy::codex_subscription_models_url(CODEX, &reqwest::header::HeaderMap::new())?
+    } else {
+        format!("{api}/models")
     };
     let v = json_request(signed(c, c.client.get(url))?).await?;
     let mut out = json!({});
@@ -81,26 +106,40 @@ pub(crate) async fn models(c: &mut Context) -> Result<Value> {
         if id.is_empty() {
             continue;
         }
+        if c.provider == "codex" && m["visibility"] == "hide" {
+            continue;
+        }
+        let wire = if c.provider == "codex" {
+            "responses"
+        } else {
+            let Some(wire) = super::copilot::wire(m) else {
+                continue;
+            };
+            wire
+        };
         out[id] = model(
             id,
             m["display_name"]
                 .as_str()
                 .or(m["name"].as_str())
                 .unwrap_or(id),
-            if c.provider == "codex" {
-                "responses"
-            } else {
-                "chat"
-            },
-            if c.provider == "codex" {
-                CODEX
-            } else {
-                COPILOT
-            },
-            m["context_window"].as_u64().unwrap_or(0),
-            0,
+            wire,
+            &api,
+            m["context_window"]
+                .as_u64()
+                .or_else(|| {
+                    m.pointer("/capabilities/limits/max_context_window_tokens")
+                        .and_then(Value::as_u64)
+                })
+                .unwrap_or(0),
+            m.pointer("/capabilities/limits/max_output_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
         );
         if c.provider == "copilot" {
+            out[id]["premium"] = json!(m.pointer("/billing/is_premium") == Some(&json!(true)));
+            out[id]["attachment"] =
+                json!(m.pointer("/capabilities/supports/vision") == Some(&json!(true)));
             if let Some(multiplier) = m
                 .pointer("/billing/multiplier")
                 .and_then(Value::as_f64)
@@ -116,7 +155,7 @@ pub(crate) async fn models(c: &mut Context) -> Result<Value> {
 pub(super) fn copilot_user_request(c: &Context) -> Result<RequestBuilder> {
     let request = signed(
         c,
-        c.client.get("https://api.github.com/copilot_internal/user"),
+        c.client.get(super::copilot::user_url(&c.native_workspace)),
     )?;
     // Replace, rather than append a second Authorization header.
     let mut headers = reqwest::header::HeaderMap::new();
@@ -130,22 +169,10 @@ pub(super) fn copilot_user_request(c: &Context) -> Result<RequestBuilder> {
 
 pub(super) async fn copilot_api(c: &Context) -> Result<String> {
     let v = json_request(copilot_user_request(c)?).await?;
-    let api = v
-        .pointer("/endpoints/api")
-        .and_then(Value::as_str)
-        .unwrap_or(COPILOT);
-    let u = url::Url::parse(api).map_err(|_| "invalid Copilot endpoint")?;
-    if u.scheme() != "https"
-        || !u.username().is_empty()
-        || u.password().is_some()
-        || u.port().is_some_and(|p| p != 443)
-        || !u
-            .host_str()
-            .is_some_and(|h| h == "githubcopilot.com" || h.ends_with(".githubcopilot.com"))
-    {
-        return Err("Copilot returned an untrusted endpoint".into());
-    }
-    Ok(api.trim_end_matches('/').to_owned())
+    super::copilot::api(
+        v.pointer("/endpoints/api").and_then(Value::as_str),
+        &c.native_workspace,
+    )
 }
 
 pub(super) async fn google(c: &Context, method: &str, body: Value) -> Result<Value> {
@@ -157,12 +184,20 @@ pub(super) async fn google(c: &Context, method: &str, body: Value) -> Result<Val
     .await
 }
 pub(super) async fn project(c: &Context) -> Result<String> {
-    let v = google(c,"loadCodeAssist",json!({"metadata":{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}})).await?;
+    let v = google(
+        c,
+        "loadCodeAssist",
+        super::gemini::setup(&c.native_workspace),
+    )
+    .await?;
     let id = v["cloudaicompanionProject"].as_str().or(v
         .pointer("/cloudaicompanionProject/id")
         .and_then(Value::as_str));
     if let Some(id) = id.filter(|s| !s.is_empty()) {
         return Ok(id.into());
+    }
+    if !c.native_workspace.is_empty() && v["currentTier"].is_object() {
+        return Ok(c.native_workspace.clone());
     }
     // Let the official CLI perform entitlement onboarding. Never invent a project.
     Err("Gemini Code Assist has no project yet; finish setup in Gemini CLI and reconnect".into())
@@ -182,6 +217,10 @@ pub(crate) async fn usage(c: &mut Context) -> Result<Value> {
         return copilot_usage(&v, &c.models);
     }
 
+    codex_usage(&read_limits(c).await?)
+}
+
+pub(super) async fn read_limits(c: &mut Context) -> Result<Value> {
     let path = root(&c.auth)?;
     let mut cmd = command(c, "codex", &path)?;
     cmd.arg("app-server");
@@ -192,5 +231,5 @@ pub(crate) async fn usage(c: &mut Context) -> Result<Value> {
     {
         return Err("Codex quota belongs to a different workspace".into());
     }
-    codex_usage(&v)
+    Ok(v)
 }

@@ -9,11 +9,22 @@ use aipass_vault::{ProviderEntryInput, Vault};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use uuid::Uuid;
+mod feedback;
+mod sessions;
+pub(crate) use sessions::{handle as claude_session, owner as claude_session_owner};
+mod identity;
+pub(crate) use feedback::{
+    claude_observations, display_window as claude_observed_window, observe_claude,
+};
 
 pub(crate) fn persist_claude_login(
     vault: &Vault,
     native: &crate::claude_cli::NativeAccount,
 ) -> anyhow::Result<Uuid> {
+    for entry in vault.list_provider_summaries()? {
+        // Unavailable legacy homes remain recoverable and cannot match a scoped login.
+        let _ = identity::upgrade_entry(vault, &entry, Some(&native.identity));
+    }
     let reference = SecretString::new(
         json!({"nativeHome":native.home,"accountId":native.identity,"nativeDevice":cli_accounts::device().map_err(anyhow::Error::msg)?}).to_string(),
     );
@@ -27,7 +38,10 @@ pub(crate) fn persist_claude_login(
     } else {
         vault.add_provider_with_runtime_extension(
             ProviderEntryInput {
-                title: format!("Claude · {}", native.identity),
+                title: format!(
+                    "Claude {}",
+                    aipass_config_writers::native_auth::claude_identity::label(&native.identity)
+                ),
                 provider_kind: ProviderKind::Official,
                 provider_id: Some("anthropic".into()),
                 credential_kind: CredentialKind::OAuth,
@@ -91,6 +105,12 @@ pub(crate) fn claude_reference(vault: &Vault, id: Uuid) -> ServiceResult<Option<
 }
 pub(crate) fn refresh_registered_accounts(state: &std::sync::Arc<AgentState>) -> ServiceResult<()> {
     let due = with_vault(state, false, |vault| {
+        let before = vault
+            .list_provider_summaries()
+            .map_err(map_vault_error)?
+            .into_iter()
+            .map(|entry| (entry.id, entry.updated_at))
+            .collect::<std::collections::HashMap<_, _>>();
         if migrate(vault).is_err() {
             crate::logging::write_component_log(
                 crate::logging::AGENT_LOG,
@@ -98,8 +118,24 @@ pub(crate) fn refresh_registered_accounts(state: &std::sync::Arc<AgentState>) ->
                 "event=subscription.cli_handoff.failed",
             );
         }
+        let entries = vault.list_provider_summaries().map_err(map_vault_error)?;
+        // Migration may commit some entries even if a later handoff fails.
+        // Refresh those bindings even when their quota tracking is disabled/recent.
+        if entries
+            .iter()
+            .any(|entry| before.get(&entry.id) != Some(&entry.updated_at))
+        {
+            state
+                .proxy
+                .lock()
+                .map_err(|_| ServiceError::internal(anyhow::anyhow!("proxy unavailable")))?
+                .reload_if_running(vault)?;
+            state
+                .sync_revision
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         let mut due = Vec::new();
-        for entry in vault.list_provider_summaries().map_err(map_vault_error)? {
+        for entry in entries {
             if claude_reference(vault, entry.id)?.is_none() {
                 continue;
             }
@@ -107,15 +143,18 @@ pub(crate) fn refresh_registered_accounts(state: &std::sync::Arc<AgentState>) ->
             if !prefs.quota_tracking {
                 continue;
             }
-            let recent = entry
-                .subscription
-                .as_ref()
-                .and_then(|s| {
-                    time::OffsetDateTime::parse(
-                        &s.observed_at,
-                        &time::format_description::well_known::Rfc3339,
-                    )
-                    .ok()
+            let polled_at = entry.subscription.as_ref().and_then(|s| {
+                if s.source == "claude-cli:response" {
+                    feedback::claude_polled_at(vault, entry.id)
+                } else {
+                    Some(s.observed_at.clone())
+                }
+            });
+            let recent = polled_at
+                .as_deref()
+                .and_then(|at| {
+                    time::OffsetDateTime::parse(at, &time::format_description::well_known::Rfc3339)
+                        .ok()
                 })
                 .is_some_and(|t| {
                     (time::OffsetDateTime::now_utc() - t).whole_seconds()
@@ -212,6 +251,11 @@ pub(crate) fn refresh_claude(
 /// the reference replaces the mirror; a failed handoff keeps recoverable input.
 pub(crate) fn migrate(vault: &Vault) -> ServiceResult<()> {
     let mut failure = None;
+    for entry in vault.list_provider_summaries().map_err(map_vault_error)? {
+        if let Err(e) = identity::upgrade_entry(vault, &entry, None) {
+            failure = Some(ServiceError::internal(e));
+        }
+    }
     for account in vault.list_oauth_accounts(None).map_err(map_vault_error)? {
         let Some(id) = account.entry_id else {
             continue;

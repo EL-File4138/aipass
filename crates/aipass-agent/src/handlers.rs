@@ -55,6 +55,12 @@ fn dispatch_request(
         | AgentRequest::ClaudeLoginCancel { .. }
         | AgentRequest::CommunityRefresh { .. }
         | AgentRequest::ClaudeNativeRead { .. }
+        | AgentRequest::ClaudeNativeSession { .. }
+        | AgentRequest::ClaudeSessionOwner { .. }
+        | AgentRequest::ClaudeNativeObserve { .. }
+        | AgentRequest::SubscriptionReset { .. }
+        | AgentRequest::SubscriptionPolicyRead { .. }
+        | AgentRequest::SubscriptionHistoryOwner { .. }
         | AgentRequest::ClaudeNativeWrite { .. }
         | AgentRequest::OAuthLoginStart { .. }
         | AgentRequest::OAuthLoginPoll { .. }
@@ -70,9 +76,13 @@ fn dispatch_request(
             marker,
             revision,
             bundle,
-        } => with_vault(state, false, |vault| {
-            crate::community::write(vault, entry_id, marker.expose(), revision, bundle.expose())
-        })
+        } => crate::community::write_runtime(
+            state,
+            entry_id,
+            marker.expose(),
+            revision,
+            bundle.expose(),
+        )
         .map(|()| AgentResponse::empty()),
         request @ (AgentRequest::CommunityCatalog
         | AgentRequest::CommunityLoginStart { .. }
@@ -637,6 +647,7 @@ fn dispatch_request(
             )))
         }),
         AgentRequest::ProviderRuntimeSet { id, options } => with_vault(state, true, |vault| {
+            crate::subscription_policy::validate_group(state, vault, id, &options.subscription)?;
             let view = crate::provider_runtime::save(vault, id, options)?;
             state
                 .proxy

@@ -6,6 +6,21 @@ pub(super) fn handle(
     request: AgentRequest,
 ) -> ServiceResult<AgentResponse> {
     match request {
+        AgentRequest::SubscriptionHistoryOwner { digests, targets } => crate::community::history_owner(state, digests, targets).map(AgentResponse::success),
+        AgentRequest::ClaudeSessionOwner { call_ids } => crate::official_accounts::claude_session_owner(state, call_ids).map(AgentResponse::success),
+        AgentRequest::ClaudeNativeSession { entry_id, marker, operation } => {
+            crate::official_accounts::claude_session(state, entry_id, marker.expose(), operation).map(AgentResponse::success)
+        }
+        AgentRequest::SubscriptionPolicyRead { entry_id } => with_vault(state, false, |vault| {
+            Ok(AgentResponse::success(crate::provider_runtime::load(vault, entry_id)?.subscription))
+        }),
+        AgentRequest::SubscriptionReset { entry_id, request_id, credit_id } => {
+            crate::subscription_policy::reset(state, entry_id, request_id, credit_id).map(AgentResponse::success)
+        }
+        AgentRequest::ClaudeNativeObserve { entry_id, marker, windows } => {
+            crate::official_accounts::observe_claude(state, entry_id, marker.expose(), windows)?;
+            Ok(AgentResponse::empty())
+        }
         AgentRequest::SubscriptionCliStatus { provider } => {
             with_vault(state, false, |_| Ok(()))?;
             Ok(AgentResponse::success(

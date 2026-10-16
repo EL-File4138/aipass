@@ -18,8 +18,11 @@ use std::{
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
+mod automatic;
 mod health;
+pub(crate) use automatic::refresh as refresh_automatic;
 mod historical;
+mod identity;
 mod login;
 pub(crate) use health::remember as remember_probe;
 mod native;
@@ -308,6 +311,14 @@ fn apply_locked(
     request: ToolConfigRequest,
     import: bool,
 ) -> ServiceResult<ToolConfigApplyResponse> {
+    apply_locked_guarded(state, request, import, None)
+}
+fn apply_locked_guarded(
+    state: &Arc<AgentState>,
+    request: ToolConfigRequest,
+    import: bool,
+    policy: Option<(Uuid, &str, Uuid)>,
+) -> ServiceResult<ToolConfigApplyResponse> {
     // Existing conflicts require explicit restoration/reconciliation, not an
     // account switch that silently replaces an external writer's state.
     if status_snapshot(state, request.tool.clone())?.state == "conflict" {
@@ -322,6 +333,9 @@ fn apply_locked(
     }
     // Compare the displayed preview before a renewal writes anything.
     let check = with_vault(state, false, |vault| {
+        if let Some((preferred, expected, current)) = policy {
+            automatic::check_policy(state, vault, preferred, expected, current, request.id)?;
+        }
         let (_, plan, _) = crate::server::build_tool_config_plan(vault, &request, true)?;
         if let Some(id) = &request.preview_id {
             if *id != preview_id(vault, state, &request, &plan).map_err(safe_error)? {
@@ -397,6 +411,9 @@ fn apply_locked(
         }
     }
     with_vault(state, false, |vault| {
+        if let Some((preferred, expected, current)) = policy {
+            automatic::check_policy(state, vault, preferred, expected, current, request.id)?;
+        }
         let selected = selection_context(vault, request.id).map_err(safe_error)?;
         if fingerprint(&resources, &vault.config_backup_key(), &selected).map_err(safe_error)?
             != stamp
@@ -726,7 +743,7 @@ fn status_snapshot(
             message: None,
             overrides: environment_overrides(&tool),
         };
-        let Some(binding) =
+        let Some(mut binding) =
             load_binding(state, &tool, &vault.config_backup_key()).map_err(safe_error)?
         else {
             let home = crate::server::home_dir(vault)?;
@@ -767,6 +784,7 @@ fn status_snapshot(
             }
             return Ok(result);
         };
+        identity::upgrade_binding(vault, &mut binding).map_err(safe_error)?;
         result.entry_title = vault
             .get_provider_summary(binding.request.id)
             .ok()

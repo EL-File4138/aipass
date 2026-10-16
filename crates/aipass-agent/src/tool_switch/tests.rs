@@ -50,6 +50,50 @@ pub(super) fn request(id: Uuid, mode: ToolConfigMode) -> ToolConfigRequest {
 fn switch(state: &Arc<AgentState>, r: &ToolConfigRequest) -> ToolConfigApplyResponse {
     with_vault(state, false, |vault| apply_inner(state, vault, r)).unwrap()
 }
+
+#[test]
+fn automatic_switch_revalidates_manual_choice_group_membership_and_archived_preference() {
+    let (_dir, state, home) = fixture();
+    let active = home.join(".codex");
+    let other = home.join("other");
+    fs::create_dir_all(&active).unwrap();
+    fs::create_dir_all(&other).unwrap();
+    let a = codex_auth("alice@example.test", "a", "first");
+    let b = codex_auth("bob@example.test", "b", "second");
+    fs::write(active.join("auth.json"), &a).unwrap();
+    fs::write(other.join("auth.json"), &b).unwrap();
+    let current = register(&state, &active);
+    let selected = register(&state, &other);
+    with_vault(&state, false, |vault| {
+        let mut service = state.proxy.lock().unwrap();
+        let mut config = service.load_config(vault)?;
+        let route = Uuid::new_v4();
+        let targets = [current, selected].into_iter().map(|id| {
+            let secret = vault.get_provider_summary(id).unwrap().secret_refs[0].id.clone();
+            json!({"id":Uuid::new_v4(),"providerEntryId":id,"secretId":secret,"label":"account","baseUrl":"https://community.aipass.invalid/v1","authScheme":"bearer","headers":[],"priority":0,"weight":1,"enabled":true})
+        }).collect::<Vec<_>>();
+        config.routes = vec![serde_json::from_value(json!({"id":route,"name":"native","token":"fixture","inboundProtocol":"open_ai_responses","upstreamProtocol":"open_ai_responses","conversionEnabled":true,"strategy":"fallback","targets":targets,"retry":aipass_proxy::RetryPolicy::default(),"enabled":true})).unwrap()];
+        service.set_config(vault, config.clone())?;
+        drop(service);
+        let policy = NativeSwitchPolicy { route_id: route, return_preferred: true };
+        let mut options = crate::provider_runtime::load(vault, current)?;
+        options.subscription.native_switch = Some(policy.clone());
+        crate::provider_runtime::save(vault, current, options)?;
+        let expected = serde_json::to_string(&policy).unwrap();
+        automatic::check_policy(&state, vault, current, &expected, current, selected)?;
+        fs::write(active.join("auth.json"), &b).unwrap();
+        assert!(automatic::check_policy(&state, vault, current, &expected, current, selected).is_err());
+        fs::write(active.join("auth.json"), &a).unwrap();
+        config.routes[0].targets[0].enabled = false;
+        state.proxy.lock().unwrap().set_config(vault, config.clone())?;
+        assert!(automatic::check_policy(&state, vault, current, &expected, current, selected).is_err());
+        config.routes[0].targets[0].enabled = true;
+        state.proxy.lock().unwrap().set_config(vault, config)?;
+        vault.archive_provider(current).unwrap();
+        assert!(automatic::check_policy(&state, vault, current, &expected, current, selected).is_err());
+        Ok(())
+    }).unwrap();
+}
 #[test]
 fn codex_roundtrip_preserves_latest_tokens_exact_keys_and_encrypted_backups() {
     let (_dir, state, home) = fixture();
@@ -541,6 +585,76 @@ fn reauthentication_rejects_other_accounts_and_keeps_the_selected_secret_id() {
     })
     .unwrap();
 }
+#[test]
+fn claude_reauthentication_rejects_a_different_organization_of_the_same_email() {
+    let (_dir, state, home) = fixture();
+    let path = home.join("org-a");
+    write_claude(&path, "alice@example.test", "a");
+    let id = claude_register(&state, &path, "alice@example.test::org::a");
+    with_vault(&state, false, |v| {
+        let before = reference(v, id, &ToolConfigTool::ClaudeCode).unwrap();
+        let marker = v.reveal_secret(id).unwrap();
+        let mut native = crate::claude_cli::NativeAccount {
+            home: home.join("relogin"),
+            identity: "alice@example.test::org::b".into(),
+            plan: None,
+        };
+        assert_eq!(
+            login::bind_claude(&state, v, id, &native).unwrap_err().code,
+            AgentErrorCode::Conflict
+        );
+        assert_eq!(
+            reference(v, id, &ToolConfigTool::ClaudeCode).unwrap(),
+            before
+        );
+        assert_eq!(v.reveal_secret(id).unwrap(), marker);
+        native.identity = "alice@example.test::org::a".into();
+        assert_eq!(login::bind_claude(&state, v, id, &native).unwrap(), id);
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn upgraded_claude_bindings_keep_status_but_reject_an_external_organization_switch() {
+    let (_dir, state, home) = fixture();
+    let path = home.join("org-a");
+    write_claude(&path, "alice@example.test", "a");
+    fs::write(
+        path.join(".claude.json"),
+        json!({"oauthAccount":{"emailAddress":"alice@example.test","organizationUuid":"a"}})
+            .to_string(),
+    )
+    .unwrap();
+    let id = claude_register(&state, &path, "alice@example.test::org::a");
+    let mut r = request(id, ToolConfigMode::Official);
+    r.tool = ToolConfigTool::ClaudeCode;
+    switch(&state, &r);
+    with_vault(&state, false, |v| {
+        let key = v.config_backup_key();
+        let mut binding = load_binding(&state, &r.tool, &key).unwrap().unwrap();
+        binding.identity = Some("alice@example.test".into());
+        Resource::File(binding_path(&state, &r.tool))
+            .write(Some(&encode_binding(&binding, &key).unwrap()))
+            .unwrap();
+        Ok(())
+    })
+    .unwrap();
+    let status = status_snapshot(&state, r.tool.clone()).unwrap();
+    assert_eq!(
+        status.account_identity.as_deref(),
+        Some("alice@example.test::org::a")
+    );
+    assert_ne!(status.state, "conflict");
+    fs::write(
+        home.join(".claude.json"),
+        json!({"oauthAccount":{"emailAddress":"alice@example.test","organizationUuid":"b"}})
+            .to_string(),
+    )
+    .unwrap();
+    assert_eq!(status_snapshot(&state, r.tool).unwrap().state, "conflict");
+}
+
 #[test]
 fn api_probe_health_tracks_exact_key_and_does_not_block_a_key_update() {
     let (_dir, state, home) = fixture();

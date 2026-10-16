@@ -40,6 +40,12 @@ pub(crate) async fn login(c: &mut Context, method: usize) -> Result<Value> {
     } else {
         new_home(&provider)?
     };
+    if method == 1 && provider == "codex" {
+        aipass_config_writers::native_auth::NativeStore::codex(&path)
+            .map_err(|e| e.to_string())?
+            .primary
+            .retry_read();
+    }
     if method != 1 {
         let mut cmd = command(c, &provider, &path)?;
         match provider.as_str() {
@@ -218,19 +224,36 @@ pub(super) async fn rpc(
 }
 
 pub(crate) async fn fresh(c: &mut Context) -> Result<()> {
+    fresh_inner(c, false, true).await
+}
+
+pub(super) async fn fresh_for_generation(c: &mut Context) -> Result<()> {
+    fresh_inner(c, false, false).await
+}
+
+pub(crate) async fn force_refresh(c: &mut Context) -> Result<()> {
+    fresh_inner(c, true, false).await
+}
+
+async fn fresh_inner(c: &mut Context, force: bool, cached: bool) -> Result<()> {
     c.native_token = None;
     check_device(&c.auth)?;
     let provider = c.provider.clone();
     let path = root(&c.auth)?;
     // Fail closed when the CLI's current account changed under a reference.
-    let mut value = read(&provider, &path)?;
+    let mut value = if cached {
+        store::read_cached(&provider, &path)?
+    } else {
+        read(&provider, &path)?
+    };
     let expected = s(&c.auth, "accountId").to_owned();
     if s(&value, "accountId") != expected {
         return Err("CLI account changed; reconnect it explicitly".into());
     }
-    if value["expires"]
-        .as_i64()
-        .is_some_and(|t| t <= (now() / 1000) as i64 + 300)
+    if force
+        || value["expires"]
+            .as_i64()
+            .is_some_and(|t| t <= (now() / 1000) as i64 + 300)
     {
         let _guard = c.refresh_guard()?;
         let mut cmd = command(c, &provider, &path)?;

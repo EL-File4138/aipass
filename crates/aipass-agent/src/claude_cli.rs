@@ -143,8 +143,11 @@ pub(crate) fn configure(command: &mut Command, dir: &Path) {
 pub(crate) fn account_environment(command: &mut Command, dir: &Path) {
     command.env("CLAUDE_CONFIG_DIR", dir);
     command.env_remove("CLAUDE_SECURESTORAGE_CONFIG_DIR");
-    #[cfg(target_os = "macos")]
     if directories::BaseDirs::new().is_some_and(|base| dir == base.home_dir().join(".claude")) {
+        // Explicitly naming the default config directory also moves .claude.json
+        // inside it. Keep both profile and secure storage in their native places.
+        command.env_remove("CLAUDE_CONFIG_DIR");
+        #[cfg(target_os = "macos")]
         command.env("CLAUDE_SECURESTORAGE_CONFIG_DIR", "");
     }
 }
@@ -234,18 +237,22 @@ impl ConfigDir {
                 .join(".claude/aipass-accounts");
             std::fs::create_dir_all(&base)
                 .map_err(|_| "cannot create Claude CLI account directory")?;
-            let path = base.join(Uuid::new_v4().to_string());
-            std::fs::create_dir(&path).map_err(|_| "cannot create Claude CLI account directory")?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
-                    .map_err(|_| "cannot protect Claude CLI account directory")?;
-            }
+            let temporary = tempfile::Builder::new()
+                .prefix("login-")
+                .tempdir_in(&base)
+                .map_err(|_| "cannot create Claude CLI account directory")?;
             Ok(Self {
-                path,
-                temporary: None,
+                path: temporary.path().to_owned(),
+                temporary: Some(temporary),
             })
+        }
+    }
+    fn keep(&mut self) {
+        if let Some(directory) = self.temporary.take() {
+            self.path = directory.keep();
+        }
+        for name in [".login-output", ".opened-url"] {
+            let _ = std::fs::remove_file(self.path.join(name));
         }
     }
 }

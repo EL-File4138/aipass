@@ -1,4 +1,33 @@
 use super::*;
+
+#[test]
+fn codex_cli_transport_uses_the_shared_catalog_and_auth_contract() {
+    let (mut c, _input, _output) = super::super::tests::context(Client::new());
+    c.provider = "codex".into();
+    c.native_token = Some(aipass_agent_protocol::SensitiveString::new("fixture-token"));
+    c.native_workspace = "workspace-a".into();
+    let url = aipass_proxy::codex_subscription_models_url(
+        "https://chatgpt.com/backend-api/codex",
+        &reqwest::header::HeaderMap::new(),
+    )
+    .unwrap();
+    let request = backend::signed(&c, c.client.get(url))
+        .unwrap()
+        .build()
+        .unwrap();
+    let version = request.headers()["version"].to_str().unwrap();
+    assert!(request
+        .url()
+        .query()
+        .unwrap()
+        .contains(&format!("client_version={version}")));
+    assert_eq!(
+        request.headers()["user-agent"],
+        format!("codex_cli_rs/{version}")
+    );
+    assert_eq!(request.headers()["openai-beta"], "responses=experimental");
+    assert_eq!(request.headers()["chatgpt-account-id"], "workspace-a");
+}
 #[test]
 fn copilot_uses_one_cli_authorization_header() {
     let (mut c, _input, _output) = super::super::tests::context(Client::new());
@@ -155,6 +184,17 @@ fn codex_and_copilot_usage_preserve_numbers_and_scoped_limits() {
     assert_eq!(v["windows"][0]["aside"], true);
     assert!(codex_usage(&json!({})).is_err());
     assert!(copilot_usage(&json!({}), &json!({})).is_err());
+}
+#[test]
+fn model_specific_buckets_cannot_hide_the_main_codex_allowance() {
+    let v = codex_usage(
+        &json!({"rateLimits":{"primary":{"usedPercent":100,"windowDurationMins":300}},
+        "rateLimitsByLimitId":{"spark":{"primary":{"usedPercent":10,"windowDurationMins":300}}}}),
+    )
+    .unwrap();
+    assert_eq!(v["windows"][0]["used"], 100.0);
+    assert!(v["windows"][0]["aside"].is_null());
+    assert_eq!(v["windows"][1]["aside"], true);
 }
 #[test]
 #[ignore = "local CLI capability checks only; no credentials, login or generation"]

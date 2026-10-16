@@ -8,6 +8,15 @@ pub(super) fn now() -> String {
 }
 pub(super) fn snapshot(provider: &str, value: &Value) -> SubscriptionSnapshot {
     SubscriptionSnapshot {
+        billing_period_ends_at: value["until"]
+            .as_str()
+            .and_then(|s| {
+                time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok()
+            })
+            .and_then(|t| {
+                t.format(&time::format_description::well_known::Rfc3339)
+                    .ok()
+            }),
         plan: value["plan"].as_str().map(str::to_owned),
         credits_remaining: value["balance"].as_str().map(str::to_owned).or_else(|| {
             value["balance"]
@@ -146,24 +155,42 @@ pub(crate) fn refresh_due(state: &Arc<AgentState>) {
 }
 
 pub(crate) fn quota(vault: &Vault, id: Uuid) -> Vec<aipass_proxy::QuotaWindow> {
-    let Some(raw) = vault
+    if vault
+        .get_provider_summary(id)
+        .ok()
+        .and_then(|e| e.provider_id)
+        .as_deref()
+        == Some("codex")
+    {
+        if let Ok(prefs) = crate::provider_runtime::load(vault, id) {
+            // Admission performs a live CLI allowance read before generation
+            // when reset is enabled and paid credits remain disabled.
+            if prefs.subscription.allow_paid_credits || prefs.subscription.auto_reset_credits {
+                return Vec::new();
+            }
+        }
+    }
+    native_quota(vault, id)
+}
+
+pub(crate) fn native_quota(vault: &Vault, id: Uuid) -> Vec<aipass_proxy::QuotaWindow> {
+    let raw = vault
         .provider_runtime_extension(id, "community_usage_v1")
         .ok()
-        .flatten()
-    else {
-        return Vec::new();
-    };
-    let Ok(value) = serde_json::from_str::<Value>(raw.expose()) else {
-        return Vec::new();
-    };
+        .flatten();
+    let value = raw
+        .and_then(|raw| serde_json::from_str::<Value>(raw.expose()).ok())
+        .unwrap_or_else(|| json!({}));
+    let value = super::feedback::usage(vault, id, value);
     let timestamp = |v: &str| {
         time::OffsetDateTime::parse(v, &time::format_description::well_known::Rfc3339)
             .ok()
             .and_then(|t| u64::try_from(t.unix_timestamp()).ok())
     };
-    let Some(observed_at) = value["observedAt"].as_str().and_then(timestamp) else {
-        return Vec::new();
-    };
+    let observed_at = value["observedAt"]
+        .as_str()
+        .and_then(timestamp)
+        .unwrap_or(0);
     if value["usage"]["error"].is_string() {
         return Vec::new();
     }
@@ -186,8 +213,9 @@ pub(crate) fn quota(vault: &Vault, id: Uuid) -> Vec<aipass_proxy::QuotaWindow> {
                 })
             };
             Some(aipass_proxy::QuotaWindow {
+                model_family: None,
                 used_basis_points: (used.min(100.) * 100.).round() as u16,
-                observed_at,
+                observed_at: w["observedAt"].as_u64().unwrap_or(observed_at),
                 resets_at: w["resetsAt"].as_str().and_then(timestamp),
                 models: strings("models"),
                 not_models: strings("notModels").unwrap_or_default(),
@@ -227,5 +255,15 @@ mod snapshot_tests {
         assert_eq!(failed.error.as_deref(), Some("read failed"));
         assert!(failed.stale);
         assert_eq!(snapshot("codex", &json!({})).credits_remaining, None);
+    }
+    #[test]
+    fn a_billing_period_end_is_preserved_without_claiming_subscription_cancellation() {
+        let snapshot = snapshot("zed", &json!({"until":"2026-11-01T00:00:00Z","plan":"pro"}));
+        assert_eq!(
+            snapshot.billing_period_ends_at.as_deref(),
+            Some("2026-11-01T00:00:00Z")
+        );
+        assert!(snapshot.subscription_expires_at.is_none());
+        assert!(snapshot.subscription_renews_at.is_none());
     }
 }

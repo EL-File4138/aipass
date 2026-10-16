@@ -14,8 +14,65 @@ pub(super) fn provider_profile(
         Some("moonshot" | "kimi") => Kimi,
         Some("mistral") => Mistral,
         Some("gemini") => GeminiCompatible,
+        Some("xai") => Grok,
         _ => Generic,
     }
+}
+
+pub(crate) fn account_quota_with_observations(
+    vault: &Vault,
+    entry: &aipass_vault::EntrySummary,
+) -> Vec<aipass_proxy::QuotaWindow> {
+    if entry.provider_id.as_deref() != Some("anthropic") {
+        return account_quota(entry);
+    }
+    let windows = crate::official_accounts::claude_observations(vault, entry.id);
+    let mut base = entry.clone();
+    let timestamp = |s: &str| {
+        OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
+            .ok()
+            .map(|t| t.unix_timestamp())
+            .unwrap_or(0)
+    };
+    let read_at = base
+        .subscription
+        .as_ref()
+        .map(|s| timestamp(&s.observed_at))
+        .unwrap_or(0);
+    if let Some(snapshot) = &mut base.subscription {
+        snapshot.windows.retain(|w| {
+            snapshot.source != "claude-cli:response"
+                && !windows
+                    .iter()
+                    .any(|heard| heard.scope == w.id && heard.observed_at >= read_at)
+        });
+    }
+    let mut quota = account_quota(&base);
+    for w in windows {
+        if entry.subscription.as_ref().is_some_and(|s| {
+            s.source != "claude-cli:response"
+                && !s.stale
+                && s.error.is_none()
+                && read_at > w.observed_at
+                && s.windows.iter().any(|old| old.id == w.scope)
+        }) {
+            continue;
+        }
+        let mut view = entry.clone();
+        view.subscription = Some(aipass_provider_registry::SubscriptionSnapshot {
+            observed_at: OffsetDateTime::from_unix_timestamp(w.observed_at)
+                .ok()
+                .and_then(|t| {
+                    t.format(&time::format_description::well_known::Rfc3339)
+                        .ok()
+                })
+                .unwrap_or_default(),
+            windows: vec![crate::official_accounts::claude_observed_window(&w)],
+            ..Default::default()
+        });
+        quota.extend(account_quota(&view));
+    }
+    quota
 }
 
 pub(super) fn account_quota(entry: &aipass_vault::EntrySummary) -> Vec<aipass_proxy::QuotaWindow> {
@@ -43,8 +100,20 @@ pub(super) fn account_quota(entry: &aipass_vault::EntrySummary) -> Vec<aipass_pr
         .windows
         .iter()
         .filter_map(|window| {
-            // Model-specific limits must not disable every model on the account.
+            let family = if entry.provider_id.as_deref() == Some("anthropic") {
+                match window.id.as_str() {
+                    "seven_day_sonnet" => Some("sonnet"),
+                    "seven_day_opus" => Some("opus"),
+                    "seven_day_haiku" => Some("haiku"),
+                    "seven_day_fable" | "seven_day_overage_included" => Some("fable"),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            // Unknown scopes remain advisory; known families affect only their models.
             if !window.id.starts_with("community_account_")
+                && family.is_none()
                 && !matches!(
                     window.id.as_str(),
                     "primary" | "secondary" | "five_hour" | "seven_day"
@@ -54,6 +123,7 @@ pub(super) fn account_quota(entry: &aipass_vault::EntrySummary) -> Vec<aipass_pr
             }
             let used = window.used_percent.filter(|v| v.is_finite() && *v >= 0.0)?;
             Some(aipass_proxy::QuotaWindow {
+                model_family: family.map(str::to_owned),
                 models: None,
                 not_models: Vec::new(),
                 used_basis_points: (used.min(100.0) * 100.0).round() as u16,

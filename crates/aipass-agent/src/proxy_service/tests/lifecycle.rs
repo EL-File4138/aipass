@@ -502,7 +502,10 @@ fn locking_session_keeps_runtime_credentials_available_to_proxy() {
     assert!(service.status().running);
     assert!(service.config.routes[0].token.is_empty());
 
-    let response = reqwest::blocking::Client::new()
+    let response = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .build()
+        .unwrap()
         .post(format!("http://{proxy_addr}/v1/responses"))
         .bearer_auth(local_token)
         .json(&serde_json::json!({"model": "gpt-test", "input": "hello"}))
@@ -695,7 +698,10 @@ fn provider_update_refreshes_running_credentials_and_headers() {
     );
 
     let request = || {
-        reqwest::blocking::Client::new()
+        reqwest::blocking::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
             .post(format!("http://{proxy_addr}/v1/responses"))
             .bearer_auth(local_token)
             .body("{}")

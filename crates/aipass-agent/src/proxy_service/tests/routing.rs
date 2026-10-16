@@ -1,6 +1,42 @@
 use super::*;
 
 #[test]
+fn claude_model_allowance_is_resolved_without_exhausting_the_whole_account() {
+    let temp = tempfile::tempdir().unwrap();
+    let vault = Vault::create(temp.path(), &SecretString::new("test password"))
+        .unwrap()
+        .vault;
+    let id = crate::official_accounts::persist_claude_login(
+        &vault,
+        &crate::claude_cli::NativeAccount {
+            home: temp.path().join("claude"),
+            identity: "alice@example.test".into(),
+            plan: None,
+        },
+    )
+    .unwrap();
+    let mut entry = vault.get_provider_summary(id).unwrap();
+    entry.subscription = Some(aipass_provider_registry::SubscriptionSnapshot {
+        observed_at: time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap(),
+        windows: vec![aipass_provider_registry::SubscriptionWindow {
+            id: "seven_day_sonnet".into(),
+            label: "Sonnet".into(),
+            used_percent: Some(100.0),
+            resets_at: None,
+            window_minutes: Some(10080),
+            source: None,
+        }],
+        ..Default::default()
+    });
+    let quota = account_quota(&entry);
+    assert_eq!(quota.len(), 1);
+    assert_eq!(quota[0].model_family.as_deref(), Some("sonnet"));
+    assert_eq!(quota[0].used_basis_points, 10_000);
+}
+
+#[test]
 fn config_allows_multiple_enabled_routes_with_independent_tokens() {
     let mut config = config_with_token("first-token");
     let mut second = config.routes[0].clone();
@@ -460,7 +496,10 @@ fn reload_if_running_rebuilds_credentials_after_the_vault_changed() {
     service.start(&creation.vault).expect("start proxy");
 
     let request = || {
-        reqwest::blocking::Client::new()
+        reqwest::blocking::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
             .post(format!("http://{proxy_addr}/v1/responses"))
             .bearer_auth(local_token)
             .body("{}")

@@ -12,6 +12,7 @@ pub struct ProviderRuntimeOptions {
     pub proxy: Option<ProviderProxyOptions>,
     pub balance: Option<BalanceEndpoint>,
     pub webhooks: Vec<ProviderWebhook>,
+    pub subscription: SubscriptionPolicy,
 }
 impl Default for ProviderRuntimeOptions {
     fn default() -> Self {
@@ -21,8 +22,23 @@ impl Default for ProviderRuntimeOptions {
             proxy: None,
             balance: None,
             webhooks: Vec::new(),
+            subscription: Default::default(),
         }
     }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct SubscriptionPolicy {
+    pub allow_paid_credits: bool,
+    pub auto_reset_credits: bool,
+    pub native_switch: Option<NativeSwitchPolicy>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NativeSwitchPolicy {
+    pub route_id: Uuid,
+    pub return_preferred: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

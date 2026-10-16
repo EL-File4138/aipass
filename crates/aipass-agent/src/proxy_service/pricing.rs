@@ -62,19 +62,7 @@ impl ProxyService {
         let overrides = self.config.pricing.clone();
         let list_prices = list_prices.to_vec();
         move |row: &UsageRow| {
-            crate::pricing::resolve_cost(
-                &config,
-                &overrides,
-                &list_prices,
-                row.provider_entry_id,
-                &row.secret_id,
-                row.model.as_deref(),
-                row.started_at,
-                row.input_tokens,
-                row.output_tokens,
-                row.cache_read_tokens,
-                row.cache_creation_tokens,
-            )
+            crate::pricing::resolve_row_cost(&config, &overrides, &list_prices, row)
         }
     }
 

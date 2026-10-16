@@ -4,8 +4,11 @@ use std::path::{Path, PathBuf};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 mod backend;
+mod copilot;
 mod discovery;
+mod gemini;
 mod quota;
+mod reset;
 mod session;
 mod store;
 
@@ -15,8 +18,9 @@ pub(super) use backend::{generate, models, usage};
 pub(super) use discovery::executable;
 pub(crate) use discovery::status;
 use quota::{codex_usage, copilot_usage};
+pub(super) use reset::consume_reset;
 use session::{command, rpc};
-pub(super) use session::{fresh, login, verify};
+pub(super) use session::{force_refresh, fresh, login, verify};
 #[cfg(test)]
 use store::config_home;
 pub(crate) use store::{

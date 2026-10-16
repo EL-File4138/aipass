@@ -198,8 +198,13 @@ pub(crate) async fn read(
         models: json!({}),
         session: uuid::Uuid::new_v4().to_string(),
         sequence: 0,
+        feedback: Default::default(),
+        policy: Default::default(),
+        history_owner: None,
+        session_binding: String::new(),
         cancellation: cancelled,
         refreshing,
+        generating: watch::channel(false).0,
     };
     let auth = match source.provider.as_str() {
         "zcode" => zcode::login(&mut c, 2).await?,

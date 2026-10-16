@@ -291,6 +291,9 @@ fn litellm_rule(name: &str, info: &Value) -> Option<ModelPriceRule> {
         cache_creation_micros_per_million: litellm_micros(
             info.get("cache_creation_input_token_cost"),
         )?,
+        cache_creation_1h_micros_per_million: info
+            .get("cache_creation_input_token_cost_above_1hr")
+            .and_then(|value| litellm_micros(Some(value))),
         off_peak: None,
     })
 }
@@ -491,6 +494,32 @@ mod tests {
         let config = load_pricing_config(dir.path(), &vault).unwrap();
         assert_eq!(config.list_price_updated_at, Some(NOW));
         assert!(config.assignments.is_empty());
+    }
+
+    #[test]
+    fn one_hour_cache_price_is_optional_and_never_invented_as_zero() {
+        let mut info =
+            json!({"input_cost_per_token":0.000003,"cache_creation_input_token_cost":0.00000375});
+        assert_eq!(
+            litellm_rule("claude-test", &info)
+                .unwrap()
+                .cache_creation_1h_micros_per_million,
+            None
+        );
+        info["cache_creation_input_token_cost_above_1hr"] = json!(0.000006);
+        assert_eq!(
+            litellm_rule("claude-test", &info)
+                .unwrap()
+                .cache_creation_1h_micros_per_million,
+            Some(6_000_000)
+        );
+        info["cache_creation_input_token_cost_above_1hr"] = json!(0);
+        assert_eq!(
+            litellm_rule("claude-test", &info)
+                .unwrap()
+                .cache_creation_1h_micros_per_million,
+            Some(0)
+        );
     }
 
     #[test]

@@ -143,7 +143,8 @@ pub(crate) fn rollback(
         let raw = Zeroizing::new(
             decrypt_bytes(&key, b"aipass-tool-binding;v=1", &envelope).map_err(safe_error)?,
         );
-        let binding: Binding = serde_json::from_slice(&raw).map_err(safe_error)?;
+        let mut binding: Binding = serde_json::from_slice(&raw).map_err(safe_error)?;
+        identity::upgrade_binding(vault, &mut binding).map_err(safe_error)?;
         let current = load_binding(state, &binding.request.tool, &key)
             .map_err(safe_error)?
             .ok_or_else(|| safe_error(anyhow::anyhow!("tool binding unavailable")))?;

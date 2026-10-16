@@ -338,7 +338,9 @@ pub(super) async fn usage(c: &mut Context) -> Result<Value> {
     {
         add(b, "Dedicated credits");
     }
-    Ok(json!({"plan":u["userType"].as_str().or(u["user_type"].as_str()),"windows":windows}))
+    Ok(
+        json!({"plan":u["userType"].as_str().or(u["user_type"].as_str()),"until":timestamp(u.get("expiresAt").or(u.get("expires_at")).unwrap_or(&Value::Null)),"windows":windows}),
+    )
 }
 pub(super) async fn generate(c: &mut Context, m: &Value, body: Value) -> Result<()> {
     use aipass_proxy_conversion::providers::qoder::{encode_body, request, QoderStream};

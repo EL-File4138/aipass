@@ -1,4 +1,5 @@
 use super::*;
+mod scope;
 fn base(c: &Context) -> &'static str {
     if c.provider == "workbuddy-ai" {
         "https://www.workbuddy.ai"
@@ -24,6 +25,11 @@ fn sign(c: &Context, req: RequestBuilder) -> Result<RequestBuilder> {
         .header("X-Product", "SaaS")
         .header("X-IDE-Type", "WorkBuddy")
         .header("User-Agent", "WorkBuddy/5.5.6");
+    if let Some(enterprise) = c.auth["enterpriseId"].as_str().filter(|s| !s.is_empty()) {
+        r = r
+            .header("X-Enterprise-Id", enterprise)
+            .header("X-Tenant-Id", enterprise);
+    }
     if c.provider == "workbuddy-ai" {
         r = r
             .header("X-Requested-With", "XMLHttpRequest")
@@ -92,8 +98,7 @@ pub(super) async fn login(c: &mut Context, method: usize) -> Result<Value> {
             });
         let v = read_json(&file)?;
         let mut a = merge(json!({"type":"oauth"}), &v["auth"])?;
-        a["uid"] = json!(identifier(&v["account"]["uid"]));
-        a["accountId"] = a["uid"].clone();
+        scope::bind(&mut a, &v["account"])?;
         if s(&a, "uid").is_empty() {
             return Err("WorkBuddy native account identity missing".into());
         }
@@ -138,8 +143,7 @@ pub(super) async fn login(c: &mut Context, method: usize) -> Result<Value> {
         true,
     )
     .await?;
-    a["uid"] = json!(identifier(&who["uid"]));
-    a["accountId"] = a["uid"].clone();
+    scope::bind(&mut a, &who)?;
     if s(&a, "uid").is_empty() {
         return Err("WorkBuddy returned no account identity".into());
     }
@@ -291,31 +295,16 @@ pub(super) async fn models(c: &mut Context) -> Result<Value> {
     Ok(out)
 }
 pub(super) async fn usage(c: &mut Context) -> Result<Value> {
-    let sum = data(
-        sign(
-            c,
-            c.client.post(format!(
-                "{}/billing/meter/get-user-resource-summary",
-                base(c)
-            )),
-        )?
-        .json(&json!({})),
-    )
-    .await?;
-    let number = |v: &Value| {
-        v.as_f64()
-            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-            .unwrap_or(0.0)
+    let enterprise = !s(&c.auth, "enterpriseId").is_empty();
+    let path = if enterprise {
+        "/billing/meter/get-enterprise-user-usage"
+    } else {
+        "/billing/meter/get-user-resource-summary"
     };
-    let (mut used, mut total) = (0.0, 0.0);
-    for p in sum["Packages"].as_array().into_iter().flatten() {
-        used += number(&p["CycleUsedCapacity"]);
-        total += number(&p["CycleTotalCapacity"]);
-    }
-    Ok(
-        json!({"plan":if sum["IsPaidUser"]==true {"Pro"} else {"Free"},"windows":if total>0.0 {vec![json!({"name":"Credits","used":100.0*used/total,"display":format!("{used:.2} / {total:.2}")})]} else {vec![]}}),
-    )
+    let sum = data(sign(c, c.client.post(format!("{}{path}", base(c))))?.json(&json!({}))).await?;
+    scope::usage(&sum, enterprise, &c.models)
 }
+
 pub(super) async fn generate(c: &mut Context, _: &Value, mut body: Value) -> Result<()> {
     aipass_proxy_conversion::providers::workbuddy_request(&mut body)?;
     let r = send(sign(c, c.client.post(format!("{}/v2/chat/completions", base(c))))?.json(&body))

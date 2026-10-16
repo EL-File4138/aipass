@@ -4,6 +4,23 @@ fn now() -> chrono::DateTime<Utc> {
     "2026-10-01T04:00:00Z".parse().unwrap()
 }
 
+#[cfg(unix)]
+#[test]
+fn sign_in_reads_organization_identity_and_rejects_mixed_profile_metadata() {
+    let (_temp,binary) = script("echo '{\"loggedIn\":true,\"authMethod\":\"oauth_token\",\"email\":\"alice@example.test\",\"orgId\":\"org-a\"}'");
+    let dir = ConfigDir::new().unwrap();
+    let write_profile = |org| {
+        std::fs::write(dir.path().join(".claude.json"),serde_json::json!({"oauthAccount":{"emailAddress":"alice@example.test","organizationUuid":org}}).to_string()).unwrap()
+    };
+    write_profile("org-a");
+    assert_eq!(
+        super::login::signed_in(&binary, &dir).unwrap().identity,
+        "alice@example.test::org::org-a"
+    );
+    write_profile("org-b");
+    assert!(super::login::signed_in(&binary, &dir).is_err());
+}
+
 #[test]
 fn usage_preserves_percentages_model_scopes_and_iana_resets() {
     let windows = parse_usage("\x1b[32mCurrent session: 13% used · resets Oct 1 at 3:30pm (Asia/Shanghai)\x1b[0m\nCurrent week (all models): 0.4% used · resets Oct 3, 2:59pm (UTC)\nCurrent week (Sonnet): 7% used\nCurrent week (Fable): 0% used", now()).unwrap();
@@ -138,9 +155,11 @@ printf '%s' '{"oauthAccount":{"emailAddress":"alice@example.test"}}' > .claude.j
         .is_err());
     assert_eq!(manager.poll(challenge.ticket).unwrap().status, "authorized");
     let id = Uuid::new_v4();
+    let mut saved_home = None;
     assert_eq!(
         manager
             .commit(challenge.ticket, |native| {
+                saved_home = Some(native.home.clone());
                 assert_eq!(native.identity, "alice@example.test");
                 assert_eq!(native.plan.as_deref(), Some("max"));
                 Ok(id)
@@ -150,6 +169,12 @@ printf '%s' '{"oauthAccount":{"emailAddress":"alice@example.test"}}' > .claude.j
     );
     assert_eq!(manager.poll(challenge.ticket).unwrap().entry_id, Some(id));
     manager.clear();
+    let saved_home = saved_home.unwrap();
+    assert!(
+        saved_home.is_dir(),
+        "a committed CLI home must survive ticket cleanup"
+    );
+    std::fs::remove_dir_all(saved_home).unwrap();
     assert_eq!(manager.poll(challenge.ticket).unwrap().status, "expired");
     assert!(manager.start_with(binary, 0).is_err());
 }
@@ -169,6 +194,9 @@ fn default_account_keeps_the_vendor_keychain_while_new_accounts_are_isolated() {
         .join(".claude");
     let mut command = Command::new("claude");
     account_environment(&mut command, &home);
+    assert!(command
+        .get_envs()
+        .any(|(k, v)| k == "CLAUDE_CONFIG_DIR" && v.is_none()));
     assert!(command.get_envs().any(
         |(k, v)| k == "CLAUDE_SECURESTORAGE_CONFIG_DIR" && v == Some(std::ffi::OsStr::new(""))
     ));

@@ -1,4 +1,5 @@
 use super::*;
+mod quota;
 use sha2::{Digest, Sha256};
 const SERVER: &str = "https://server.codeium.com";
 fn server(c: &Context) -> Result<String> {
@@ -196,48 +197,9 @@ pub(super) async fn models(c: &mut Context) -> Result<Value> {
 }
 pub(super) async fn usage(c: &mut Context) -> Result<Value> {
     let v=json_request(c.client.post(format!("{}/exa.seat_management_pb.SeatManagementService/GetUserStatus",server(c)?)).header("Connect-Protocol-Version","1").json(&json!({"metadata":{"ideName":"devin-cli","ideVersion":"3000.11.3","extensionName":"devin-cli","extensionVersion":"3000.11.3","apiKey":c.token()?,"locale":"en","os":vendor_platform()}}))).await?;
-    let st = &v["userStatus"]["planStatus"];
-    let num = |v: &Value| {
-        v.as_f64()
-            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-    };
-    let mut windows = vec![];
-    for (name, span, left, reset, hide) in [
-        (
-            "1 day",
-            86400,
-            "dailyQuotaRemainingPercent",
-            "dailyQuotaResetAtUnix",
-            "hideDailyQuota",
-        ),
-        (
-            "7 days",
-            604800,
-            "weeklyQuotaRemainingPercent",
-            "weeklyQuotaResetAtUnix",
-            "hideWeeklyQuota",
-        ),
-    ] {
-        if st["planInfo"][hide] == true {
-            continue;
-        }
-        if let Some(n) = num(&st[left]) {
-            let at = num(&st[reset])
-                .and_then(|n| time::OffsetDateTime::from_unix_timestamp(n as i64).ok())
-                .and_then(|t| {
-                    t.format(&time::format_description::well_known::Rfc3339)
-                        .ok()
-                });
-            windows.push(
-                json!({"name":name,"used":(100.0-n).clamp(0.0,100.0),"span":span,"resetsAt":at}),
-            );
-        }
-    }
-    if let Some(limit) = num(&st["acuLimit"]).filter(|n| *n > 0.0) {
-        windows.push(json!({"name":"ACUs","used":100.0*num(&st["acuConsumed"]).unwrap_or(0.0)/limit,"aside":true,"resetsAt":st["planEnd"]}));
-    }
-    Ok(json!({"plan":st["planInfo"]["planName"],"until":st["planEnd"],"windows":windows}))
+    quota::normalize(&v)
 }
+
 pub(super) async fn generate(c: &mut Context, m: &Value, body: Value) -> Result<()> {
     use aipass_proxy_conversion::providers::devin::{request, variant, DevinStream};
     let fallback: Value = serde_json::from_str(include_str!("devin_families.json"))

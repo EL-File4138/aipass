@@ -56,8 +56,13 @@ pub(super) fn context(client: Client) -> (Context, mpsc::Sender<Value>, mpsc::Re
             native_token: None,
             native_workspace: String::new(),
             sequence: 0,
+            feedback: Default::default(),
+            policy: Default::default(),
+            history_owner: None,
+            session_binding: String::new(),
             cancellation,
             refreshing,
+            generating: watch::channel(false).0,
         },
         tx,
         rx,
@@ -158,6 +163,7 @@ async fn canceled_request_keeps_an_inflight_rotation_until_its_durable_ack() {
         },
         canceled,
         phase,
+        watch::channel(false).1,
     ));
     received.await.unwrap();
     cancel.send_replace(true);
@@ -198,7 +204,12 @@ async fn cancellation_stops_work_outside_rotation_but_allows_the_credential_ack(
     assert_eq!(receiver.recv().await.unwrap()["type"], "ack");
     let outcome = tokio::time::timeout(
         Duration::from_secs(1),
-        run_cancellable(std::future::pending(), cancellation, phase),
+        run_cancellable(
+            std::future::pending(),
+            cancellation,
+            phase,
+            watch::channel(false).1,
+        ),
     )
     .await
     .unwrap();

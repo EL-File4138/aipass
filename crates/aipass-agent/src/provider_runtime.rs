@@ -96,6 +96,7 @@ pub(crate) fn save(
     mut options: ProviderRuntimeOptions,
 ) -> ServiceResult<ProviderRuntimeOptions> {
     let old = load(vault, id)?;
+    crate::subscription_policy::validate(vault, id, &options.subscription)?;
     let validation = (|| -> Result<(), String> {
         if !(60..=3600).contains(&options.quota_refresh_seconds) {
             return Err("quota refresh interval must be 60–3600 seconds".into());

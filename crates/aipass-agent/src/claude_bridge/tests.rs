@@ -1,6 +1,6 @@
 use super::*;
 use std::os::unix::fs::PermissionsExt;
-fn fixture(script: &str) -> (tempfile::TempDir, ClaudeBridge, ResolvedTarget) {
+pub(super) fn fixture(script: &str) -> (tempfile::TempDir, ClaudeBridge, ResolvedTarget) {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("claude");
     std::fs::write(&path, format!("#!/bin/sh\n{script}")).unwrap();

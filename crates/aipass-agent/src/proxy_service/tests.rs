@@ -48,6 +48,12 @@ fn fixture_consumes_headers_and_body_across_separate_reads() {
 
 fn config_with_token(token: &str) -> ProxyConfig {
     ProxyConfig {
+        // Local credential/runtime fixtures must not depend on the host's
+        // changing system proxy or PAC configuration.
+        upstream_proxy: aipass_proxy::UpstreamProxyConfig {
+            mode: aipass_proxy::UpstreamProxyMode::Direct,
+            ..Default::default()
+        },
         routes: vec![ProxyRouteConfig {
             id: Uuid::new_v4(),
             name: "test".into(),

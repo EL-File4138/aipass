@@ -1,5 +1,6 @@
 mod handlers;
 mod params;
+mod subscription;
 mod tools;
 
 use crate::params::*;
@@ -25,6 +26,9 @@ impl ProxyMcpServer {
 
     pub async fn handle_tool_call(&self, name: &str, arguments: Value) -> Result<Value> {
         match name {
+            "subscription_policy_get" | "subscription_policy_set" | "subscription_reset" => {
+                self.subscription(name, arguments)
+            }
             "proxy_status" => self.proxy_status().await,
             "proxy_start" => self.proxy_start().await,
             "proxy_stop" => self.proxy_stop().await,

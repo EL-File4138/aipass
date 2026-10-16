@@ -39,7 +39,10 @@ pub(super) fn copilot_usage(v: &Value, models: &Value) -> Result<Value> {
                     .as_object()
                     .into_iter()
                     .flatten()
-                    .filter(|(_, m)| m["premiumMultiplier"].as_f64().is_some_and(|n| n > 0.0))
+                    .filter(|(_, m)| {
+                        m["premium"] == true
+                            || m["premiumMultiplier"].as_f64().is_some_and(|n| n > 0.0)
+                    })
                     .map(|(id, _)| id.to_owned())
                     .collect::<Vec<_>>();
                 // An unknown billing multiplier cannot exhaust unrelated free models.
@@ -60,10 +63,16 @@ pub(super) fn copilot_usage(v: &Value, models: &Value) -> Result<Value> {
 pub(super) fn codex_usage(value: &Value) -> Result<Value> {
     let base = &value["rateLimits"];
     let buckets = value["rateLimitsByLimitId"].as_object();
-    let entries: Vec<(&str, &Value)> = match buckets {
+    let mut entries: Vec<(&str, &Value)> = match buckets {
         Some(b) if !b.is_empty() => b.iter().map(|(k, v)| (k.as_str(), v)).collect(),
         _ => vec![("codex", base)],
     };
+    let base_id = base["limitId"].as_str().unwrap_or("codex");
+    if !entries.iter().any(|(id, _)| *id == base_id)
+        && (base["primary"].is_object() || base["secondary"].is_object())
+    {
+        entries.insert(0, (base_id, base));
+    }
     let mut windows = Vec::new();
     for (id, bucket) in entries {
         for name in ["primary", "secondary"] {
@@ -97,5 +106,7 @@ pub(super) fn codex_usage(value: &Value) -> Result<Value> {
     } else {
         credits["balance"].clone()
     };
-    Ok(json!({"plan":base["planType"],"balance":balance,"windows":windows}))
+    Ok(
+        json!({"plan":base["planType"],"balance":balance,"windows":windows,"resetCredits":value["rateLimitResetCredits"]}),
+    )
 }

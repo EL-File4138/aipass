@@ -167,11 +167,23 @@ impl Drop for PrivateJson {
     }
 }
 pub(super) fn read(provider: &str, root: &Path) -> Result<PrivateJson> {
+    read_inner(provider, root, false)
+}
+pub(super) fn read_cached(provider: &str, root: &Path) -> Result<PrivateJson> {
+    read_inner(provider, root, true)
+}
+fn read_inner(provider: &str, root: &Path, cached: bool) -> Result<PrivateJson> {
     let dir = config_home(provider, root);
     let value: Result<Value> = match provider {
         "codex" => {
             let raw = aipass_config_writers::native_auth::NativeStore::codex(&dir)
-                .and_then(|s| s.credentials())
+                .and_then(|s| {
+                    if cached {
+                        s.credentials_cached()
+                    } else {
+                        s.credentials()
+                    }
+                })
                 .map_err(|e| e.to_string())?;
             if !s(&raw.0, "OPENAI_API_KEY").is_empty() {
                 return Err("Sign in to ChatGPT in Codex instead of using an API key".into());
@@ -216,23 +228,28 @@ pub(super) fn read(provider: &str, root: &Path) -> Result<PrivateJson> {
             if s(&raw, "access_token").is_empty() || s(&users, "active").is_empty() {
                 return Err("Gemini CLI is not signed in with Google".into());
             }
+            let project = super::gemini::project(&dir)?;
+            let identity = if project.is_empty() {
+                s(&users, "active").to_owned()
+            } else {
+                format!("{}::project::{project}", s(&users, "active"))
+            };
             Ok(
-                json!({"access":raw["access_token"],"accountId":users["active"],"expires":raw["expiry_date"].as_i64().map(|v|v/1000)}),
+                json!({"access":raw["access_token"],"accountId":identity,"workspace":project,"expires":raw["expiry_date"].as_i64().map(|v|v/1000)}),
             )
         }
         "copilot" => {
             let config = PrivateJson(read_json(&dir.join("config.json"))?);
             let user = &config["lastLoggedInUser"];
             let login = s(user, "login");
-            if login.is_empty()
-                || !matches!(
-                    s(user, "host").trim_end_matches('/'),
-                    "https://github.com" | "github.com" | ""
-                )
-            {
-                return Err("Sign in to github.com with Copilot CLI".into());
+            if login.is_empty() {
+                return Err("Sign in with Copilot CLI".into());
             }
-            let key = format!("https://github.com:{login}");
+            let host = super::copilot::host(s(user, "host"))?;
+            let key = format!(
+                "https://{}:{login}",
+                if host.is_empty() { "github.com" } else { &host }
+            );
             let token = config["copilotTokens"][&key]
                 .as_str()
                 .filter(|v| !v.is_empty())
@@ -247,7 +264,9 @@ pub(super) fn read(provider: &str, root: &Path) -> Result<PrivateJson> {
             let token = token
                 .filter(|v| !v.is_empty())
                 .ok_or("Copilot CLI credential store is unavailable; sign in again")?;
-            Ok(json!({"access":token,"accountId":login}))
+            Ok(
+                json!({"access":token,"accountId":if host.is_empty() {login.to_owned()} else {format!("{login}@{host}")},"workspace":host}),
+            )
         }
         _ => Err("unknown CLI account".into()),
     };

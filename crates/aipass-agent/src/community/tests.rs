@@ -1,7 +1,7 @@
 use super::quota::snapshot;
 use super::*;
 fn account() -> Account {
-    Account{provider:"factory".into(),generation:Uuid::new_v4(),auth:SensitiveString::new(json!({"type":"oauth","access":"fake-private-community-access","refresh":"fake-private-community-refresh","accountId":"alice"}).to_string()),models:json!({"claude-sonnet-4-6":{"name":"Sonnet","api":{"npm":"@ai-sdk/anthropic","url":"https://api.factory.ai/api/llm/a/v1"}}}),revision:0,native_method:None,identity:"alice".into()}
+    Account{provider:"factory".into(),generation:Uuid::new_v4(),auth:SensitiveString::new(json!({"type":"oauth","access":"fake-private-community-access","refresh":"fake-private-community-refresh","accountId":"alice"}).to_string()),models:json!({"claude-sonnet-4-6":{"name":"Sonnet","api":{"npm":"@ai-sdk/anthropic","url":"https://api.factory.ai/api/llm/a/v1"}}}),revision:0,feedback:Default::default(),native_method:None,identity:"alice".into()}
 }
 #[test]
 fn cli_login_retains_live_models_without_rotating_an_unchanged_binding() {

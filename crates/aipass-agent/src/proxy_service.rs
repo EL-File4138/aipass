@@ -811,10 +811,13 @@ mod pricing;
 mod routing;
 mod runtime;
 use config::*;
-use routing::{account_quota, managed_oauth_token, provider_profile};
+#[cfg(test)]
+use routing::account_quota;
+pub(crate) use routing::account_quota_with_observations;
 pub(crate) use routing::{
     key_upstream_protocol, pinned_official_oauth_endpoint, proxy_auth_scheme, upstream_kind,
 };
+use routing::{managed_oauth_token, provider_profile};
 
 #[cfg(test)]
 mod tests;
