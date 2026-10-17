@@ -18,6 +18,8 @@ mod sources;
 #[cfg(test)]
 mod tests;
 
+const MAX_PARALLEL_READS: usize = 4;
+
 #[derive(Default)]
 pub(crate) struct Imports {
     current: Mutex<Option<Arc<Job>>>,
@@ -339,7 +341,7 @@ fn run(
                 };
                 (source, result)
             }
-        })).buffered(4);
+        })).buffered(MAX_PARALLEL_READS);
         let mut revisions = snapshot.revisions;
         let mut seen = HashMap::new();
         while let Some((source, read)) = work.next().await {
