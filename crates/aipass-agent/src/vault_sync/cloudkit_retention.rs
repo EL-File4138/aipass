@@ -1,12 +1,12 @@
 //! Bound immutable CloudKit history after a fully authenticated sync.
 use super::{cache_path, checkpoint_path, Checkpoint};
 use crate::cloudkit::Remote;
+use crate::session::{AgentState, SessionState};
 use aipass_sync::{snapshot_id, SnapshotRemote};
 use aipass_vault::VaultSyncSnapshot;
 use anyhow::{bail, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::Path;
 use time::{Duration, OffsetDateTime};
 
 // A peer which has been offline longer than this may need manual conflict
@@ -24,7 +24,8 @@ struct HistoryNode {
     bytes: u64,
 }
 
-pub(super) fn prune(root: &Path, remote: &Remote<'_>) -> Result<usize> {
+pub(super) fn prune(state: &AgentState, remote: &Remote<'_>) -> Result<usize> {
+    let root = &state.vault_dir;
     let target = format!("cloudkit:{}", remote.account);
     let checkpoint: Checkpoint =
         serde_json::from_slice(&fs::read(checkpoint_path(root, &target))?)?;
@@ -59,18 +60,21 @@ pub(super) fn prune(root: &Path, remote: &Remote<'_>) -> Result<usize> {
     let expired = expired_ids(&snapshots, &checkpoint.heads, OffsetDateTime::now_utc());
     for id in &expired {
         remote.delete(id)?;
-        let path = cache_path(root, id)?;
-        match fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-        let metadata = path.with_extension("aipstate");
-        if let Err(error) = fs::remove_file(metadata) {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                return Err(error.into());
-            }
-        }
+    }
+    let retained = snapshots
+        .keys()
+        .filter(|id| !expired.contains(id))
+        .cloned()
+        .collect();
+    // A peer may have pruned history since this device last synced. Serialize
+    // local collection with vault writes so a newly staged upload is never
+    // swept between its cache write and its outbox/checkpoint commit.
+    let session = state
+        .session
+        .lock()
+        .map_err(|_| anyhow::anyhow!("session lock poisoned"))?;
+    if matches!(*session, SessionState::Unlocked(_)) {
+        super::storage::prune_cache(root, &retained)?;
     }
     Ok(expired.len())
 }

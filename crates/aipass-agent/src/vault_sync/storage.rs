@@ -1,4 +1,7 @@
 //! Durable sync staging and bounded local snapshot storage.
+mod cache_retention;
+pub(super) use cache_retention::prune as prune_cache;
+
 use crate::session::{AgentState, StoredSyncSettings};
 use aipass_storage::atomic_write_bytes;
 use aipass_sync::{snapshot_id, valid_snapshot_id, SnapshotRemote};

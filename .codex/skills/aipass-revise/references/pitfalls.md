@@ -12,6 +12,13 @@ Newest entries last within each section.
 - **Guardrail**: exclude high-churn local telemetry from remote state; bound retry queues independently of network health, preserve the confirmed remote parent during compaction, and never remove a remote branch head or its direct parent or prune during conflict/quarantine. Test old pending migration and crash recovery before cleaning real data. Measure normal post-upgrade full-copy counts and allocated bytes; a generous byte ceiling alone does not demonstrate acceptable steady-state storage.
 - **Watch points**: `aipass-vault` snapshot export/apply and audit retention; `aipass-agent` staging, checkpoint and CloudKit retention; signed Swift CloudKit transport; the IPC snapshot size bound.
 
+### Cloud history deleted by another device left local cached copies behind
+- **Symptom**: one device reduced CloudKit history while another device kept every snapshot it had downloaded, even after successful syncs.
+- **Root cause**: `vault_sync/cloudkit_retention.rs::prune` removed local cache files only when this device itself deleted the remote snapshot. A later remote listing no longer included peer-deleted records, so they never became deletion candidates here.
+- **Fix**: collect orphaned local cache bodies and metadata after authenticated CloudKit cleanup. Mark active remote IDs, every target's checkpoints/conflicts, queued uploads and direct parents before sweeping; hold the session lock only during local collection, after remote I/O, so staging cannot race deletion.
+- **Guardrail**: test both the deleting device and a peer with already-cached historical bodies. Preserve inactive targets and pending uploads, abort before any local deletion on corrupt recovery metadata, and serialize local mark/sweep with vault staging. Never hold the session lock across CloudKit requests.
+- **Watch points**: `vault_sync/storage/cache_retention.rs`, checkpoint/outbox compaction and locked sync; `keeps_other_targets_checkpoints_parents_and_unsent_uploads` and `unreadable_checkpoint_aborts_before_removing_any_body`.
+
 ### Agent integration fixtures inherited the host cloud directory
 - **Symptom**: native-host tests on macOS stalled in initial sync while reading the host's iCloud files.
 - **Root cause**: `crates/aipass-native-host/src/lib.rs` `RunningAgent::start` created a vault at the temporary root and omitted sync settings; sibling agent settings were shared and macOS selected its real iCloud default.

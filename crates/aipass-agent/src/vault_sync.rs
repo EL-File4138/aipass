@@ -183,7 +183,7 @@ fn run_cloudkit_inner(state: &Arc<AgentState>) -> ServiceResult<SyncReport> {
             .lock()
             .is_ok_and(|session| matches!(*session, SessionState::Unlocked(_)));
         if unlocked {
-            if let Err(error) = cloudkit_retention::prune(&state.vault_dir, &remote) {
+            if let Err(error) = cloudkit_retention::prune(state, &remote) {
                 crate::logging::write_component_log(
                     crate::logging::AGENT_LOG,
                     "WARN",
