@@ -12,7 +12,10 @@ use time::{Duration, OffsetDateTime};
 // A peer which has been offline longer than this may need manual conflict
 // resolution. Keep every authenticated branch head regardless of age.
 const RETAIN_DAYS: i64 = 30;
-const MAX_HISTORY_BYTES: u64 = 128 * 1024 * 1024;
+// Each entry is a full encrypted vault, not a delta. A byte budget alone
+// retained hundreds of redundant copies of small vaults after migration.
+const MAX_HISTORY_SNAPSHOTS: usize = 8;
+const MAX_HISTORY_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_DELETIONS_PER_SYNC: usize = 32;
 
 struct HistoryNode {
@@ -29,7 +32,16 @@ pub(super) fn prune(root: &Path, remote: &Remote<'_>) -> Result<usize> {
         return Ok(0);
     }
     let mut snapshots = BTreeMap::new();
-    for id in remote.list()? {
+    // An eventually consistent listing may omit the acknowledged child.
+    // Include it from the authenticated cache so its parent stays protected.
+    for id in remote
+        .list()?
+        .into_iter()
+        .chain(checkpoint.heads.iter().cloned())
+    {
+        if snapshots.contains_key(&id) {
+            continue;
+        }
         let bytes = fs::read(cache_path(root, &id)?)?;
         if snapshot_id(&bytes) != id {
             bail!("cached CloudKit snapshot hash mismatch");
@@ -91,15 +103,20 @@ fn expired_ids(
         .collect::<Vec<_>>();
     candidates.sort();
     let mut remaining_bytes = snapshots.values().map(|node| node.bytes).sum::<u64>();
+    let mut remaining_count = snapshots.len();
     let mut expired = Vec::new();
     for (created_at, id) in candidates {
         if expired.len() == MAX_DELETIONS_PER_SYNC {
             break;
         }
-        if created_at >= cutoff && remaining_bytes <= MAX_HISTORY_BYTES {
+        if created_at >= cutoff
+            && remaining_bytes <= MAX_HISTORY_BYTES
+            && remaining_count <= MAX_HISTORY_SNAPSHOTS
+        {
             break;
         }
         remaining_bytes = remaining_bytes.saturating_sub(snapshots[&id].bytes);
+        remaining_count -= 1;
         expired.push(id);
     }
     expired
@@ -166,5 +183,71 @@ mod tests {
             ),
         ]);
         assert_eq!(expired_ids(&nodes, &["head".into()], now), vec!["old"]);
+    }
+
+    #[test]
+    fn upgraded_small_vault_history_converges_to_eight_full_copies() {
+        let now = OffsetDateTime::now_utc();
+        let mut nodes = BTreeMap::new();
+        // Five old 11 MiB snapshots plus the recent 400 KiB copies reproduce
+        // the post-upgrade cache that previously stayed near 128 MiB.
+        for i in 0..178 {
+            nodes.insert(
+                format!("{i:03}"),
+                HistoryNode {
+                    parents: (i > 0)
+                        .then(|| format!("{:03}", i - 1))
+                        .into_iter()
+                        .collect(),
+                    created_at: now - Duration::seconds(178 - i),
+                    bytes: if i < 5 { 11 * 1024 * 1024 } else { 400 * 1024 },
+                },
+            );
+        }
+        let checkpoint = vec!["177".into()];
+        let mut passes = 0;
+        loop {
+            let expired = expired_ids(&nodes, &checkpoint, now);
+            if expired.is_empty() {
+                break;
+            }
+            assert!(expired.len() <= MAX_DELETIONS_PER_SYNC);
+            for id in expired {
+                nodes.remove(&id);
+            }
+            assert!(nodes.contains_key("176") && nodes.contains_key("177"));
+            passes += 1;
+            assert!(passes <= 6);
+        }
+        assert_eq!(nodes.len(), 8);
+        assert_eq!(
+            nodes.values().map(|node| node.bytes).sum::<u64>(),
+            3200 * 1024
+        );
+    }
+
+    #[test]
+    fn protected_branches_and_checkpoint_parents_can_exceed_the_budget() {
+        let now = OffsetDateTime::now_utc();
+        let mut nodes = BTreeMap::new();
+        for i in 0..12 {
+            nodes.insert(
+                format!("parent-{i}"),
+                HistoryNode {
+                    parents: vec![],
+                    created_at: now,
+                    bytes: 1024 * 1024,
+                },
+            );
+            nodes.insert(
+                format!("head-{i}"),
+                HistoryNode {
+                    parents: vec![format!("parent-{i}")],
+                    created_at: now,
+                    bytes: 1024 * 1024,
+                },
+            );
+        }
+        assert!(expired_ids(&nodes, &["head-0".into()], now).is_empty());
     }
 }
