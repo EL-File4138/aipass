@@ -79,6 +79,9 @@ impl Cloud {
                             reply.bytes_b64 = Some(STANDARD.encode(&store.lock().unwrap()[&id]));
                         }
                     }
+                    CloudKitCommand::Delete { .. } => {
+                        panic!("migration must not prune remote history")
+                    }
                 }
                 completion = Some(CloudKitCompletion { id: task.id, reply });
             }

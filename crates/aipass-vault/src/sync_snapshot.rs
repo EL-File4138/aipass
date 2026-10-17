@@ -20,7 +20,7 @@ pub struct VaultSyncSnapshot {
 impl VaultSyncSnapshot {
     pub fn parse(bytes: &[u8]) -> Result<Self, VaultError> {
         let snapshot: Self = serde_json::from_slice(bytes)?;
-        if snapshot.format != "aipass-vault-sync" || snapshot.version != 1 {
+        if snapshot.format != "aipass-vault-sync" || !matches!(snapshot.version, 1 | 2) {
             return Err(VaultError::UnsupportedVersion);
         }
         validate_header(&snapshot.header)?;
@@ -59,10 +59,13 @@ impl VaultSyncSnapshot {
 }
 
 impl Vault {
-    fn sync_files(&self) -> Result<VaultExportPayload, VaultError> {
-        let files = exportable_files(&self.root)?
+    fn sync_files(&self, include_audit: bool) -> Result<VaultExportPayload, VaultError> {
+        let files = exportable_files(&self.root, include_audit)?
             .into_iter()
-            .filter(|path| sync_path_allowed(path))
+            .filter(|path| {
+                sync_path_allowed(path)
+                    && (include_audit || path.parent() != Some(Path::new("audit")))
+            })
             .map(|relative_path| {
                 let bytes = fs::read(self.root.join(&relative_path))?;
                 Ok(VaultExportFile {
@@ -75,18 +78,20 @@ impl Vault {
     }
 
     pub fn sync_revision(&self) -> Result<String, VaultError> {
-        revision(&self.header, &self.sync_files()?)
+        revision(&self.header, &self.sync_files(false)?)
     }
 
+    /// Full local recovery journal. Audit events must be included when an
+    /// epoch rotates so every encrypted envelope can be rewrapped atomically.
     pub fn export_sync_snapshot(&self) -> Result<Vec<u8>, VaultError> {
-        self.export_sync_snapshot_with_parents(Vec::new())
+        self.encode_snapshot_with_header(self.header.clone(), self.sync_files(true)?, Vec::new(), 1)
     }
 
     pub fn export_sync_snapshot_with_parents(
         &self,
         parents: Vec<String>,
     ) -> Result<Vec<u8>, VaultError> {
-        let files = self.sync_files()?;
+        let files = self.sync_files(false)?;
         self.encode_sync_snapshot(files, parents)
     }
 
@@ -95,7 +100,7 @@ impl Vault {
         files: VaultExportPayload,
         parents: Vec<String>,
     ) -> Result<Vec<u8>, VaultError> {
-        self.encode_snapshot_with_header(self.header.clone(), files, parents)
+        self.encode_snapshot_with_header(self.header.clone(), files, parents, 2)
     }
 
     fn encode_snapshot_with_header(
@@ -103,15 +108,17 @@ impl Vault {
         header: VaultHeader,
         files: VaultExportPayload,
         parents: Vec<String>,
+        version: u16,
     ) -> Result<Vec<u8>, VaultError> {
         // Also authenticate tombstones as part of the complete snapshot. The
         // legacy per-object format cannot authenticate deletion markers alone.
         let payload = serde_json::to_vec(&files)?;
         let created_at = OffsetDateTime::now_utc();
-        let aad = serde_json::to_vec(&("aipass-vault-sync", 1u16, &parents, created_at, &header))?;
+        let aad =
+            serde_json::to_vec(&("aipass-vault-sync", version, &parents, created_at, &header))?;
         let snapshot = VaultSyncSnapshot {
             format: "aipass-vault-sync".into(),
-            version: 1,
+            version,
             parents,
             created_at,
             header,
@@ -142,7 +149,7 @@ impl Vault {
     ) -> Result<Vec<u8>, VaultError> {
         self.ensure_sync_ready()?;
         let next_epoch = advance_epoch(&self.epoch_key)?;
-        let mut files = self.sync_files()?;
+        let mut files = self.sync_files(true)?;
         let event = AuditEvent {
             id: Uuid::new_v4(),
             at: OffsetDateTime::now_utc(),
@@ -193,7 +200,7 @@ impl Vault {
         )?;
         header.current_epoch = next_epoch.epoch().clone();
         header.updated_at = event.at;
-        self.encode_snapshot_with_header(header, files, Vec::new())
+        self.encode_snapshot_with_header(header, files, Vec::new(), 1)
     }
 
     /// Merge independent encrypted-file changes against a common ancestor.
@@ -214,10 +221,11 @@ impl Vault {
             payload
                 .files
                 .into_iter()
+                .filter(|file| file.relative_path.parent() != Some(Path::new("audit")))
                 .map(|file| (file.relative_path, file.bytes_b64))
                 .collect::<BTreeMap<_, _>>()
         };
-        let local = to_map(self.sync_files()?);
+        let local = to_map(self.sync_files(false)?);
         let remote = to_map(remote);
         let base = to_map(base);
         let paths = local
@@ -271,7 +279,11 @@ impl Vault {
         index.zeroize();
         let mut paths = BTreeSet::new();
         for file in &payload.files {
-            if !sync_path_allowed(&file.relative_path) || !paths.insert(&file.relative_path) {
+            if !sync_path_allowed(&file.relative_path)
+                || (snapshot.version == 2
+                    && file.relative_path.parent() == Some(Path::new("audit")))
+                || !paths.insert(&file.relative_path)
+            {
                 return Err(VaultError::InvalidExport);
             }
             let bytes = STANDARD_NO_PAD
@@ -303,7 +315,10 @@ impl Vault {
     }
 
     pub fn sync_snapshot_revision(&self, bytes: &[u8]) -> Result<String, VaultError> {
-        let (snapshot, payload) = self.decode_snapshot(bytes)?;
+        let (snapshot, mut payload) = self.decode_snapshot(bytes)?;
+        payload
+            .files
+            .retain(|file| file.relative_path.parent() != Some(Path::new("audit")));
         revision(&snapshot.header, &payload)
     }
 
@@ -385,7 +400,7 @@ impl Vault {
         }
         let bytes = fs::read(&pending)?;
         let (snapshot, payload) = self.decode_snapshot(&bytes)?;
-        let old_paths = exportable_files(&self.root)?;
+        let old_paths = exportable_files(&self.root, snapshot.version == 1)?;
         let mut retained = BTreeSet::new();
         for file in payload.files {
             retained.insert(file.relative_path.clone());
@@ -400,15 +415,44 @@ impl Vault {
             }
         }
         for path in old_paths {
-            if sync_path_allowed(&path) && !retained.contains(&path) {
+            if sync_path_allowed(&path)
+                && (snapshot.version == 1 || path.parent() != Some(Path::new("audit")))
+                && !retained.contains(&path)
+            {
                 fs::remove_file(self.root.join(path))?;
             }
+        }
+        if snapshot.version == 2 && snapshot.header.current_epoch != self.header.current_epoch {
+            self.rewrap_local_audit(&snapshot.header)?;
         }
         #[cfg(test)]
         tests::fail_snapshot_write()?;
         write_json(self.root.join("manifest.aipmanifest"), &snapshot.header)?;
         self.reload_from_disk()?;
         fs::remove_file(pending)?;
+        Ok(())
+    }
+
+    fn rewrap_local_audit(&self, header: &VaultHeader) -> Result<(), VaultError> {
+        let (next_epoch, mut index) =
+            unwrap_epoch_and_index_keys(&self.root_key, header, VaultError::UnlockFailed)?;
+        index.zeroize();
+        for path in encrypted_paths(&self.root.join("audit"), "aipaudit")? {
+            let mut envelope: ObjectEnvelope = read_json(&path)?;
+            if envelope.tombstone {
+                continue;
+            }
+            if let Ok(mut already_rewrapped) = decrypt_envelope_with_epoch(&envelope, &next_epoch) {
+                already_rewrapped.zeroize();
+                continue;
+            }
+            let plaintext =
+                zeroize::Zeroizing::new(decrypt_envelope_with_epoch(&envelope, &self.epoch_key)?);
+            envelope.device_id = self.device_id;
+            envelope.updated_at = header.updated_at;
+            envelope.lamport = envelope.lamport.saturating_add(1);
+            write_json(path, &encrypt_envelope(envelope, &plaintext, &next_epoch)?)?;
+        }
         Ok(())
     }
 }
@@ -464,6 +508,48 @@ pub(super) fn validate_import_kdf(kdf: &KdfParams) -> Result<(), VaultError> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn sync_v2_omits_audit_history_without_deleting_local_audit() {
+        let dir = tempdir().unwrap();
+        let mut vault = vault(dir.path());
+        let initial_audit = encrypted_paths(&dir.path().join("audit"), "aipaudit").unwrap();
+        assert!(!initial_audit.is_empty());
+        let snapshot = vault.export_sync_snapshot_with_parents(Vec::new()).unwrap();
+        let (header, payload) = vault.decode_snapshot(&snapshot).unwrap();
+        assert_eq!(header.version, 2);
+        assert!(payload
+            .files
+            .iter()
+            .all(|file| file.relative_path.parent() != Some(Path::new("audit"))));
+        let revision = vault.sync_revision().unwrap();
+        vault.audit("test.local", None, None).unwrap();
+        let local_audit = encrypted_paths(&dir.path().join("audit"), "aipaudit").unwrap();
+        assert_eq!(vault.sync_revision().unwrap(), revision);
+        vault.apply_sync_snapshot(&snapshot).unwrap();
+        assert_eq!(
+            encrypted_paths(&dir.path().join("audit"), "aipaudit").unwrap(),
+            local_audit
+        );
+        let legacy = vault.export_sync_snapshot().unwrap();
+        assert_eq!(VaultSyncSnapshot::parse(&legacy).unwrap().version, 1);
+        assert_eq!(vault.sync_snapshot_revision(&legacy).unwrap(), revision);
+    }
+
+    #[test]
+    fn sync_v2_rewraps_local_audit_when_remote_epoch_changes() {
+        let dir = tempdir().unwrap();
+        let mut vault = vault(dir.path());
+        let before = vault.export_sync_snapshot_with_parents(Vec::new()).unwrap();
+        vault.advance_epoch_and_rewrap("test").unwrap();
+        let after = vault.export_sync_snapshot_with_parents(Vec::new()).unwrap();
+        vault.apply_sync_snapshot(&before).unwrap();
+        vault.apply_sync_snapshot(&after).unwrap();
+        for path in encrypted_paths(&dir.path().join("audit"), "aipaudit").unwrap() {
+            let _: AuditEvent = vault.decrypt_envelope_path(&path).unwrap();
+        }
+        Vault::open(dir.path(), &SecretString::new("master")).unwrap();
+    }
 
     thread_local! { static FAIL_AFTER: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) }; }
     pub(super) fn fail_snapshot_write() -> Result<(), VaultError> {

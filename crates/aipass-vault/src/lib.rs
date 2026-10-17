@@ -20,6 +20,7 @@ use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 use zeroize::Zeroize;
 
+mod audit_retention;
 mod remote_unlock;
 mod sync_snapshot;
 pub use remote_unlock::RemoteUnlockEnvelope;
@@ -762,6 +763,7 @@ impl Vault {
             device_id: Uuid::new_v4(),
         };
         vault.finish_pending_sync()?;
+        let _ = audit_retention::maintain(&vault.root);
         Ok(vault)
     }
 
@@ -1322,6 +1324,7 @@ impl Vault {
     ) -> Result<(), VaultError> {
         let path = self.record_path(id);
         let mut plaintext = self.decrypt_provider_path(&path)?;
+        let previous = plaintext.entry.clone();
         if let Some(source) = usage_source
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -1344,9 +1347,14 @@ impl Vault {
             plaintext.entry.gateway =
                 gateway.filter(|next| next.group.is_some() || next.rate.is_some());
         }
+        if plaintext.entry.usage_source == previous.usage_source
+            && plaintext.entry.quota == previous.quota
+            && plaintext.entry.gateway == previous.gateway
+        {
+            return Ok(());
+        }
         plaintext.entry.updated_at = OffsetDateTime::now_utc();
         self.write_provider_record(id, &plaintext)?;
-        self.audit("provider.usage.update", Some(id), None)?;
         Ok(())
     }
 
@@ -1427,10 +1435,12 @@ impl Vault {
     ) -> Result<(), VaultError> {
         let path = self.record_path(id);
         let mut plaintext = self.decrypt_provider_path(&path)?;
+        if plaintext.entry.subscription == snapshot {
+            return Ok(());
+        }
         plaintext.entry.subscription = snapshot;
         plaintext.entry.updated_at = OffsetDateTime::now_utc();
         self.write_provider_record(id, &plaintext)?;
-        self.audit("provider.subscription.refresh", Some(id), None)?;
         Ok(())
     }
 
@@ -2059,7 +2069,7 @@ impl Vault {
         kdf: KdfParams,
     ) -> Result<EncryptedVaultExport, VaultError> {
         let export_key = derive_master_key(export_password, &kdf)?;
-        let files = exportable_files(&self.root)?
+        let files = exportable_files(&self.root, true)?
             .into_iter()
             .map(|relative_path| {
                 let bytes = fs::read(self.root.join(&relative_path))?;
@@ -2288,30 +2298,6 @@ impl Vault {
                     .unwrap_or(false)
             })
             .collect())
-    }
-
-    fn audit(
-        &self,
-        action: &str,
-        record_id: Option<Uuid>,
-        detail: Option<&str>,
-    ) -> Result<(), VaultError> {
-        let event = AuditEvent {
-            id: Uuid::new_v4(),
-            at: OffsetDateTime::now_utc(),
-            action: action.to_string(),
-            record_id,
-            detail: detail.map(redact_detail),
-        };
-        self.write_envelope(
-            self.root
-                .join("audit")
-                .join(format!("{}.aipaudit", event.id)),
-            event.id,
-            "audit_event",
-            1,
-            &serde_json::to_vec(&event)?,
-        )
     }
 
     #[cfg(test)]
@@ -2632,7 +2618,7 @@ const BACKUP_ROOT_FILES: &[&str] = &[
     "pricing.aipstate",
 ];
 
-fn exportable_files(root: &Path) -> Result<Vec<PathBuf>, VaultError> {
+fn exportable_files(root: &Path, include_audit: bool) -> Result<Vec<PathBuf>, VaultError> {
     let mut files = Vec::new();
     for relative in BACKUP_ROOT_FILES {
         let path = root.join(relative);
@@ -2646,6 +2632,9 @@ fn exportable_files(root: &Path) -> Result<Vec<PathBuf>, VaultError> {
         ("devices", "aipdevice"),
         ("audit", "aipaudit"),
     ] {
+        if dir == "audit" && !include_audit {
+            continue;
+        }
         for path in encrypted_paths(&root.join(dir), ext)? {
             files.push(
                 path.strip_prefix(root)
@@ -3400,6 +3389,11 @@ mod tests {
             None
         );
         assert_eq!(wallet.gateway, None);
+        let revision = vault.sync_revision().unwrap();
+        vault
+            .update_provider_usage(id, wallet.quota, None, Some("sub_api_v1_usage"))
+            .unwrap();
+        assert_eq!(vault.sync_revision().unwrap(), revision);
     }
 
     #[test]

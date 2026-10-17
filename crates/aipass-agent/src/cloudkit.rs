@@ -165,6 +165,17 @@ impl<'a> Remote<'a> {
             ids: reply.ids,
         })
     }
+
+    pub fn delete(&self, id: &str) -> Result<()> {
+        if !valid_snapshot_id(id) {
+            bail!("invalid snapshot id");
+        }
+        self.bridge.request(
+            CloudKitCommand::Delete { id: id.into() },
+            Some(self.account.clone()),
+        )?;
+        Ok(())
+    }
 }
 
 impl SnapshotRemote for Remote<'_> {

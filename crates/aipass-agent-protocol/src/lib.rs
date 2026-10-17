@@ -227,6 +227,7 @@ pub enum CloudKitCommand {
     List,
     Get { id: String },
     Put { id: String, bytes_b64: String },
+    Delete { id: String },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

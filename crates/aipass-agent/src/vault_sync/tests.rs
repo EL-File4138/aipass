@@ -341,6 +341,7 @@ fn cloudkit_bridge_restores_an_absent_vault_and_rejects_account_switches() {
                         reply.bytes_b64 = Some(STANDARD.encode(&bytes));
                     }
                     CloudKitCommand::Put { .. } => panic!("locked restore must never upload"),
+                    CloudKitCommand::Delete { .. } => panic!("locked restore must never delete"),
                 }
                 completion = Some(CloudKitCompletion { id: task.id, reply });
             }
@@ -862,6 +863,163 @@ fn failed_upload_is_retried_from_durable_outbox_and_stale_listing_cannot_rollbac
     *remote.files.lock().unwrap() = base;
     assert_eq!(run(&state, &remote, "test").unwrap().downloaded, 0);
     assert_eq!(titles(&state), vec!["retained"]);
+}
+
+#[test]
+fn offline_edits_keep_one_pending_snapshot_and_restore_every_change() {
+    let temp = tempdir().unwrap();
+    let remote = MemoryRemote::default();
+    let state = first(&temp.path().join("vault"));
+    run(&state, &remote, "test").unwrap();
+    let base = remote.list().unwrap().pop().unwrap();
+    let outbox = state
+        .vault_dir
+        .join("sync-outbox")
+        .join(snapshot_id(b"test"));
+    remote.fail_put.store(true, Ordering::Relaxed);
+    for title in ["first", "second", "third"] {
+        add(&state, title);
+        assert!(run(&state, &remote, "test").is_err());
+        let pending = fs::read_dir(&outbox)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|ext| ext == "aipsnapshot")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(pending.len(), 1);
+        let bytes = fs::read(pending[0].path()).unwrap();
+        assert_eq!(
+            VaultSyncSnapshot::parse(&bytes).unwrap().parents,
+            vec![base.clone()]
+        );
+    }
+    remote.fail_put.store(false, Ordering::Relaxed);
+    run(&state, &remote, "test").unwrap();
+    let restored = restore(&temp.path().join("restored"), &remote);
+    assert_eq!(titles(&restored), vec!["first", "second", "third"]);
+}
+
+#[test]
+fn old_pending_chain_compacts_to_its_confirmed_remote_parent() {
+    let temp = tempdir().unwrap();
+    let remote = MemoryRemote::default();
+    let state = first(&temp.path().join("vault"));
+    run(&state, &remote, "test").unwrap();
+    let base = remote.list().unwrap().pop().unwrap();
+    let outbox = state
+        .vault_dir
+        .join("sync-outbox")
+        .join(snapshot_id(b"test"));
+    fs::create_dir_all(&outbox).unwrap();
+    let mut parent = base.clone();
+    let mut revision = String::new();
+    for title in ["old first", "old second"] {
+        add(&state, title);
+        let (bytes, next_revision) = with_vault(&state, false, |vault| {
+            Ok((
+                vault
+                    .export_sync_snapshot_with_parents(vec![parent.clone()])
+                    .unwrap(),
+                vault.sync_revision().unwrap(),
+            ))
+        })
+        .unwrap();
+        let id = snapshot_id(&bytes);
+        atomic_write_bytes(cache_path(&state.vault_dir, &id).unwrap(), &bytes).unwrap();
+        atomic_write_bytes(outbox.join(format!("{id}.aipsnapshot")), &bytes).unwrap();
+        parent = id;
+        revision = next_revision;
+    }
+    atomic_write_bytes(
+        checkpoint_path(&state.vault_dir, "test"),
+        &serde_json::to_vec(&Checkpoint {
+            heads: vec![parent],
+            revision: Some(revision),
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    remote.fail_put.store(true, Ordering::Relaxed);
+    assert!(run(&state, &remote, "test").is_err());
+    let pending = fs::read_dir(&outbox)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|ext| ext == "aipsnapshot")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(pending.len(), 1);
+    let bytes = fs::read(pending[0].path()).unwrap();
+    assert_eq!(
+        VaultSyncSnapshot::parse(&bytes).unwrap().parents,
+        vec![base]
+    );
+    remote.fail_put.store(false, Ordering::Relaxed);
+    run(&state, &remote, "test").unwrap();
+    let restored = restore(&temp.path().join("restored"), &remote);
+    assert_eq!(titles(&restored), vec!["old first", "old second"]);
+}
+
+#[test]
+fn unchanged_legacy_pending_snapshot_is_replaced_before_upload() {
+    let temp = tempdir().unwrap();
+    let remote = MemoryRemote::default();
+    let state = first(&temp.path().join("vault"));
+    run(&state, &remote, "test").unwrap();
+    let base = remote.list().unwrap().pop().unwrap();
+    add(&state, "local edit");
+    let outbox = state
+        .vault_dir
+        .join("sync-outbox")
+        .join(snapshot_id(b"test"));
+    let (bytes, revision) = with_vault(&state, false, |vault| {
+        Ok((
+            vault
+                .export_sync_snapshot_with_parents(vec![base.clone()])
+                .unwrap(),
+            vault.sync_revision().unwrap(),
+        ))
+    })
+    .unwrap();
+    let mut legacy = VaultSyncSnapshot::parse(&bytes).unwrap();
+    legacy.version = 1;
+    let legacy = serde_json::to_vec(&legacy).unwrap();
+    let id = snapshot_id(&legacy);
+    atomic_write_bytes(cache_path(&state.vault_dir, &id).unwrap(), &legacy).unwrap();
+    atomic_write_bytes(outbox.join(format!("{id}.aipsnapshot")), &legacy).unwrap();
+    atomic_write_bytes(
+        checkpoint_path(&state.vault_dir, "test"),
+        &serde_json::to_vec(&Checkpoint {
+            heads: vec![id.clone()],
+            revision: Some(revision),
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    remote.fail_put.store(true, Ordering::Relaxed);
+    assert!(run(&state, &remote, "test").is_err());
+    assert!(!cache_path(&state.vault_dir, &id).unwrap().exists());
+    let pending = fs::read_dir(&outbox)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|ext| ext == "aipsnapshot")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(pending.len(), 1);
+    let next = VaultSyncSnapshot::parse(&fs::read(pending[0].path()).unwrap()).unwrap();
+    assert_eq!(next.version, 2);
+    assert_eq!(next.parents, vec![base]);
 }
 
 #[test]

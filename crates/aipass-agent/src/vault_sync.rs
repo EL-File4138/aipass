@@ -8,85 +8,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::{fs, path::Path, sync::Arc};
 
 mod cloudkit_migration;
-
-#[derive(Default, Serialize, Deserialize)]
-struct Checkpoint {
-    heads: Vec<String>,
-    revision: Option<String>,
-}
-
-fn checkpoint_path(root: &Path, target: &str) -> std::path::PathBuf {
-    root.join("sync-state")
-        .join(format!("{}.json", snapshot_id(target.as_bytes())))
-}
-
-// Caller holds the session lock. Only an established target has authenticated
-// parents; first synchronization must inspect the remote before publishing.
-fn queue_local_changes(root: &Path, vault: &Vault, target: &str) -> Result<()> {
-    let path = checkpoint_path(root, target);
-    if !path.exists() {
-        return Ok(());
-    }
-    vault.ensure_sync_ready()?;
-    let checkpoint: Checkpoint = serde_json::from_slice(&fs::read(&path)?)?;
-    // A locked bootstrap has not authenticated its checkpoint yet. Conflict
-    // resolution also leaves revision unset until its joined branch is built.
-    if checkpoint.revision.is_none() {
-        return Ok(());
-    }
-    let revision = vault.sync_revision()?;
-    if checkpoint.revision.as_ref() == Some(&revision) {
-        return Ok(());
-    }
-    let bytes = vault.export_sync_snapshot_with_parents(checkpoint.heads)?;
-    let id = snapshot_id(&bytes);
-    atomic_write_bytes(cache_path(root, &id)?, &bytes)?;
-    atomic_write_bytes(
-        root.join("sync-outbox")
-            .join(snapshot_id(target.as_bytes()))
-            .join(format!("{id}.aipsnapshot")),
-        &bytes,
-    )?;
-    atomic_write_bytes(
-        path,
-        &serde_json::to_vec(&Checkpoint {
-            heads: vec![id],
-            revision: Some(revision),
-        })?,
-    )?;
-    Ok(())
-}
-
-pub(crate) fn queue_configured_changes(
-    state: &AgentState,
-    vault: &Vault,
-    settings: &crate::session::StoredSyncSettings,
-) -> Result<()> {
-    let target = if let Some(dir) = crate::sync_watch::folder_sync_dir(settings) {
-        format!("folder:{}", dir.display())
-    } else if settings.mode == aipass_agent_protocol::SyncMode::WebDav {
-        let Some(url) = &settings.webdav_url else {
-            return Ok(());
-        };
-        format!("webdav:{url}")
-    } else if settings.mode == aipass_agent_protocol::SyncMode::ICloud {
-        let Ok(account) = fs::read_to_string(state.vault_dir.join("sync-state/cloudkit-account"))
-        else {
-            return Ok(());
-        };
-        format!("cloudkit:{account}")
-    } else {
-        return Ok(());
-    };
-    queue_local_changes(&state.vault_dir, vault, &target)
-}
-
-pub(crate) fn cache_path(root: &Path, id: &str) -> Result<std::path::PathBuf> {
-    if !valid_snapshot_id(id) {
-        bail!("invalid snapshot id");
-    }
-    Ok(root.join("sync-cache").join(format!("{id}.aipsnapshot")))
-}
+mod cloudkit_retention;
+mod storage;
+pub(crate) use storage::{cache_path, queue_configured_changes};
+use storage::{checkpoint_path, flush_outbox, queue_local_changes, Checkpoint, StagedRemote};
 
 pub(crate) fn run_cloudkit(state: &Arc<AgentState>) -> ServiceResult<SyncReport> {
     let operation = crate::operation_log::OperationLog::background("sync.cloudkit");
@@ -252,6 +177,21 @@ fn run_cloudkit_inner(state: &Arc<AgentState>) -> ServiceResult<SyncReport> {
         }
     }
     let mut report = run_inner(state, &remote, &format!("cloudkit:{}", remote.account))?;
+    if report.conflicts == 0 && report.quarantined == 0 {
+        let unlocked = state
+            .session
+            .lock()
+            .is_ok_and(|session| matches!(*session, SessionState::Unlocked(_)));
+        if unlocked {
+            if let Err(error) = cloudkit_retention::prune(&state.vault_dir, &remote) {
+                crate::logging::write_component_log(
+                    crate::logging::AGENT_LOG,
+                    "WARN",
+                    &format!("CloudKit history cleanup deferred: {error}"),
+                );
+            }
+        }
+    }
     report.downloaded += migrated;
     Ok(report)
 }
@@ -480,43 +420,6 @@ fn migrate_legacy(
             .context("legacy migration failed and requires journal recovery")?;
     }
     result
-}
-
-struct StagedRemote<'a> {
-    downloaded: Vec<String>,
-    root: &'a Path,
-    outbox: &'a Path,
-}
-
-impl SnapshotRemote for StagedRemote<'_> {
-    fn list(&self) -> Result<Vec<String>> {
-        Ok(self.downloaded.clone())
-    }
-    fn get(&self, id: &str) -> Result<Vec<u8>> {
-        Ok(fs::read(cache_path(self.root, id)?)?)
-    }
-    fn publish(&self, bytes: &[u8]) -> Result<String> {
-        let id = snapshot_id(bytes);
-        atomic_write_bytes(self.outbox.join(format!("{id}.aipsnapshot")), bytes)?;
-        Ok(id)
-    }
-}
-
-fn flush_outbox(outbox: &Path, remote: &impl SnapshotRemote) -> Result<usize> {
-    if !outbox.exists() {
-        return Ok(0);
-    }
-    let mut count = 0;
-    for entry in fs::read_dir(outbox)? {
-        let entry = entry?;
-        if entry.path().extension().and_then(|ext| ext.to_str()) != Some("aipsnapshot") {
-            continue;
-        }
-        remote.publish(&fs::read(entry.path())?)?;
-        fs::remove_file(entry.path())?;
-        count += 1;
-    }
-    Ok(count)
 }
 
 #[derive(Serialize, Deserialize)]

@@ -128,18 +128,10 @@ fn relevant_event(event: &notify::Event) -> bool {
     event.paths.iter().any(|path| {
         (matches!(
             path.extension().and_then(|ext| ext.to_str()),
-            Some(
-                "aipmanifest"
-                    | "aipobj"
-                    | "aipdevice"
-                    | "aipaudit"
-                    | "aipgrant"
-                    | "aipstate"
-                    | "aipsnapshot"
-            )
+            Some("aipmanifest" | "aipobj" | "aipdevice" | "aipgrant" | "aipstate" | "aipsnapshot")
         ) || matches!(
             path.file_name().and_then(|name| name.to_str()),
-            Some("objects" | "audit" | "devices" | "grants" | "snapshots")
+            Some("objects" | "devices" | "grants" | "snapshots")
         )) && !path.components().any(|part| {
             matches!(
                 part.as_os_str().to_str(),
@@ -154,7 +146,7 @@ fn local_write_stamp(root: &std::path::Path) -> u64 {
         root.join("manifest.aipmanifest"),
         root.join("server-config.aipstate"),
     ];
-    for dir in ["objects", "audit", "devices", "grants"] {
+    for dir in ["objects", "devices", "grants"] {
         if let Ok(entries) = std::fs::read_dir(root.join(dir)) {
             paths.extend(entries.filter_map(|entry| entry.ok().map(|entry| entry.path())));
         }

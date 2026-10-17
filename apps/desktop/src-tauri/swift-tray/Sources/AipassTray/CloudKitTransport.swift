@@ -174,6 +174,17 @@ private actor CloudTransport {
             try await verifyAccount(container, nextAccount, generation)
             ids.insert(id)
             return TransportReply(account: nextAccount)
+        case "delete":
+            guard let id = task.command.id, validID(id) else { throw TransportError(message: "Invalid snapshot identifier") }
+            let recordID = CKRecord.ID(recordName: id, zoneID: cloudZone)
+            do {
+                _ = try await database.deleteRecord(withID: recordID)
+            } catch let error as CKError where error.code == .unknownItem || error.code == .zoneNotFound {
+                // A lost acknowledgement and retry must remain idempotent.
+            }
+            try await verifyAccount(container, nextAccount, generation)
+            ids.remove(id)
+            return TransportReply(account: nextAccount)
         default: throw TransportError(message: "Unknown CloudKit transport operation")
         }
     }
