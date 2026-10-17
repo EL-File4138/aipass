@@ -8,8 +8,8 @@ Newest entries last within each section.
 ### Audit events multiplied encrypted snapshot storage
 - **Symptom**: one macOS vault accumulated hundreds of GiB in `sync-cache` and `sync-outbox`; CloudKit stopped accepting snapshots above the 11 MiB IPC limit.
 - **Root cause**: each immutable sync snapshot included the growing local audit directory, every failed retry kept another full snapshot in both directories, and automatic usage/subscription refresh wrote audit events repeatedly. CloudKit also retained every successful historical snapshot.
-- **Fix**: remote snapshot v2 excludes audit while full local recovery journals retain it; coalesce verified pending history to one latest snapshot, share cache/outbox data with hard links, cap local audit allocation, and prune old non-head CloudKit history after a successful authenticated sync.
-- **Guardrail**: exclude high-churn local telemetry from remote state; bound retry queues independently of network health, preserve the confirmed remote parent during compaction, and never remove a remote branch head or the direct parent of a recent snapshot or prune during conflict/quarantine. Test old pending migration and crash recovery before cleaning real data.
+- **Fix**: remote snapshot v2 excludes audit while full local recovery journals retain it; coalesce verified pending history to one latest snapshot, share cache/outbox data with hard links, cap local audit allocation, and prune CloudKit history by age and 128 MiB budget after a successful authenticated sync.
+- **Guardrail**: exclude high-churn local telemetry from remote state; bound retry queues independently of network health, preserve the confirmed remote parent during compaction, and never remove a remote branch head or its direct parent or prune during conflict/quarantine. Test old pending migration and crash recovery before cleaning real data.
 - **Watch points**: `aipass-vault` snapshot export/apply and audit retention; `aipass-agent` staging, checkpoint and CloudKit retention; signed Swift CloudKit transport; the IPC snapshot size bound.
 
 ### Agent integration fixtures inherited the host cloud directory
