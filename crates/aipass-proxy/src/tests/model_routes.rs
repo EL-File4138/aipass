@@ -181,6 +181,7 @@ fn binding_controls_quota_and_invalidates_cached_target_identity() {
     let mut target = test_target("http://127.0.0.1:1".into(), 0);
     target.config.model = Some("premium".into());
     target.quota = vec![QuotaWindow {
+        span_seconds: None,
         model_family: None,
         models: Some(vec!["premium".into()]),
         not_models: vec![],

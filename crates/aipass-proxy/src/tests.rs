@@ -3701,30 +3701,8 @@ fn conversion_route(
     }
 }
 
-/// Runs a mock upstream that captures one request and replies with the
-/// given status, content type, and body.
-fn mock_upstream(
-    status: &str,
-    content_type: &str,
-    body: String,
-) -> (SocketAddr, std::thread::JoinHandle<(String, Vec<u8>)>) {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    let status = status.to_string();
-    let content_type = content_type.to_string();
-    let handle = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        let captured = read_http_request(&mut stream);
-        write!(
-                stream,
-                "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            )
-            .unwrap();
-        captured
-    });
-    (addr, handle)
-}
+mod mock_upstream;
+use mock_upstream::mock_upstream;
 
 pub(crate) fn start_proxy(bind_addr: SocketAddr, route: ResolvedRoute) -> ProxyHandle {
     let temp = tempfile::tempdir().unwrap();

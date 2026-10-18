@@ -111,6 +111,13 @@ impl Cache {
             .state
             .lock()
             .map_err(|_| anyhow::anyhow!("credential reader unavailable"))?;
+        // The attributes query distinguishes absence from an ACL/auth error.
+        // No secret read is needed for an absent item; waiting for one creates
+        // a spurious revocation race during unrelated vault locks.
+        if version.is_none() {
+            state.value = None;
+            return Ok(None);
+        }
         if cached {
             if let Some((old, value, when)) = &state.value {
                 if *old == version && when.elapsed() < Duration::from_secs(10) {

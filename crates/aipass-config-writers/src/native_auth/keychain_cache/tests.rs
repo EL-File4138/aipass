@@ -43,6 +43,54 @@ impl Source for Fake {
 }
 
 #[test]
+fn absent_items_erase_cached_bytes_without_starting_authorization_reads() {
+    let cache = Arc::new(Cache::default());
+    let source = Fake::new(false);
+    source.release();
+    assert!(cache
+        .read(
+            "fixture",
+            "removed",
+            source.clone(),
+            true,
+            Duration::from_secs(2)
+        )
+        .unwrap()
+        .is_some());
+    source.version.store(0, Ordering::SeqCst);
+    let invalidator = {
+        let cache = cache.clone();
+        std::thread::spawn(move || {
+            for _ in 0..128 {
+                cache.clear();
+            }
+        })
+    };
+    for _ in 0..128 {
+        assert!(cache
+            .read(
+                "fixture",
+                "removed",
+                source.clone(),
+                true,
+                Duration::from_secs(2)
+            )
+            .unwrap()
+            .is_none());
+    }
+    invalidator.join().unwrap();
+    assert_eq!(source.reads.load(Ordering::SeqCst), 1);
+    assert!(cache
+        .slot("fixture", "removed")
+        .unwrap()
+        .state
+        .lock()
+        .unwrap()
+        .value
+        .is_none());
+}
+
+#[test]
 fn fresh_read_waiters_keep_their_result_when_later_reads_finish() {
     let cache = Arc::new(Cache::default());
     let source = Fake::new(false);

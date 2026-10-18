@@ -298,6 +298,7 @@ fn held_request_observes_quota_recovery_without_reauthentication() {
         },
     );
     route.targets[0].quota = vec![QuotaWindow {
+        span_seconds: None,
         model_family: None,
         models: None,
         not_models: vec![],
@@ -346,6 +347,7 @@ fn live_selection_refreshes_exhaustion_and_limits_but_keeps_credential_snapshot(
     let proxy = direct_proxy(route.clone());
     let mut config = proxy.state.config.read().unwrap().clone();
     config.routes[0].targets[0].quota = vec![QuotaWindow {
+        span_seconds: None,
         model_family: None,
         models: None,
         not_models: vec![],
