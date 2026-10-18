@@ -21,7 +21,7 @@
     return ({ openai_compatible: "OpenAI-compatible", gemini: "Gemini", azure_openai: "Azure OpenAI", bedrock: "Bedrock", custom_http: "Custom HTTP", open_ai_responses: "OpenAI Responses", open_ai_chat_completions: "OpenAI Chat", anthropic_messages: "Anthropic Messages", gemini_generate_content: "Gemini" } as Record<string, string>)[value] ?? value;
   }
   function strategyLabel(value: string) {
-    return ({ fallback: $t("server.strategyFallback"), round_robin: $t("server.strategyRoundRobin"), quota_aware: $t("server.strategyQuotaAware") } as Record<string, string>)[value] ?? value;
+    return ({ fallback: $t("server.strategyFallback"), round_robin: $t("server.strategyRoundRobin"), quota_aware: $t("server.strategyQuotaAware"), reset_soonest: $t("server.strategyResetSoonest"), quota_pace: $t("server.strategyQuotaPace") } as Record<string, string>)[value] ?? value;
   }
   function providerTitle(target: Target) { return data?.providers.find(p => p.id === target.providerEntryId)?.title ?? target.label; }
   function keyLabel(target: Target) {

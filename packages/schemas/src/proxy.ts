@@ -32,7 +32,7 @@ export type ProxyTargetConfig = {
   model?: string;
 };
 
-export type ProxyRouteStrategy = "fallback" | "round_robin" | "quota_aware";
+export type ProxyRouteStrategy = "fallback" | "round_robin" | "quota_aware" | "reset_soonest" | "quota_pace";
 
 export type ProxyRouteConfig = {
   id: string;

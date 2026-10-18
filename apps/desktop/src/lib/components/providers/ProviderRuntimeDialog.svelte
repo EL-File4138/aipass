@@ -1,7 +1,7 @@
 <script context="module" lang="ts">
   type Hook = { id: string; url: string; enabled: boolean; events: string[]; secret?: string | null; hasSecret?: boolean; clearSecret?: boolean };
   export type Options = {
-    subscription: { allowPaidCredits: boolean; autoResetCredits: boolean; nativeSwitch: { routeId: string; returnPreferred: boolean } | null };
+    subscription: { quotaUseLimitPercent?: number | null; allowPaidCredits: boolean; autoResetCredits: boolean; nativeSwitch: { routeId: string; returnPreferred: boolean } | null };
     quotaTracking: boolean; quotaRefreshSeconds: number;
     proxy: { mode: string; url?: string | null; username?: string | null; password?: string | null; hasCredentials?: boolean; clearCredentials?: boolean } | null;
     balance: { url: string; post: boolean; body?: string | null; headers: [string, string | null][]; jsonPath: string; unit: string } | null;
@@ -119,6 +119,9 @@
                       options={[60, 120, 300, 900, 3600].map(seconds => ({ value: String(seconds), label: `${seconds / 60} ${$t("providerRuntime.minutes")}` }))}
                       onValueChange={(value) => { options!.quotaRefreshSeconds = Number(value); changed(); }} />
                   </div>
+                  <SelectField label={$t("subscriptionPolicy.quotaCap")} value={String(options.subscription.quotaUseLimitPercent ?? 100)} disabled={busy}
+                    options={[...new Set([50, 60, 70, 80, 90, 95, 100, options.subscription.quotaUseLimitPercent ?? 100])].sort((a,b) => a-b).map(percent => ({ value: String(percent), label: $t("subscriptionPolicy.quotaCapPercent", { percent }) }))}
+                    onValueChange={value => { options!.subscription.quotaUseLimitPercent = Number(value) === 100 ? null : Number(value); changed(); }} />
                   {#if providerId === "codex" || providerId === "anthropic"}
                     <SubscriptionPolicyFields {id} {providerId} policy={options.subscription} bind:busy {dirty} {invokeTauri}
                       onChanged={changed} onSaved={onSaved} />
@@ -197,7 +200,7 @@
           </div>
         </Tabs.Root>
         <footer class="modal-footer">
-          <span class="footer-note">{#if dirty}<span class="unsaved-dot"></span>{:else}<ShieldCheck size={14} />{/if}{$t(dirty ? "providerRuntime.unsaved" : "oauthConnect.secureNote")}</span>
+          <span class="footer-note">{#if dirty}<span class="unsaved-dot"></span>{:else}<ShieldCheck size={14} />{/if}{$t(dirty ? "providerRuntime.unsaved" : "communityConnect.localNote")}</span>
           <div class="footer-actions"><Button variant="ghost" disabled={busy} on:click={closeEditor}>{$t(dirty ? "common.cancel" : "common.close")}</Button><Button variant="primary" loading={busy} disabled={!options || !dirty || loading} on:click={save}>{$t("common.save")}</Button></div>
         </footer>
       </Dialog.Content>

@@ -6,6 +6,7 @@ fn claude_family_exhaustion_only_blocks_the_affected_model() {
     let now = now_unix() as u64;
     let mut target = test_target("http://127.0.0.1:1".into(), 0);
     target.quota = vec![QuotaWindow {
+        span_seconds: None,
         model_family: Some("sonnet".into()),
         models: None,
         not_models: vec![],
@@ -69,6 +70,7 @@ fn quota_order_excludes_only_fresh_exhaustion_and_affinity_stays_eligible() {
     let mut b = test_target("http://127.0.0.1:2".into(), 1);
     let mut c = test_target("http://127.0.0.1:3".into(), 2);
     a.quota = vec![QuotaWindow {
+        span_seconds: None,
         model_family: None,
         models: None,
         not_models: Vec::new(),
@@ -77,6 +79,7 @@ fn quota_order_excludes_only_fresh_exhaustion_and_affinity_stays_eligible() {
         resets_at: Some(now + 100),
     }];
     b.quota = vec![QuotaWindow {
+        span_seconds: None,
         model_family: None,
         models: None,
         not_models: Vec::new(),
@@ -85,6 +88,7 @@ fn quota_order_excludes_only_fresh_exhaustion_and_affinity_stays_eligible() {
         resets_at: None,
     }];
     c.quota = vec![QuotaWindow {
+        span_seconds: None,
         model_family: None,
         models: None,
         not_models: Vec::new(),
@@ -133,6 +137,7 @@ fn quota_scope_follows_the_effective_model_and_preserves_unrelated_models() {
     let mut target = test_target("http://127.0.0.1:1".into(), 0);
     target.quota = vec![
         QuotaWindow {
+            span_seconds: None,
             model_family: None,
             models: Some(vec!["premium".into()]),
             not_models: vec![],
@@ -141,6 +146,7 @@ fn quota_scope_follows_the_effective_model_and_preserves_unrelated_models() {
             resets_at: None,
         },
         QuotaWindow {
+            span_seconds: None,
             model_family: None,
             models: None,
             not_models: vec!["premium".into()],
@@ -204,4 +210,55 @@ fn rate_limit_retry_after_is_temporary_and_does_not_change_quota() {
         .unwrap()
         .open_until = Some(Instant::now() - Duration::from_secs(1));
     assert_eq!(ordered_route_targets(&proxy.state, &route, None).len(), 1);
+}
+
+#[test]
+fn reset_and_pace_strategies_use_current_model_scopes_and_keep_session_affinity() {
+    let now = now_unix() as u64;
+    let mut a = test_target("http://127.0.0.1:1".into(), 0);
+    let mut b = test_target("http://127.0.0.1:2".into(), 1);
+    let mut unknown = test_target("http://127.0.0.1:3".into(), 2);
+    let window = |used, reset, span| QuotaWindow {
+        model_family: None,
+        models: Some(vec!["paid".into()]),
+        not_models: vec![],
+        used_basis_points: used,
+        observed_at: now,
+        resets_at: Some(now + reset),
+        span_seconds: Some(span),
+    };
+    a.quota = vec![window(1000, 86400, 604800), window(1000, 1800, 18000)];
+    b.quota = vec![window(5000, 7200, 604800), window(1000, 3600, 18000)];
+    unknown.quota = vec![window(1000, 86400, 604800)];
+    unknown.quota[0].observed_at = now - 301;
+    let mut route = conversion_route(
+        "pace",
+        ProxyProtocol::OpenAiChatCompletions,
+        ProxyProtocol::OpenAiChatCompletions,
+        vec![a.clone(), b.clone(), unknown.clone()],
+        3,
+    );
+    let proxy = start_proxy(available_addr(), route.clone());
+    route.config.strategy = RouteStrategy::ResetSoonest;
+    let ordered = ordered_route_targets_for_model(&proxy.state, &route, None, Some("paid"));
+    assert_eq!(ordered[0].config.id, a.config.id);
+    route.config.strategy = RouteStrategy::QuotaPace;
+    let ordered = ordered_route_targets_for_model(&proxy.state, &route, None, Some("paid"));
+    assert_eq!(ordered[0].config.id, b.config.id);
+    assert_eq!(ordered[2].config.id, unknown.config.id);
+    let ordered = ordered_route_targets_for_model(&proxy.state, &route, None, Some("free"));
+    assert_eq!(ordered[0].config.id, a.config.id);
+    remember_affinity_target(&proxy.state, route.config.id, Some("existing"), a.config.id);
+    assert_eq!(
+        ordered_route_targets_for_model(&proxy.state, &route, Some("existing"), Some("paid"))[0]
+            .config
+            .id,
+        a.config.id
+    );
+    route.targets[0].quota[0].used_basis_points = 10000;
+    assert!(
+        !ordered_route_targets_for_model(&proxy.state, &route, Some("existing"), Some("paid"))
+            .iter()
+            .any(|t| t.config.id == a.config.id)
+    );
 }

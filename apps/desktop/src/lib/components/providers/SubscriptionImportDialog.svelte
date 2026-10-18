@@ -27,7 +27,7 @@
   const providers = [
     ["anthropic", "Claude"], ["codex", "Codex"], ["grok", "Grok Build"], ["copilot", "GitHub Copilot"],
     ["gemini-cli", "Gemini CLI"], ["zcode", "ZCode"], ["devin", "Devin"], ["commandcode-plan", "Command Code"],
-    ["cursor", "Cursor"], ["kiro", "Kiro"], ["workbuddy", "WorkBuddy"], ["workbuddy-ai", "WorkBuddy AI"]
+    ["cursor", "Cursor"], ["kiro", "Kiro"], ["workbuddy", "WorkBuddy"], ["workbuddy-ai", "WorkBuddy AI"], ["kimi-work", "Kimi Work"], ["opencode-go", "OpenCode Go"], ["opencode-zen", "OpenCode Zen"]
   ];
   const name = (id: string) => providers.find(([key]) => key === id)?.[1] ?? id;
   function sourceName(source: SubscriptionImportSource) {

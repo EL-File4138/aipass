@@ -55,6 +55,31 @@ pub(crate) const PROVIDERS: &[&str] = &[
     "kiro",
     "workbuddy",
     "workbuddy-ai",
+    "opencode-go",
+    "opencode-zen",
+    "antigravity",
+    "kimi-work",
+    "minimax-code",
+    "minimax-code-global",
+    "cline",
+    "trae-cn",
+    "trae-global",
+    "ollama-cloud",
+    "kilo-gateway",
+    "kimi-code-cn",
+    "kimi-code",
+    "minimax-m-plan-cn",
+    "minimax-m-plan",
+    "bailian-coding-plan",
+    "mimo-plan",
+    "stepfun-plan-cn",
+    "stepfun-plan",
+    "qwen-token-plan",
+    "bailian-token-plan",
+    "volcengine-coding-plan",
+    "volcengine-agent-plan",
+    "tencent-token-plan",
+    "tencent-token-plan-enterprise",
 ];
 
 struct Run {
@@ -735,6 +760,7 @@ impl CommunityBridge {
 
 mod account;
 mod backend;
+mod console;
 mod display;
 mod feedback;
 mod history;

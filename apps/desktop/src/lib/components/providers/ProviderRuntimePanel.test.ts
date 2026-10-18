@@ -63,6 +63,7 @@ test("tabs keep the provider draft together and save typed select values", async
     await new Promise(resolve => setTimeout(resolve, 30));
   };
   await select("Refresh interval", "5 min");
+  await select("Switch at quota usage", "80% used");
   tab("Connection");
   await select("Outbound connection", "Custom proxy");
   const url = document.querySelector<HTMLInputElement>('input[type="url"]')!;
@@ -72,7 +73,7 @@ test("tabs keep the provider draft together and save typed select values", async
   expect(document.querySelector('button[aria-label="Refresh interval"]')?.textContent).toContain("5 min");
   button("Save").click();
   await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("provider_runtime_set", {
-    id: "provider-c", options: { ...initial, quotaRefreshSeconds: 300, proxy: { mode: "custom", url: "http://127.0.0.1:7890" } }
+    id: "provider-c", options: { ...initial, subscription: {...initial.subscription, quotaUseLimitPercent: 80}, quotaRefreshSeconds: 300, proxy: { mode: "custom", url: "http://127.0.0.1:7890" } }
   }));
   expect(invoke.mock.calls.filter(([command]) => command === "provider_runtime_get")).toHaveLength(1);
 });

@@ -16,6 +16,9 @@ pub(super) const PROVIDERS: &[&str] = &[
     "kiro",
     "workbuddy",
     "workbuddy-ai",
+    "kimi-work",
+    "opencode-go",
+    "opencode-zen",
 ];
 pub(super) fn canonical_provider(id: &str) -> Option<&'static str> {
     let id = match id {

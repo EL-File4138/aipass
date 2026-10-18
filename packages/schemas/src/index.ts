@@ -108,6 +108,8 @@ export interface SubscriptionWindow {
 }
 
 export interface SubscriptionSnapshot {
+  consoleUrl?: string;
+  quotaUnavailable?: boolean;
   plan?: string;
   status?: string;
   subscriptionExpiresAt?: string;

@@ -194,12 +194,14 @@ impl ProxyService {
                             provider_proxy.clone()
                         },
                         upstream_kind,
-                        quota: if upstream_kind == aipass_proxy::UpstreamKind::CommunitySubscription
-                        {
-                            crate::community::quota(vault, entry.id)
-                        } else {
-                            account_quota_with_observations(vault, &entry)
-                        },
+                        quota: crate::subscription_policy::capped_quota(
+                            &preferences.subscription,
+                            if upstream_kind == aipass_proxy::UpstreamKind::CommunitySubscription {
+                                crate::community::quota(vault, entry.id)
+                            } else {
+                                account_quota_with_observations(vault, &entry)
+                            },
+                        ),
                         profile: provider_profile(&entry),
                         model_override: target_config.model.clone(),
                         max_concurrent_requests: entry.max_concurrent_requests,

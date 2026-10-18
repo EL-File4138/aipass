@@ -10,7 +10,9 @@ pub(crate) fn selector(auth: &Value) -> &str {
     auth["nativeSource"]["selector"].as_str().unwrap_or("")
 }
 pub(crate) fn method(provider: &str) -> usize {
-    if provider == "zcode" {
+    if provider == "kimi-work" {
+        0
+    } else if provider == "zcode" {
         2
     } else {
         1
@@ -35,6 +37,8 @@ pub(crate) fn defaults(provider: &str) -> Result<Vec<SubscriptionImportSource>> 
             }
         }
         "commandcode-plan" => h.join(".commandcode"),
+        "kimi-work" => kimi_work::directory()?,
+        "opencode-go" | "opencode-zen" => opencode::directory()?,
         "cursor" => {
             if cfg!(target_os = "macos") {
                 h.join(".cursor")
@@ -160,6 +164,8 @@ pub(crate) fn required_file(source: &SubscriptionImportSource) -> Option<PathBuf
         "zcode" => "credentials.json",
         "devin" => "credentials.toml",
         "commandcode-plan" => "auth.json",
+        "kimi-work" => "config.json",
+        "opencode-go" | "opencode-zen" => "auth.json",
         "cursor" if source.selector == "keychain" => return None,
         "cursor" => "auth.json",
         "kiro" if source.selector == "ide" => "kiro-auth-token.json",
@@ -210,6 +216,8 @@ pub(crate) async fn read(
         "zcode" => zcode::login(&mut c, 2).await?,
         "devin" => devin::login(&mut c, 1).await?,
         "commandcode-plan" => commandcode::login(&mut c, 1).await?,
+        "kimi-work" => kimi_work::login(&mut c, 0).await?,
+        "opencode-go" | "opencode-zen" => opencode::login(&mut c, 1).await?,
         "cursor" => cursor::login(&mut c, 1).await?,
         "kiro" => kiro::login(&mut c, 1).await?,
         "workbuddy" | "workbuddy-ai" => workbuddy::login(&mut c, 1).await?,

@@ -15,3 +15,9 @@ These vendor logos identify their services; trademark rights remain with the bra
 - LocalAI: https://github.com/mudler/LocalAI/blob/ec8d92b69da470e34b326832ed4c20678f281ef8/core/http/static/favicon.svg (MIT, see LICENSE-LOCALAI).
 - SiliconFlow uses Lobe Icons `siliconcloud-color.svg`; Grok uses `grok.svg`.
 - Legacy built-in placeholder graphics have been replaced by the matching Lobe brand marks wherever available. OctoAI, TextGen and KoboldCpp have no verified bundled mark and use the normal cached-favicon/initials fallback.
+
+- OpenCode, Antigravity and Cline: Lobe Icons commit `8a1b2821bb768c484fe8da20c5e1838b6bf551a9`, `packages/static-svg/icons/{opencode,antigravity,cline}.svg` (MIT, added 2026-10-18).
+
+- Trae and Tencent Cloud: Lobe Icons commit `8a1b2821bb768c484fe8da20c5e1838b6bf551a9`, `packages/static-svg/icons/{trae,tencentcloud}.svg` (MIT).
+
+- `kilocode.svg`: [Lobe Icons 8a1b282](https://github.com/lobehub/lobe-icons/blob/8a1b2821bb768c484fe8da20c5e1838b6bf551a9/packages/static-svg/icons/kilocode.svg), MIT

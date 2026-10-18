@@ -51,10 +51,23 @@ import factory from "./assets/provider-icons/factory.svg?inline";
 import workbuddy from "./assets/provider-icons/workbuddy.svg?inline";
 import zed from "./assets/provider-icons/zed.svg?inline";
 
+import tencent from "./assets/provider-icons/tencentcloud.svg?inline";
+import trae from "./assets/provider-icons/trae.svg?inline";
+import kilocode from "./assets/provider-icons/kilocode.svg?inline";
+import opencode from "./assets/provider-icons/opencode.svg?inline";
+import antigravity from "./assets/provider-icons/antigravity.svg?inline";
+import cline from "./assets/provider-icons/cline.svg?inline";
+
 import grok from "./assets/provider-icons/grok.svg?inline";
 
 // Bundle URLs into every surface; the control panel serves only embedded assets.
 export const builtInProviderIcons: Record<ProviderIconName, string> = {
+  tencent,
+  trae,
+  opencode,
+  kilocode,
+  antigravity,
+  cline,
   claude,
   codex,
   gemini,
@@ -107,4 +120,4 @@ export const builtInProviderIcons: Record<ProviderIconName, string> = {
 };
 
 // SVG currentColor does not inherit through <img>; masks retain the UI tone.
-export const monochromeProviderIcons = new Set<ProviderIconName>(["anthropic", "cerebras", "codex", "commandcode", "copilot", "cursor", "factory", "grok", "groq", "lmstudio", "mimo", "moonshot", "ollama", "openai", "qoder", "replicate", "xai", "zai", "zed"]);
+export const monochromeProviderIcons = new Set<ProviderIconName>(["kilocode", "tencent", "trae", "opencode", "antigravity", "cline", "anthropic", "cerebras", "codex", "commandcode", "copilot", "cursor", "factory", "grok", "groq", "lmstudio", "mimo", "moonshot", "ollama", "openai", "qoder", "replicate", "xai", "zai", "zed"]);

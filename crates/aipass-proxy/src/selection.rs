@@ -283,6 +283,13 @@ pub(crate) fn ordered_route_targets_for_model(
         // Unknown/expired observations stay eligible, with a neutral rank.
         targets.sort_by_key(|target| target.quota_usage(now, model).unwrap_or(5_000));
     }
+    if route.config.strategy == RouteStrategy::ResetSoonest {
+        targets.sort_by_key(|target| target.quota_reset(now, model).unwrap_or(u64::MAX));
+    }
+    if route.config.strategy == RouteStrategy::QuotaPace {
+        // Unknown pace follows known weekly observations and retains priority.
+        targets.sort_by_key(|target| std::cmp::Reverse(target.quota_pace(now, model)));
+    }
     targets.retain(|target| !circuit_open(state, target.config.id));
     // Weight only eligible peers in the best stability tier, so an unavailable
     // or degraded high-weight provider cannot donate traffic to another peer.

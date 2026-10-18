@@ -123,6 +123,7 @@ pub(super) fn account_quota(entry: &aipass_vault::EntrySummary) -> Vec<aipass_pr
             }
             let used = window.used_percent.filter(|v| v.is_finite() && *v >= 0.0)?;
             Some(aipass_proxy::QuotaWindow {
+                span_seconds: window.window_minutes.map(|n| n.saturating_mul(60)),
                 model_family: family.map(str::to_owned),
                 models: None,
                 not_models: Vec::new(),

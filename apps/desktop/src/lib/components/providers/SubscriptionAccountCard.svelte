@@ -5,7 +5,7 @@
   import { t } from "../../stores/i18n";
 
   export let entry: ProviderEntry;
-  $: account = subscriptionAccountPresentation(entry);
+  $: account = subscriptionAccountPresentation(entry, $t);
 </script>
 
 <Card title={$t("providerDetail.account")} padded={false}>

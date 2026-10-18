@@ -63,6 +63,7 @@ pub struct QuotaWindow {
     pub models: Option<Vec<String>>,
     pub not_models: Vec<String>,
     pub used_basis_points: u16,
+    pub span_seconds: Option<u64>,
     pub observed_at: u64,
     pub resets_at: Option<u64>,
 }
@@ -77,31 +78,51 @@ impl QuotaWindow {
 }
 
 impl ResolvedTarget {
+    fn matching_quota<'a>(
+        &'a self,
+        model: Option<&'a str>,
+    ) -> impl Iterator<Item = &'a QuotaWindow> {
+        self.quota.iter().filter(move |w| {
+            let Some(model) = self.model_override.as_deref().or(model) else {
+                return w.models.is_none() && w.model_family.is_none() && w.not_models.is_empty();
+            };
+            w.model_family.as_ref().is_none_or(|family| {
+                model.eq_ignore_ascii_case(family)
+                    || model
+                        .to_ascii_lowercase()
+                        .strip_prefix("claude-")
+                        .is_some_and(|id| {
+                            id.split('-').any(|part| part.eq_ignore_ascii_case(family))
+                        })
+            }) && w
+                .models
+                .as_ref()
+                .is_none_or(|models| models.iter().any(|id| id.eq_ignore_ascii_case(model)))
+                && !w.not_models.iter().any(|id| id.eq_ignore_ascii_case(model))
+        })
+    }
     pub(crate) fn quota_usage(&self, now: u64, model: Option<&str>) -> Option<u16> {
-        self.quota
-            .iter()
-            .filter(|w| {
-                let Some(model) = self.model_override.as_deref().or(model) else {
-                    return w.models.is_none()
-                        && w.model_family.is_none()
-                        && w.not_models.is_empty();
-                };
-                w.model_family.as_ref().is_none_or(|family| {
-                    model.eq_ignore_ascii_case(family)
-                        || model
-                            .to_ascii_lowercase()
-                            .strip_prefix("claude-")
-                            .is_some_and(|id| {
-                                id.split('-').any(|part| part.eq_ignore_ascii_case(family))
-                            })
-                }) && w
-                    .models
-                    .as_ref()
-                    .is_none_or(|models| models.iter().any(|id| id.eq_ignore_ascii_case(model)))
-                    && !w.not_models.iter().any(|id| id.eq_ignore_ascii_case(model))
-            })
+        self.matching_quota(model)
             .filter_map(|w| w.current_usage(now))
             .max()
+    }
+    pub(crate) fn quota_reset(&self, now: u64, model: Option<&str>) -> Option<u64> {
+        self.matching_quota(model)
+            .filter(|w| w.current_usage(now).is_some_and(|n| n > 0))
+            .filter_map(|w| w.resets_at)
+            .min()
+    }
+    pub(crate) fn quota_pace(&self, now: u64, model: Option<&str>) -> Option<u64> {
+        // Spend the weekly pool with the largest remaining allowance per hour.
+        // Short windows still gate eligibility independently above.
+        self.matching_quota(model)
+            .filter(|w| w.span_seconds == Some(604800))
+            .filter_map(|w| {
+                let used = w.current_usage(now)?;
+                let remaining = w.resets_at?.checked_sub(now)?.max(1);
+                Some(u64::from(10000u16.saturating_sub(used)) * 3600 * 1000 / remaining)
+            })
+            .min()
     }
 }
 
@@ -366,6 +387,7 @@ mod quota_tests {
     #[test]
     fn stale_unknown_and_reset_quota_never_remain_exhausted() {
         let mut quota = QuotaWindow {
+            span_seconds: None,
             model_family: None,
             models: None,
             not_models: Vec::new(),

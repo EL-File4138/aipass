@@ -169,6 +169,7 @@ pub(crate) fn is_account(vault: &Vault, id: Uuid) -> bool {
 }
 
 pub(super) fn persist(vault: &Vault, account: Account) -> ServiceResult<Uuid> {
+    let console_url = super::console::account_url(&account);
     let raw = SecretString::new(serde_json::to_string(&account).map_err(ServiceError::internal)?);
     decode(raw.expose())?;
     let marker = format!("aipass:community:{}", account.generation);
@@ -203,6 +204,7 @@ pub(super) fn persist(vault: &Vault, account: Account) -> ServiceResult<Uuid> {
                 headers: Vec::new(),
                 quota: None,
                 subscription: Some(SubscriptionSnapshot {
+                    console_url,
                     source: format!("community:{}", account.provider),
                     observed_at: now(),
                     ..Default::default()

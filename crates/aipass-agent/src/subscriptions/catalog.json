@@ -6797,5 +6797,533 @@
         "wire": "chat"
       }
     }
+  },
+  {
+    "id": "opencode-go",
+    "name": "OpenCode Go",
+    "methods": [
+      {
+        "index": 0,
+        "type": "api",
+        "label": "OpenCode Go API key",
+        "prompts": [],
+        "native": false,
+        "labelKey": "subscriptionMethod.opencode-go.0",
+        "hintKey": "subscriptionHint.opencode-key"
+      },
+      {
+        "index": 1,
+        "type": "oauth",
+        "label": "OpenCode's saved Go API key",
+        "prompts": [],
+        "native": true,
+        "labelKey": "subscriptionMethod.opencode-go.1"
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "opencode-zen",
+    "name": "OpenCode Zen",
+    "methods": [
+      {
+        "index": 0,
+        "type": "api",
+        "label": "OpenCode Zen API key",
+        "prompts": [],
+        "native": false,
+        "labelKey": "subscriptionMethod.opencode-zen.0",
+        "hintKey": "subscriptionHint.opencode-key"
+      },
+      {
+        "index": 1,
+        "type": "oauth",
+        "label": "OpenCode's saved Zen API key",
+        "prompts": [],
+        "native": true,
+        "labelKey": "subscriptionMethod.opencode-zen.1"
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "antigravity",
+    "name": "Antigravity",
+    "methods": [
+      {
+        "index": 0,
+        "type": "oauth",
+        "label": "Google account",
+        "prompts": [],
+        "native": false,
+        "labelKey": "subscriptionMethod.antigravity.0",
+        "hintKey": "subscriptionHint.antigravity"
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "kimi-work",
+    "name": "Kimi Work",
+    "methods": [
+      {
+        "index": 0,
+        "type": "oauth",
+        "label": "Kimi desktop Work account",
+        "prompts": [],
+        "native": true,
+        "labelKey": "subscriptionMethod.kimi-work.0",
+        "hintKey": "subscriptionHint.kimi-work"
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "minimax-code",
+    "name": "MiniMax Code (China)",
+    "methods": [
+      {
+        "index": 0,
+        "type": "oauth",
+        "label": "MiniMax Code account",
+        "prompts": [],
+        "native": false,
+        "labelKey": "subscriptionMethod.minimax-code.0"
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "minimax-code-global",
+    "name": "MiniMax Code (International)",
+    "methods": [
+      {
+        "index": 0,
+        "type": "oauth",
+        "label": "MiniMax Code account",
+        "prompts": [],
+        "native": false,
+        "labelKey": "subscriptionMethod.minimax-code-global.0"
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "cline",
+    "name": "Cline",
+    "methods": [
+      {
+        "index": 0,
+        "type": "oauth",
+        "label": "Cline account (device code)",
+        "prompts": [],
+        "native": false,
+        "labelKey": "subscriptionMethod.cline.0"
+      },
+      {
+        "index": 1,
+        "type": "api",
+        "label": "Cline API key",
+        "prompts": [],
+        "native": false,
+        "labelKey": "subscriptionMethod.cline.1"
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "trae-cn",
+    "name": "Trae (China)",
+    "nameKey": "subscriptionName.trae-cn",
+    "methods": [
+      {
+        "index": 0,
+        "type": "oauth",
+        "label": "Trae account (browser)",
+        "labelKey": "subscriptionMethod.trae-cn.0",
+        "hintKey": "subscriptionHint.trae",
+        "native": false,
+        "prompts": []
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "trae-global",
+    "name": "Trae (International)",
+    "nameKey": "subscriptionName.trae-global",
+    "methods": [
+      {
+        "index": 0,
+        "type": "oauth",
+        "label": "Trae account (browser)",
+        "labelKey": "subscriptionMethod.trae-global.0",
+        "hintKey": "subscriptionHint.trae",
+        "native": false,
+        "prompts": []
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "mimo-plan",
+    "name": "MiMo Token Plan",
+    "nameKey": "subscriptionName.mimo-plan",
+    "methods": [
+      {
+        "index": 0,
+        "type": "api",
+        "label": "Plan API key",
+        "labelKey": "subscriptionMethod.mimo-plan.0",
+        "hintKey": "subscriptionHint.plan-key",
+        "native": false,
+        "prompts": [
+          {
+            "type": "select",
+            "key": "region",
+            "message": "Region",
+            "messageKey": "subscriptionConnect.region",
+            "options": [
+              {
+                "value": "cn",
+                "label": "China",
+                "labelKey": "subscriptionRegion.cn"
+              },
+              {
+                "value": "sgp",
+                "label": "Singapore",
+                "labelKey": "subscriptionRegion.sgp"
+              },
+              {
+                "value": "ams",
+                "label": "Europe",
+                "labelKey": "subscriptionRegion.ams"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "stepfun-plan-cn",
+    "name": "StepFun Step Plan (China)",
+    "nameKey": "subscriptionName.stepfun-plan-cn",
+    "methods": [
+      {
+        "index": 0,
+        "type": "api",
+        "label": "Plan API key",
+        "labelKey": "subscriptionMethod.stepfun-plan-cn.0",
+        "hintKey": "subscriptionHint.plan-key",
+        "native": false,
+        "prompts": []
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "stepfun-plan",
+    "name": "StepFun Step Plan (International)",
+    "nameKey": "subscriptionName.stepfun-plan",
+    "methods": [
+      {
+        "index": 0,
+        "type": "api",
+        "label": "Plan API key",
+        "labelKey": "subscriptionMethod.stepfun-plan.0",
+        "hintKey": "subscriptionHint.plan-key",
+        "native": false,
+        "prompts": []
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "qwen-token-plan",
+    "name": "Qwen Token Plan",
+    "nameKey": "subscriptionName.qwen-token-plan",
+    "methods": [
+      {
+        "index": 0,
+        "type": "api",
+        "label": "Plan API key",
+        "labelKey": "subscriptionMethod.qwen-token-plan.0",
+        "hintKey": "subscriptionHint.plan-key",
+        "native": false,
+        "prompts": []
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "bailian-token-plan",
+    "name": "Bailian Token Plan",
+    "nameKey": "subscriptionName.bailian-token-plan",
+    "methods": [
+      {
+        "index": 0,
+        "type": "api",
+        "label": "Plan API key",
+        "labelKey": "subscriptionMethod.bailian-token-plan.0",
+        "hintKey": "subscriptionHint.plan-key",
+        "native": false,
+        "prompts": [
+          {
+            "type": "select",
+            "key": "region",
+            "message": "Region",
+            "messageKey": "subscriptionConnect.region",
+            "options": [
+              {
+                "value": "cn",
+                "label": "China",
+                "labelKey": "subscriptionRegion.cn"
+              },
+              {
+                "value": "intl",
+                "label": "International",
+                "labelKey": "subscriptionRegion.intl"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "volcengine-coding-plan",
+    "name": "Volcengine Coding Plan",
+    "nameKey": "subscriptionName.volcengine-coding-plan",
+    "methods": [
+      {
+        "index": 0,
+        "type": "api",
+        "label": "Plan API key",
+        "labelKey": "subscriptionMethod.volcengine-coding-plan.0",
+        "hintKey": "subscriptionHint.plan-key",
+        "native": false,
+        "prompts": []
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "volcengine-agent-plan",
+    "name": "Volcengine Agent Plan",
+    "nameKey": "subscriptionName.volcengine-agent-plan",
+    "methods": [
+      {
+        "index": 0,
+        "type": "api",
+        "label": "Plan API key",
+        "labelKey": "subscriptionMethod.volcengine-agent-plan.0",
+        "hintKey": "subscriptionHint.plan-key",
+        "native": false,
+        "prompts": []
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "tencent-token-plan",
+    "name": "Tencent Cloud Token Plan",
+    "nameKey": "subscriptionName.tencent-token-plan",
+    "methods": [
+      {
+        "index": 0,
+        "type": "api",
+        "label": "Plan API key",
+        "labelKey": "subscriptionMethod.tencent-token-plan.0",
+        "hintKey": "subscriptionHint.plan-key",
+        "native": false,
+        "prompts": []
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "tencent-token-plan-enterprise",
+    "name": "Tencent Cloud Token Plan Enterprise",
+    "nameKey": "subscriptionName.tencent-token-plan-enterprise",
+    "methods": [
+      {
+        "index": 0,
+        "type": "api",
+        "label": "Plan API key",
+        "labelKey": "subscriptionMethod.tencent-token-plan-enterprise.0",
+        "hintKey": "subscriptionHint.plan-key",
+        "native": false,
+        "prompts": [
+          {
+            "type": "select",
+            "key": "region",
+            "message": "Region",
+            "messageKey": "subscriptionConnect.region",
+            "options": [
+              {
+                "value": "cn",
+                "label": "China",
+                "labelKey": "subscriptionRegion.cn"
+              },
+              {
+                "value": "intl",
+                "label": "International",
+                "labelKey": "subscriptionRegion.intl"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "kimi-code-cn",
+    "name": "Kimi Code (China)",
+    "nameKey": "subscriptionName.kimi-code-cn",
+    "methods": [
+      {
+        "index": 0,
+        "type": "api",
+        "label": "Subscription API key",
+        "labelKey": "subscriptionMethod.kimi-code-cn.0",
+        "hintKey": "subscriptionHint.plan-key",
+        "native": false,
+        "prompts": []
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "kimi-code",
+    "name": "Kimi Code (International)",
+    "nameKey": "subscriptionName.kimi-code",
+    "methods": [
+      {
+        "index": 0,
+        "type": "api",
+        "label": "Subscription API key",
+        "labelKey": "subscriptionMethod.kimi-code.0",
+        "hintKey": "subscriptionHint.plan-key",
+        "native": false,
+        "prompts": []
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "minimax-m-plan-cn",
+    "name": "MiniMax M Plan (China)",
+    "nameKey": "subscriptionName.minimax-m-plan-cn",
+    "methods": [
+      {
+        "index": 0,
+        "type": "api",
+        "label": "Subscription API key",
+        "labelKey": "subscriptionMethod.minimax-m-plan-cn.0",
+        "hintKey": "subscriptionHint.plan-key",
+        "native": false,
+        "prompts": []
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "minimax-m-plan",
+    "name": "MiniMax M Plan (International)",
+    "nameKey": "subscriptionName.minimax-m-plan",
+    "methods": [
+      {
+        "index": 0,
+        "type": "api",
+        "label": "Subscription API key",
+        "labelKey": "subscriptionMethod.minimax-m-plan.0",
+        "hintKey": "subscriptionHint.plan-key",
+        "native": false,
+        "prompts": []
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "bailian-coding-plan",
+    "name": "Bailian Coding Plan",
+    "nameKey": "subscriptionName.bailian-coding-plan",
+    "methods": [
+      {
+        "index": 0,
+        "type": "api",
+        "label": "Subscription API key",
+        "labelKey": "subscriptionMethod.bailian-coding-plan.0",
+        "hintKey": "subscriptionHint.plan-key",
+        "native": false,
+        "prompts": [
+          {
+            "type": "select",
+            "key": "region",
+            "message": "Region",
+            "messageKey": "subscriptionConnect.region",
+            "options": [
+              {
+                "value": "cn",
+                "label": "China",
+                "labelKey": "subscriptionRegion.cn"
+              },
+              {
+                "value": "intl",
+                "label": "International",
+                "labelKey": "subscriptionRegion.intl"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "ollama-cloud",
+    "name": "Ollama Cloud",
+    "nameKey": "subscriptionName.ollama-cloud",
+    "methods": [
+      {
+        "index": 0,
+        "type": "api",
+        "label": "Cloud API key",
+        "labelKey": "subscriptionMethod.ollama-cloud.0",
+        "hintKey": "subscriptionHint.ollama-cloud",
+        "native": false,
+        "prompts": []
+      }
+    ],
+    "models": {}
+  },
+  {
+    "id": "kilo-gateway",
+    "name": "Kilo Gateway",
+    "nameKey": "subscriptionName.kilo-gateway",
+    "methods": [
+      {
+        "index": 0,
+        "type": "api",
+        "label": "Cloud API key",
+        "labelKey": "subscriptionMethod.kilo-gateway.0",
+        "hintKey": "subscriptionHint.kilo-gateway",
+        "native": false,
+        "prompts": [
+          {
+            "type": "text",
+            "key": "organization",
+            "message": "Organization ID (optional)",
+            "messageKey": "subscriptionConnect.organization",
+            "retain": true
+          }
+        ]
+      }
+    ],
+    "models": {}
   }
 ]

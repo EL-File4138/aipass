@@ -1,12 +1,12 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onMount, onDestroy, tick } from "svelte";
   import { Dialog } from "bits-ui";
   import { scrollMask, Banner, Button, Field, IconButton, ProviderIcon, SelectField } from "@aipass/ui";
   import { ArrowLeft, ArrowRight, Check, ExternalLink, Globe, KeyRound, Search, ShieldCheck, Terminal, X } from "lucide-svelte";
   import { t } from "../../stores/i18n";
-  type Prompt = { key: string; type: string; message: string; placeholder?: string; options?: { label: string; value: string }[] };
-  type Method = { index: number; type: string; label: string; native: boolean; prompts: Prompt[] };
-  type Provider = { id: string; name: string; methods: Method[] };
+  type Prompt = { retain?: boolean; key: string; type: string; message: string; messageKey?: string; placeholder?: string; options?: { label: string; value: string; labelKey?: string }[] };
+  type Method = { index: number; type: string; label: string; labelKey?: string; hintKey?: string; native: boolean; prompts: Prompt[] };
+  type Provider = { id: string; name: string; nameKey?: string; methods: Method[] };
   type Login = { ticket: string; status: string; url?: string; instructions?: string; userCode?: string; method?: string; entryId?: string; error?: string };
   export let invokeTauri: <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
   export let initialProvider = "";
@@ -18,8 +18,25 @@
   let statusEpoch = 0;
   $: cliOwned = ["codex", "grok", "copilot", "gemini-cli"].includes(providerId);
   let providers: Provider[] = [];
+  let providerList: HTMLElement;
+  let connectionBody: HTMLElement;
   let query = "";
-  $: filteredProviders = providers.filter(p => p.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  $: filteredProviders = providers.filter(p => `${providerName(p)} ${p.id}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  function providerName(p: Provider) { return p.nameKey ? $t(p.nameKey) : p.id.startsWith("minimax-code") ? $t(`subscriptionName.${p.id}`) : p.name; }
+  const keyPages: Record<string, string> = {
+    "opencode-go": "https://opencode.ai/console", "opencode-zen": "https://opencode.ai/console", cline: "https://app.cline.bot/dashboard/account",
+    "ollama-cloud": "https://ollama.com/settings/keys", "kilo-gateway": "https://app.kilo.ai",
+    "kimi-code-cn": "https://www.kimi.com/code/console", "kimi-code": "https://www.kimi.com/code/console",
+    "minimax-m-plan-cn": "https://platform.minimaxi.com/subscribe/token-plan", "minimax-m-plan": "https://platform.minimax.io/subscribe/token-plan", "bailian-coding-plan": "https://bailian.console.aliyun.com",
+    "mimo-plan": "https://platform.xiaomimimo.com/token-plan", "stepfun-plan-cn": "https://platform.stepfun.com/interface-key", "stepfun-plan": "https://platform.stepfun.ai/interface-key",
+    "qwen-token-plan": "https://platform.qianwenai.com/home/api-keys", "bailian-token-plan": "https://bailian.console.aliyun.com",
+    "volcengine-coding-plan": "https://ark.volcengine.com/region:cn-beijing/apikey", "volcengine-agent-plan": "https://ark.volcengine.com/region:cn-beijing/apikey",
+    "tencent-token-plan": "https://console.cloud.tencent.com/tokenhub/tokenplan", "tencent-token-plan-enterprise": "https://console.cloud.tencent.com/tokenhub/tokenplan"
+  };
+  $: keyPage = ["bailian-token-plan", "bailian-coding-plan"].includes(providerId) && inputs.region === "intl"
+    ? `https://modelstudio.console.alibabacloud.com/ap-southeast-1/subscription/${providerId === "bailian-coding-plan" ? "coding-plan" : "token-plan"}`
+    : keyPages[providerId] ?? "";
+  async function openKeyPage() { if (!keyPage) return; try { await invokeTauri("oauth_open_verification", { uri: keyPage }); } catch (e) { error = String(e); } }
   let providerId = "";
   let methodIndex = 0;
   let inputs: Record<string, string> = {};
@@ -32,17 +49,19 @@
   let destroyed = false;
   let epoch = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  $: if (error) void revealError();
+  async function revealError() { await tick(); if (!destroyed && connectionBody) connectionBody.scrollTop = 0; }
   $: provider = providers.find(p => p.id === providerId);
   $: method = provider?.methods.find(m => m.index === methodIndex);
   onMount(() => { void load(); });
-  onDestroy(() => { destroyed = true; epoch++; if (timer) clearTimeout(timer); if (login?.status === "pending") void invokeTauri("community_login_cancel", { ticket: login.ticket }).catch(() => {}); for (const key of Object.keys(inputs)) delete inputs[key]; });
+  onDestroy(() => { destroyed = true; epoch++; apiKey = ""; code = ""; if (timer) clearTimeout(timer); if (login?.status === "pending") void invokeTauri("community_login_cancel", { ticket: login.ticket }).catch(() => {}); for (const key of Object.keys(inputs)) delete inputs[key]; });
   async function load() {
     loading = true; error = "";
     try { const result = await invokeTauri<Provider[]>("community_catalog"); if (!destroyed) { providers = result; providerId = result.some(p => p.id === initialProvider) ? initialProvider : result[0]?.id ?? ""; choose(); } }
     catch (e) { if (!destroyed) error = String(e); }
     finally { if (!destroyed) loading = false; }
   }
-  function choose() { methodIndex = providers.find(p => p.id === providerId)?.methods[0]?.index ?? 0; apiKey = ""; inputs = {}; void checkCli(); }
+  function choose() { methodIndex = providers.find(p => p.id === providerId)?.methods[0]?.index ?? 0; apiKey = ""; inputs = {}; void checkCli(); void tick().then(() => { if (!destroyed) providerList?.querySelector<HTMLElement>('[aria-pressed="true"]')?.scrollIntoView?.({ block: "nearest" }); }); }
   async function checkCli() {
     const current = ++statusEpoch;
     cliStatus = null;
@@ -72,7 +91,7 @@
     for (const prompt of method.prompts) if (prompt.type === "select" && !values[prompt.key]) values[prompt.key] = prompt.options?.[0]?.value ?? "";
     try {
       const result = await invokeTauri<Login>("community_login_start", { input: { provider: providerId, method: methodIndex, inputs: values, apiKey: apiKey || null } });
-      apiKey = ""; inputs = {};
+      apiKey = ""; inputs = Object.fromEntries(method.prompts.filter(p => p.type === "select" || p.retain === true).map(p => [p.key, values[p.key]]));
       if (destroyed) { await invokeTauri("community_login_cancel", { ticket: result.ticket }); return; }
       login = result; void poll(result.ticket, requestEpoch);
     } catch (e) { if (!destroyed) { error = String(e); busy = false; } }
@@ -119,12 +138,12 @@
               <Search size={14} aria-hidden="true" />
               <input bind:value={query} disabled={busy} placeholder={$t("communityConnect.search")} aria-label={$t("communityConnect.search")} />
             </label>
-            <nav use:scrollMask class="provider-list" aria-label={$t("communityConnect.provider")}>
+            <nav bind:this={providerList} use:scrollMask class="provider-list" aria-label={$t("communityConnect.provider")}>
               {#each filteredProviders as p}
                 <button type="button" class="provider-option" class:active={providerId === p.id} aria-pressed={providerId === p.id} disabled={busy}
                   on:click={() => { providerId = p.id; error = ""; login = null; choose(); }}>
                   <ProviderIcon title={p.name} providerId={p.id} kind="official" size="sm" />
-                  <span>{p.name}</span>
+                  <span>{providerName(p)}</span>
                   {#if providerId === p.id}<Check size={14} />{/if}
                 </button>
               {/each}
@@ -132,13 +151,13 @@
             </nav>
             <span class="catalog-count">{$t("communityConnect.providerCount", { count: providers.length })}</span>
           </aside>
-          <div use:scrollMask class="connection-body">
+          <div bind:this={connectionBody} use:scrollMask class="connection-body">
             {#if onBack}<button type="button" disabled={busy} class="back" on:click={onBack}><ArrowLeft size={14} />{$t("oauthConnect.changeProvider")}</button>{/if}
             {#if error}<Banner tone="danger">{error}</Banner>{/if}
             {#if provider}
               <div class="selected-provider">
                 <ProviderIcon title={provider.name} providerId={provider.id} kind="official" size="lg" />
-                <div><h2>{provider.name}</h2></div>
+                <div><h2>{providerName(provider)}</h2></div>
               </div>
             {/if}
             {#if cliOwned}
@@ -150,28 +169,28 @@
             {/if}
             <fieldset disabled={busy}>
               <SelectField label={$t("communityConnect.method")} value={String(methodIndex)} disabled={busy}
-                options={(provider?.methods ?? []).map(m => ({ value: String(m.index), label: cliOwned ? $t(m.index === 0 ? "subscriptionCli.signIn" : "subscriptionCli.existing") : m.label }))}
+                options={(provider?.methods ?? []).map(m => ({ value: String(m.index), label: cliOwned ? $t(m.index === 0 ? "subscriptionCli.signIn" : "subscriptionCli.existing") : m.labelKey ? $t(m.labelKey) : m.label }))}
                 onValueChange={(value) => { methodIndex = Number(value); inputs = {}; apiKey = ""; }} />
               {#if method}
                 <div class="method-note">
                   {#if method.type === "api"}<KeyRound size={16} />{:else if method.native}<Terminal size={16} />{:else}<Globe size={16} />{/if}
-                  <p>{$t(cliOwned ? "subscriptionCli.hint" : method.type === "api" ? "communityConnect.apiHint" : method.native ? "communityConnect.cliHint" : "communityConnect.browserHint")}</p>
+                  <p>{$t(method.hintKey ?? (cliOwned ? "subscriptionCli.hint" : method.type === "api" ? "communityConnect.apiHint" : method.native ? "communityConnect.cliHint" : "communityConnect.browserHint"))}</p>
                 </div>
               {/if}
               {#each method?.prompts ?? [] as prompt}
                 {#if prompt.type === "select"}
-                  <SelectField label={prompt.message} disabled={busy} value={inputs[prompt.key] ?? prompt.options?.[0]?.value ?? ""}
-                    options={prompt.options ?? []} onValueChange={(value) => { inputs = { ...inputs, [prompt.key]: value }; }} />
+                  <SelectField label={prompt.messageKey ? $t(prompt.messageKey) : prompt.message} disabled={busy} value={inputs[prompt.key] ?? prompt.options?.[0]?.value ?? ""}
+                    options={(prompt.options ?? []).map(o => ({...o, label: o.labelKey ? $t(o.labelKey) : o.label}))} onValueChange={(value) => { inputs = { ...inputs, [prompt.key]: value }; }} />
                 {:else}
-                  <Field label={prompt.message}><input bind:value={inputs[prompt.key]} placeholder={prompt.placeholder ?? ""} autocomplete="off" /></Field>
+                  <Field label={prompt.messageKey ? $t(prompt.messageKey) : prompt.message}><input bind:value={inputs[prompt.key]} placeholder={prompt.placeholder ?? ""} autocomplete="off" /></Field>
                 {/if}
               {/each}
-              {#if method?.type === "api"}<Field label="API key"><input type="password" bind:value={apiKey} autocomplete="new-password" placeholder={$t("communityConnect.apiPlaceholder")} /></Field>{/if}
+              {#if method?.type === "api"}<Field label="API key"><input type="password" bind:value={apiKey} autocomplete="new-password" placeholder={$t("communityConnect.apiPlaceholder")} /></Field>{#if keyPage}<Button variant="secondary" on:click={openKeyPage}><ExternalLink size={14} />{$t("communityConnect.getKey")}</Button>{/if}{/if}
             </fieldset>
             {#if login?.status === "pending"}
               <section class="login-status" aria-live="polite">
                 <span class="status-label"><span class="status-dot"></span>{$t("communityConnect.authorizing")}</span>
-                <p>{cliOwned ? (login.userCode ? $t("subscriptionCli.enterCode", { code: login.userCode }) : $t("subscriptionCli.waiting")) : login.instructions || $t("communityConnect.waiting")}</p>
+                <p>{cliOwned ? (login.userCode ? $t("subscriptionCli.enterCode", { code: login.userCode }) : $t("subscriptionCli.waiting")) : login.userCode ? $t("subscriptionCli.enterCode", { code: login.userCode }) : login.instructions || $t("communityConnect.waiting")}</p>
                 {#if login.url}<Button variant="secondary" on:click={open}><ExternalLink size={14} />{$t("communityConnect.open")}</Button>{/if}
                 {#if login.method === "code"}<Field label={$t("communityConnect.code")}><input bind:value={code} autocomplete="one-time-code" /></Field><Button variant="primary" disabled={!code.trim()} on:click={submitCode}>{$t("communityConnect.submit")}</Button>{/if}
               </section>
@@ -182,7 +201,7 @@
         <div class="loading-state">{#if error}<Banner tone="danger">{error}</Banner>{/if}<Button on:click={load}>{$t("providerRuntime.retry")}</Button></div>
       {/if}
       <footer class="modal-footer">
-        <span class="security-note"><ShieldCheck size={14} />{$t(cliOwned ? "subscriptionCli.localNote" : "oauthConnect.secureNote")}</span>
+        <span class="security-note"><ShieldCheck size={14} />{$t(cliOwned ? "subscriptionCli.localNote" : "communityConnect.localNote")}</span>
         {#if busy && !login}<Button variant="primary" loading>{$t("communityConnect.waiting")}</Button>
         {:else if busy}<Button variant="secondary" on:click={cancel}>{$t("common.cancel")}</Button>
         {:else}<Button variant="primary" disabled={loading || !method || (cliOwned && (checkingCli || !cliStatus?.available)) || (method.type === "api" && !apiKey.trim())} on:click={start}>{$t("oauthConnect.continue")}<ArrowRight size={14} /></Button>{/if}
@@ -198,7 +217,7 @@
   .modal-header :global(.icon-btn) { flex-shrink: 0; }
   .dialog-heading { display: flex; align-items: center; gap: 12px; min-width: 0; }
   .heading-icon { display: grid; place-items: center; width: 36px; height: 36px; flex-shrink: 0; border: 1px solid var(--border); border-radius: 10px; color: var(--text-secondary); }
-  :global(.community-dialog .dialog-description) { margin: 4px 0 0; color: var(--text-tertiary); font-size: 12px; line-height: 1.5; }
+  :global(.community-dialog .dialog-description) { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .connect-layout { display: grid; grid-template-columns: 224px minmax(0, 1fr); min-height: 0; height: 374px; }
   .provider-picker { min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px 12px 12px; border-right: 1px solid var(--divider); background: var(--surface-2); }
   .provider-search { display: flex; align-items: center; gap: 7px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text-tertiary); }
@@ -213,11 +232,11 @@
   .provider-option:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: -2px; }
   .provider-option:disabled { opacity: .55; cursor: not-allowed; }
   .catalog-count { padding: 0 8px; color: var(--text-tertiary); font-size: 10px; }
-  .connection-body { display: flex; flex-direction: column; gap: 20px; min-width: 0; overflow-y: auto; padding: 24px; }
+  .connection-body { display: flex; flex-direction: column; gap: 14px; min-width: 0; overflow-y: auto; padding: 20px; }
   .selected-provider { display: flex; align-items: center; gap: 12px; }
   h2 { margin: 0 0 4px; font-size: 18px; font-weight: 600; letter-spacing: -.025em; }
   p { margin: 0; font-size: 12px; line-height: 1.6; color: var(--text-tertiary); overflow-wrap: anywhere; }
-  fieldset { display: grid; gap: 16px; border: 0; padding: 0; margin: 0; min-width: 0; }
+  fieldset { display: grid; gap: 12px; border: 0; padding: 0; margin: 0; min-width: 0; }
   .method-note { display: flex; align-items: flex-start; gap: 9px; padding: 12px; background: var(--surface-2); border-radius: var(--radius); color: var(--text-secondary); }
   .method-note :global(svg) { flex-shrink: 0; margin-top: 2px; }
   .method-note p { color: var(--text-secondary); font-size: 11px; }

@@ -81,7 +81,9 @@
   $: strategyOptions = [
     { value: "fallback", label: $t("server.strategyFallback") },
     { value: "round_robin", label: $t("server.strategyRoundRobin") },
-    { value: "quota_aware", label: $t("server.strategyQuotaAware") }
+    { value: "quota_aware", label: $t("server.strategyQuotaAware") },
+    { value: "reset_soonest", label: $t("server.strategyResetSoonest") },
+    { value: "quota_pace", label: $t("server.strategyQuotaPace") }
   ];
   $: protocolOptions = [
     { value: "anthropic_messages", label: "Anthropic Messages" },

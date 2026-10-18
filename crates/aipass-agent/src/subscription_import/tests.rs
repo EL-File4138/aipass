@@ -7,7 +7,12 @@ use std::path::Path;
 fn provider_aliases_have_one_import_identity() {
     assert_eq!(sources::canonical_provider("openai"), Some("codex"));
     assert_eq!(sources::canonical_provider("claude"), Some("anthropic"));
-    assert_eq!(sources::PROVIDERS.len(), 12);
+    assert_eq!(sources::PROVIDERS.len(), 15);
+    assert_eq!(sources::canonical_provider("kimi-work"), Some("kimi-work"));
+    assert_eq!(
+        sources::canonical_provider("opencode-go"),
+        Some("opencode-go")
+    );
     assert_eq!(sources::canonical_provider("factory"), None);
 }
 

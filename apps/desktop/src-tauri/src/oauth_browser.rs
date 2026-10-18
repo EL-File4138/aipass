@@ -106,11 +106,43 @@ fn verification_url(uri: &str) -> Result<url::Url, String> {
         || !url.username().is_empty()
         || url.password().is_some()
         || url.port_or_known_default() != Some(443)
-        || !(host == "auth.openai.com" || host == "x.ai" || host.ends_with(".x.ai"))
+        || !(host == "auth.openai.com"
+            || host == "x.ai"
+            || host.ends_with(".x.ai")
+            || (host == "opencode.ai" && url.path() == "/console")
+            || (host == "app.cline.bot" && url.path() == "/dashboard/account")
+            || plan_key_page(host, url.path()))
     {
         return Err("unsupported authorization URL".into());
     }
     Ok(url)
+}
+
+fn plan_key_page(host: &str, path: &str) -> bool {
+    matches!(
+        (host, path),
+        ("ollama.com", "/settings/keys" | "/settings/usage")
+            | ("app.kilo.ai", "/")
+            | ("www.kimi.com", "/code/console")
+            | (
+                "platform.minimax.io" | "platform.minimaxi.com",
+                "/subscribe/token-plan"
+            )
+            | ("platform.xiaomimimo.com", "/token-plan")
+            | (
+                "platform.stepfun.com" | "platform.stepfun.ai",
+                "/interface-key"
+            )
+            | ("platform.qianwenai.com", "/home/api-keys")
+            | ("bailian.console.aliyun.com", "/")
+            | (
+                "modelstudio.console.alibabacloud.com",
+                "/ap-southeast-1/subscription/token-plan"
+                    | "/ap-southeast-1/subscription/coding-plan"
+            )
+            | ("ark.volcengine.com", "/region:cn-beijing/apikey")
+            | ("console.cloud.tencent.com", "/tokenhub/tokenplan")
+    )
 }
 
 pub(crate) fn browser_command() -> Command {
@@ -138,6 +170,9 @@ mod tests {
             "https://auth.openai.com/codex/device",
             "https://accounts.x.ai/activate?user_code=ABCD-EFGH",
             "https://auth.x.ai/device",
+            "https://opencode.ai/console",
+            "https://app.cline.bot/dashboard/account",
+            "https://modelstudio.console.alibabacloud.com/ap-southeast-1/subscription/token-plan",
         ] {
             assert!(verification_url(uri).is_ok());
         }
@@ -146,6 +181,9 @@ mod tests {
             "https://auth.openai.com.evil.example/device",
             "https://x.ai.evil.example/device",
             "https://example.com/device",
+            "https://opencode.ai/redirect",
+            "https://app.cline.bot/redirect",
+            "https://modelstudio.console.alibabacloud.com/redirect",
             "https://user:password@auth.x.ai/device",
             "https://auth.x.ai:444/device",
             "file:///tmp/file",

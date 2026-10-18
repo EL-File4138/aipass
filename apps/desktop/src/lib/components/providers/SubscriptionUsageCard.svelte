@@ -1,31 +1,43 @@
 <script lang="ts">
   import type { SubscriptionSnapshot, SubscriptionWindow } from "@aipass/schemas";
   import { Badge, Button, Card } from "@aipass/ui";
-  import { AlertCircle, Gauge, RefreshCw } from "lucide-svelte";
+  import { AlertCircle, Gauge, RefreshCw, ExternalLink } from "lucide-svelte";
   import { t } from "../../stores/i18n";
 
   export let subscription: SubscriptionSnapshot | undefined = undefined;
   export let refreshing = false;
+  export let invokeTauri: (<T>(command: string, args?: Record<string, unknown>) => Promise<T>) | undefined = undefined;
+  let consoleError = "";
+  let consoleTarget: string | undefined;
+  $: updateConsoleTarget(subscription?.consoleUrl);
+  function updateConsoleTarget(target: string | undefined) { if (target !== consoleTarget) { consoleTarget = target; consoleError = ""; } }
+  async function openConsole() { const target = subscription?.consoleUrl; if (!target) return; try { await invokeTauri?.("oauth_open_verification", { uri: target }); } catch (e) { if (subscription?.consoleUrl === target) consoleError = String(e); } }
   export let error = "";
   export let refreshable = false;
   export let onRefresh: () => void | Promise<void> = () => {};
 
-  $: failure = error || subscription?.error || "";
+  $: failure = error || subscription?.error || consoleError || "";
   $: stale = Boolean(subscription?.stale || failure);
   $: windows = subscription?.windows ?? [];
   $: hasUsage = windows.length > 0 || Boolean(subscription?.creditsRemaining?.trim());
+  $: consoleOnly = subscription?.quotaUnavailable ?? /^community:(opencode-zen|mimo-plan|stepfun-plan(-cn)?|qwen-token-plan|bailian-(token|coding)-plan|volcengine-(coding|agent)-plan|tencent-token-plan(-enterprise)?)$/.test(subscription?.source ?? "");
+  $: planNameKey = `subscriptionName.${subscription?.source?.replace("community:", "") ?? ""}`;
+  $: translatedPlan = $t(planNameKey);
+  $: planLabel = consoleOnly && translatedPlan !== planNameKey ? translatedPlan : subscription?.plan;
   $: reconnect = /account.*chang|ownership|reconnect|reauth|needs.login|login.required|unauthorized|expired.*(token|credential)/i.test(failure);
   function label(window: SubscriptionWindow) {
     const raw = window.label;
+    if (raw === "Membership") return $t("subscriptionUsage.membership");
+    if (raw === "Allowance") return $t("subscriptionUsage.allowance");
     const minutes = window.windowMinutes;
     const weekly = minutes === 10080 || /^(weekly|week|7 days|7-day|seven_day)$/i.test(raw);
     const fiveHour = minutes === 300 || /^(5 hours?|5h|five_hour)$/i.test(raw);
-    const period = weekly ? $t("subscriptionUsage.weekly") : fiveHour ? $t("subscriptionUsage.fiveHour") :
+    const period = /^(monthly|month)$/i.test(raw) ? $t("subscriptionUsage.monthly") : weekly ? $t("subscriptionUsage.weekly") : fiveHour ? $t("subscriptionUsage.fiveHour") :
       minutes === 1440 ? $t("subscriptionUsage.daily") : minutes && minutes % 60 === 0 ? $t("subscriptionUsage.hours", { hours: minutes / 60 }) : "";
     if (!period) return raw;
     const scope = raw.match(/^(.+) · (primary|secondary)$/i)?.[1];
     if (scope) return scope.toLowerCase() === "codex" ? period : `${scope} (${period})`;
-    return /^(weekly|week|7 days|7-day|seven_day|5 hours?|5h|five_hour|daily|24 hours?)$/i.test(raw) ? period : `${period} (${raw})`;
+    return /^(monthly|month|weekly|week|7 days|7-day|seven_day|5 hours?|5h|five_hour|daily|24 hours?)$/i.test(raw) ? period : `${period} (${raw})`;
   }
   function percent(window: SubscriptionWindow) {
     return typeof window.usedPercent === "number" && Number.isFinite(window.usedPercent) && window.usedPercent >= 0 ? Math.max(0, Math.min(100, window.usedPercent)) : null;
@@ -45,13 +57,13 @@
 <Card title={$t("providerDetail.subscription")} collapsible padded={false}>
   <div class="subscription-usage" aria-busy={refreshing}>
     {#if subscription?.plan || subscription?.status}
-      <div class="plan"><strong>{subscription?.plan}</strong>{#if subscription?.status}<Badge>{subscription.status}</Badge>{/if}</div>
+      <div class="plan"><strong>{planLabel}</strong>{#if subscription?.status}<Badge>{subscription.status}</Badge>{/if}</div>
     {/if}
     {#if failure || (stale && hasUsage)}
       <div class="notice" role="status"><AlertCircle size={16} /><div><strong>{$t(reconnect ? "subscriptionUsage.reconnectTitle" : failure ? "subscriptionUsage.failedTitle" : "providerDetail.snapshotStale")}</strong><p>{$t(reconnect ? "subscriptionUsage.reconnectHint" : hasUsage ? "subscriptionUsage.cachedHint" : "subscriptionUsage.failedHint")}</p></div></div>
     {/if}
     {#if !hasUsage && !failure}
-      <div class="empty-state" role="status"><Gauge size={22} /><strong>{$t(refreshing ? "subscriptionUsage.loadingTitle" : "subscriptionUsage.emptyTitle")}</strong><p>{$t(refreshing ? "subscriptionUsage.loadingHint" : "subscriptionUsage.emptyHint")}</p></div>
+      <div class="empty-state" role="status"><Gauge size={22} /><strong>{$t(refreshing ? "subscriptionUsage.loadingTitle" : consoleOnly ? "subscriptionUsage.consoleTitle" : "subscriptionUsage.emptyTitle")}</strong><p>{$t(refreshing ? "subscriptionUsage.loadingHint" : consoleOnly ? "subscriptionUsage.consoleHint" : "subscriptionUsage.emptyHint")}</p></div>
     {/if}
     {#if hasUsage}
       <div class="windows" class:stale>
@@ -73,7 +85,8 @@
     {#if dates.length}<div class="dates">{#each dates as [key, value]}<span>{$t(key)}: {date(value)}</span>{/each}</div>{/if}
     <div class="usage-footer">
       {#if hasUsage && date(subscription?.observedAt)}<small>{$t("subscriptionUsage.updatedAt", { time: date(subscription?.observedAt) })}</small>{/if}
-      {#if refreshable}<Button variant="secondary" size="sm" loading={refreshing} disabled={refreshing} on:click={() => { void onRefresh(); }}><RefreshCw size={13} />{$t(failure ? "subscriptionUsage.retry" : "subscriptionUsage.refresh")}</Button>{/if}
+      {#if subscription?.consoleUrl && invokeTauri}<Button variant="secondary" size="sm" on:click={openConsole}><ExternalLink size={13} />{$t("subscriptionUsage.openConsole")}</Button>{/if}
+      {#if refreshable && !consoleOnly}<Button variant="secondary" size="sm" loading={refreshing} disabled={refreshing} on:click={() => { void onRefresh(); }}><RefreshCw size={13} />{$t(failure ? "subscriptionUsage.retry" : "subscriptionUsage.refresh")}</Button>{/if}
     </div>
   </div>
 </Card>

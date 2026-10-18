@@ -25,7 +25,12 @@ pub(super) fn account_title(provider: &str, identity: &str, auth: &Value) -> Str
             .and_then(Value::as_str)
             .filter(|s| !s.trim().is_empty())
     });
-    let name = friendly.unwrap_or(identity).trim();
+    let key_label = identity
+        .strip_prefix("key-")
+        .or_else(|| identity.rsplit_once(":key-").map(|(_, key)| key))
+        .filter(|s| s.len() == 64)
+        .map(|s| format!("API key {}", &s[s.len() - 8..]));
+    let name = friendly.or(key_label.as_deref()).unwrap_or(identity).trim();
     let name = if name.contains('@') {
         name.split(':').next().unwrap_or(name)
     } else {

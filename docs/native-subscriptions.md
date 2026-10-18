@@ -85,6 +85,10 @@ quota races mean this is not a hard billing cap. MCP exposes
 
 See the [provider review](subscription-provider-parity-2026-10-16.md) for passive
 allowance feedback, encrypted history ownership and remaining provider gaps.
+See the [subscription expansion](subscription-expansion-2026-10-18.md) for OpenCode,
+Antigravity, Kimi Work, MiniMax, Cline, Trae and dedicated Coding/Token Plans.
+See the [latest Magpie gap audit](subscription-magpie-gap-audit-2026-10-18.md) for
+additional candidates, billing-product distinctions and prioritized repairs.
 
 ## Legacy handoff
 
@@ -149,3 +153,5 @@ whole native Run, identified by `x-aipass-usage-scope: native-run`.
 
 See [capability boundaries and validation](subscription-capabilities-2026-10-16.md)
 for supported mappings, expiry, billing scope and remaining gaps.
+
+The [approved parity fixes](subscription-magpie-gap-audit-2026-10-18.md#已批准修缮的落地状态2026-10-18后续实施) also add separate Kimi Code, MiniMax M Plan and Bailian Coding Plan keys, Ollama Cloud and Kilo Gateway. Account quota headroom affects routing only; the usage card retains vendor percentages. New adapters have fixture coverage; current vendor-account end-to-end validation remains outstanding.

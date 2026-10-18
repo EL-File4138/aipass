@@ -109,6 +109,8 @@ pub enum RouteStrategy {
     Fallback,
     RoundRobin,
     QuotaAware,
+    ResetSoonest,
+    QuotaPace,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

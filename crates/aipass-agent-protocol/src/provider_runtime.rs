@@ -30,6 +30,7 @@ impl Default for ProviderRuntimeOptions {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct SubscriptionPolicy {
+    pub quota_use_limit_percent: Option<u8>,
     pub allow_paid_credits: bool,
     pub auto_reset_credits: bool,
     pub native_switch: Option<NativeSwitchPolicy>,

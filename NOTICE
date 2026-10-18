@@ -12,3 +12,6 @@ assets and their source URLs are documented in that directory's SOURCES.md.
 
 Qoder's codec includes MIT-licensed work from CLIProxyAPI; its notice is retained
 in crates/aipass-proxy-conversion/third-party/LICENSE-CLIProxyAPI.
+
+OpenCode model API-family metadata is derived from models.dev (MIT).
+Its license is retained in crates/aipass-agent/src/subscriptions/LICENSE-MODELS-DEV.

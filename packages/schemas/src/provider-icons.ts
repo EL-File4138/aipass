@@ -4,6 +4,12 @@
  */
 
 export type ProviderIconName =
+  | "kilocode"
+  | "tencent"
+  | "trae"
+  | "opencode"
+  | "antigravity"
+  | "cline"
   | "grok"
   | "claude"
   | "codex"
@@ -64,6 +70,33 @@ export type ProviderIconName =
  */
 export const PROVIDER_ICON_MAP: Record<string, ProviderIconName> = {
   // Native subscriptions and additional provider brands
+  "trae-cn": "trae",
+  "trae-global": "trae",
+  "mimo-plan": "mimo",
+  "stepfun-plan-cn": "stepfun",
+  "stepfun-plan": "stepfun",
+  "qwen-token-plan": "qwen",
+  "bailian-token-plan": "alibaba",
+  "volcengine-coding-plan": "volcengine",
+  "volcengine-agent-plan": "volcengine",
+  "tencent-token-plan": "tencent",
+  "tencent-token-plan-enterprise": "tencent",
+  "opencode": "opencode",
+  "opencode-go": "opencode",
+  "opencode-zen": "opencode",
+  "antigravity": "antigravity",
+  "cline": "cline",
+  "kilo-gateway": "kilocode",
+  "ollama-cloud": "ollama",
+  "kimi-work": "moonshot",
+  "kimi-code-cn": "moonshot",
+  "kimi-code": "moonshot",
+  "minimax-m-plan-cn": "minimax",
+  "minimax-m-plan": "minimax",
+  "bailian-coding-plan": "alibaba",
+
+  "minimax-code": "minimax",
+  "minimax-code-global": "minimax",
   "claude": "claude",
   "codex": "codex",
   "copilot": "copilot",

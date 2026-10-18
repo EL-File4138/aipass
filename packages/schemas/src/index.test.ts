@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { subscriptionAccountPresentation } from "./account-presentation.js";
 import {
   authSchemeCompatibleWithInterface,
   defaultAuthSchemeForInterface,
@@ -10,6 +11,14 @@ import {
   maskSecret,
   newProxyId
 } from "./index.js";
+
+test("subscription presentation localizes generated brands without losing friendly names", () => {
+  const entry = {providerId: "trae-cn", title: "Trae (China) · Alice", accountIdentity: "trae-cn:123:tenant"};
+  const result = subscriptionAccountPresentation(entry, () => "Trae (中国)");
+  assert.equal(result.title, "Trae (中国)");
+  assert.equal(result.subtitle, "Alice");
+  assert.equal(subscriptionAccountPresentation({...entry, title: "工作账号"}, () => "Trae (中国)").title, "工作账号");
+});
 
 test("matches first-class non OpenAI providers", () => {
   assert.equal(matchProviderByDomain("https://console.anthropic.com/settings/keys")?.id, "anthropic");
@@ -97,4 +106,15 @@ test("creates secure UUIDs for HTTP LAN panels without crypto.randomUUID", () =>
   } finally {
     Object.defineProperty(globalThis, "crypto", original);
   }
+});
+
+test("plan regions and Kilo organizations remain visible beside key fingerprints", () => {
+  const digest="a".repeat(64);
+  const plan={providerId:"bailian-coding-plan",title:"Bailian Coding Plan · API key aaaaaaaa",accountIdentity:`bailian-coding-plan:intl:key-${digest}`};
+  const t=(key:string)=>({"subscriptionRegion.intl":"国际","subscriptionName.bailian-coding-plan":"百炼 Coding Plan"}[key]??key);
+  assert.equal(subscriptionAccountPresentation(plan,t).subtitle,"API key aaaaaaaa (国际)");
+  const org={providerId:"kilo-gateway",title:"Kilo Gateway · API key aaaaaaaa",accountIdentity:`kilo-gateway:org-team-a:key-${digest}`};
+  assert.equal(subscriptionAccountPresentation(org).subtitle,"API key aaaaaaaa (org-team-a)");
+  assert.equal(subscriptionAccountPresentation({...org,accountIdentity:`kilo-gateway::key-${digest}`}).subtitle,"API key aaaaaaaa");
+  assert.equal(plan.accountIdentity,`bailian-coding-plan:intl:key-${digest}`);
 });

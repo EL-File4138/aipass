@@ -16,6 +16,13 @@ const snapshot = { source: "community:codex", observedAt: "2026-10-11T14:00:00Z"
   { id: "spark", label: "spark · primary", usedPercent: 150, windowMinutes: 300 }
 ] };
 
+test("OpenCode Go can read allowance and its initial state is not console-only", () => {
+  render({ subscription: { source: "community:opencode-go", observedAt: snapshot.observedAt, plan: "OpenCode Go", windows: [] } });
+  expect(document.body.textContent).toContain("尚未读取用量");
+  expect(document.body.textContent).not.toContain("额度请到控制台查看");
+  expect(document.querySelector('[role="progressbar"]')).toBeNull();
+});
+
 test("period bars preserve zero readings, clamp overflow and keep model scope", () => {
   render({ subscription: snapshot });
   const bars = [...document.querySelectorAll('[role="progressbar"]')];
@@ -52,4 +59,14 @@ test("legacy generated names keep email separate from the complete ownership key
     .toEqual({ title: "Codex", subtitle: "alice@example.test (kspace-a)", account: "alice@example.test", scope: "workspace-a" });
   expect(readableAccountIdentity("f055738b-a707-4b5b-8304-c37dd2525035")).toBe("d2525035");
   expect(subscriptionAccountPresentation({ title: "My work account", providerId: "codex", accountIdentity: identity }).title).toBe("My work account");
+});
+
+test("console-only accounts open the bound regional console without a futile refresh", () => {
+  const invokeTauri=vi.fn().mockResolvedValue(undefined);
+  render({subscription:{source:"community:bailian-coding-plan",observedAt:snapshot.observedAt,windows:[],quotaUnavailable:true,consoleUrl:"https://modelstudio.console.alibabacloud.com/ap-southeast-1/subscription/coding-plan"},refreshable:true,invokeTauri});
+  expect(document.body.textContent).toContain("额度请到控制台查看");
+  const button=document.querySelector<HTMLButtonElement>(".usage-footer button")!;
+  expect(button.textContent).toContain("打开控制台"); button.click();
+  expect(invokeTauri).toHaveBeenCalledWith("oauth_open_verification",{uri:"https://modelstudio.console.alibabacloud.com/ap-southeast-1/subscription/coding-plan"});
+  expect(document.querySelectorAll(".usage-footer button")).toHaveLength(1);
 });

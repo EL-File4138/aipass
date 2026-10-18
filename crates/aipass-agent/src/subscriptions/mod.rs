@@ -1,6 +1,7 @@
 //! Native subscription transports. No downloaded code or interpreter is executed.
 //! Wire transformations live in aipass-proxy-conversion; this module owns account
 //! authentication, HTTP, cancellation, and durable credential rotation.
+use aipass_crypto::SecretString;
 use aipass_proxy::UpstreamProxyConfig;
 use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
@@ -9,6 +10,7 @@ use base64::{
 use futures_util::StreamExt;
 use reqwest::{Client, RequestBuilder, Response};
 use serde_json::{json, Value};
+use sha2::Digest;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -19,6 +21,16 @@ use std::{
 use tokio::sync::{mpsc, watch};
 
 mod allowance;
+mod antigravity;
+mod cline;
+mod device;
+mod gateways;
+mod kimi_work;
+mod minimax;
+mod opencode;
+mod plan_quota;
+mod plans;
+mod trae;
 use allowance::timestamp;
 pub(crate) mod cli_accounts;
 mod commandcode;
@@ -269,6 +281,14 @@ impl Context {
     async fn catalog(&mut self) -> Result<()> {
         let live = match self.provider.as_str() {
             "workbuddy" | "workbuddy-ai" => workbuddy::models(self).await,
+            "opencode-go" | "opencode-zen" => opencode::models(self).await,
+            "antigravity" => antigravity::models(self).await,
+            "kimi-work" => kimi_work::models(self).await,
+            "minimax-code" | "minimax-code-global" => minimax::models(self).await,
+            "cline" => cline::models(self).await,
+            "trae-cn" | "trae-global" => trae::models(self).await,
+            id if plans::PROVIDERS.contains(&id) => plans::models(self).await,
+            id if gateways::PROVIDERS.contains(&id) => gateways::models(self).await,
             "zcode" => zcode::models(self).await,
             "grok" => grok::models(self).await,
             "codex" | "copilot" | "gemini-cli" => cli_accounts::models(self).await,
@@ -290,6 +310,9 @@ impl Context {
                 self.models = models;
             }
         }
+        if self.models.as_object().is_none_or(|m| m.is_empty()) {
+            return Err("No models are available; check the account and reconnect".into());
+        }
         self.acknowledged(json!({"type":"models","value":self.models}))
             .await
     }
@@ -297,6 +320,14 @@ impl Context {
         match self.provider.as_str() {
             "factory" => factory::fresh(self).await,
             "workbuddy" | "workbuddy-ai" => workbuddy::fresh(self).await,
+            "opencode-go" | "opencode-zen" => opencode::fresh(self).await,
+            "antigravity" => antigravity::fresh(self).await,
+            "kimi-work" => kimi_work::fresh(self).await,
+            "minimax-code" | "minimax-code-global" => minimax::fresh(self).await,
+            "cline" => cline::fresh(self).await,
+            "trae-cn" | "trae-global" => trae::fresh(self).await,
+            id if plans::PROVIDERS.contains(&id) => plans::fresh(self).await,
+            id if gateways::PROVIDERS.contains(&id) => gateways::fresh(self).await,
             "mimo-app" => mimo::fresh(self).await,
             "zcode" => zcode::fresh(self).await,
             "grok" => grok::fresh(self).await,
@@ -398,6 +429,12 @@ impl Context {
                 match self.provider.as_str() {
                     "factory" => factory::login(self, method).await?,
                     "workbuddy" | "workbuddy-ai" => workbuddy::login(self, method).await?,
+                    "opencode-go" | "opencode-zen" => opencode::login(self, method).await?,
+                    "antigravity" => antigravity::login(self, method).await?,
+                    "kimi-work" => kimi_work::login(self, method).await?,
+                    "minimax-code" | "minimax-code-global" => minimax::login(self, method).await?,
+                    "cline" => cline::login(self, method).await?,
+                    "trae-cn" | "trae-global" => trae::login(self, method).await?,
                     "mimo-app" => mimo::login(self, method).await?,
                     "zcode" => zcode::login(self, method).await?,
                     "grok" => grok::login(self, method).await?,
@@ -445,6 +482,14 @@ impl Context {
             let usage = match self.provider.as_str() {
                 "factory" => factory::usage(self).await?,
                 "workbuddy" | "workbuddy-ai" => workbuddy::usage(self).await?,
+                "opencode-go" | "opencode-zen" => opencode::usage(self).await?,
+                "antigravity" => antigravity::usage(self).await?,
+                "kimi-work" => kimi_work::usage(self).await?,
+                "minimax-code" | "minimax-code-global" => minimax::usage(self).await?,
+                "cline" => cline::usage(self).await?,
+                "trae-cn" | "trae-global" => trae::usage(self).await?,
+                id if plans::PROVIDERS.contains(&id) => plans::usage(self).await?,
+                id if gateways::PROVIDERS.contains(&id) => gateways::usage(self).await?,
                 "mimo-app" => mimo::usage(self).await?,
                 "zcode" => zcode::usage(self).await?,
                 "grok" => grok::usage(self).await?,
@@ -481,6 +526,14 @@ impl Context {
         match self.provider.as_str() {
             "factory" => factory::generate(self, &model, body).await,
             "workbuddy" | "workbuddy-ai" => workbuddy::generate(self, &model, body).await,
+            "opencode-go" | "opencode-zen" => opencode::generate(self, &model, body).await,
+            "antigravity" => antigravity::generate(self, &model, body).await,
+            "kimi-work" => kimi_work::generate(self, &model, body).await,
+            "minimax-code" | "minimax-code-global" => minimax::generate(self, &model, body).await,
+            "cline" => cline::generate(self, &model, body).await,
+            "trae-cn" | "trae-global" => trae::generate(self, &model, body).await,
+            id if plans::PROVIDERS.contains(&id) => plans::generate(self, &model, body).await,
+            id if gateways::PROVIDERS.contains(&id) => gateways::generate(self, &model, body).await,
             "mimo-app" => mimo::generate(self, &model, body).await,
             "zcode" => zcode::generate(self, &model, body).await,
             "grok" => grok::generate(self, &model, body).await,

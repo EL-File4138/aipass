@@ -8,6 +8,7 @@ pub mod devin;
 pub mod grok;
 pub mod kiro;
 pub mod qoder;
+pub mod trae;
 pub mod zcode;
 
 /// Common incremental boundary for provider envelopes normalized to SSE.

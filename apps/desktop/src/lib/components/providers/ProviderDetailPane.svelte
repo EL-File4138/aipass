@@ -448,7 +448,7 @@
       <div class="identity">
         <ProviderIcon title={selected.title} kind={selected.providerKind} providerId={selected.providerId} credentialKind={selected.credentialKind} domain={selected.domains[0]} faviconUrl={selected.faviconUrl} size="lg" />
         <div class="identity-text">
-          <h1>{isSubscription ? subscriptionAccountPresentation(selected).title : selected.title}</h1>
+          <h1>{isSubscription ? subscriptionAccountPresentation(selected, $t).title : selected.title}</h1>
           <div class="meta">
             <Badge tone={providerKindTone[selected.providerKind]}>{$t(providerKindLabelKey(selected.providerKind))}</Badge>
             {#if !isSubscription}<Badge>{$t(keyFormats.length > 1 ? "credential.multipleFormats" : interfaceLabelKey(keyFormats[0] ?? selected.interfaceType))}</Badge>{/if}
@@ -959,7 +959,7 @@
 
         {#if hasSubscription || isSubscription}
           {#key selected.id}
-            <SubscriptionUsageCard subscription={selected.subscription} refreshing={communityRefreshing} error={communityError}
+            <SubscriptionUsageCard {invokeTauri} subscription={selected.subscription} refreshing={communityRefreshing} error={communityError}
               refreshable={Boolean(isSubscription || selected.subscription?.source.startsWith("community:") || selected.subscription?.source === "claude-cli")} onRefresh={refreshCommunity} />
           {/key}
         {/if}

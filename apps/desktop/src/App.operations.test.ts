@@ -161,7 +161,7 @@ test.each([false, true])("lock unmounts CLI subscription sign-in with status alr
     subscription_cli_status: () => alreadyLoaded ? {available: true} : new Promise(resolve => {finish = resolve;})
   });
   document.querySelector<HTMLButtonElement>('button[aria-label="Subscription accounts"]')!.click();
-  await vi.waitFor(() => {flushSync(); expect(document.querySelector(".subscription-dialog")).toBeTruthy();});
+  await vi.waitFor(() => {flushSync(); expect([...document.querySelectorAll(".provider strong")].some(n => n.textContent === "ChatGPT (Codex)")).toBe(true);});
   [...document.querySelectorAll<HTMLButtonElement>(".provider")].find(b => b.querySelector("strong")?.textContent === "ChatGPT (Codex)")!.click();
   await vi.waitFor(() => {flushSync(); expect(document.querySelector(".community-dialog")).toBeTruthy();});
   if (!alreadyLoaded) await vi.waitFor(() => expect(finish).toBeTypeOf("function"));

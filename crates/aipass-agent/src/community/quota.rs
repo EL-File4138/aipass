@@ -17,6 +17,7 @@ pub(super) fn snapshot(provider: &str, value: &Value) -> SubscriptionSnapshot {
                 t.format(&time::format_description::well_known::Rfc3339)
                     .ok()
             }),
+        quota_unavailable: value["quotaUnavailable"] == true,
         plan: value["plan"].as_str().map(str::to_owned),
         credits_remaining: value["balance"].as_str().map(str::to_owned).or_else(|| {
             value["balance"]
@@ -53,7 +54,7 @@ pub(super) fn snapshot(provider: &str, value: &Value) -> SubscriptionSnapshot {
     }
 }
 pub(crate) fn refresh(state: &Arc<AgentState>, id: Uuid) -> ServiceResult<SubscriptionSnapshot> {
-    let (marker, provider, proxy, bridge) = with_vault(state, false, |vault| {
+    let (marker, provider, console_url, proxy, bridge) = with_vault(state, false, |vault| {
         let marker = SensitiveString::new(vault.reveal_secret(id).map_err(map_vault_error)?);
         let account = decode(read(vault, id, marker.expose())?.expose())?;
         let prefs = crate::provider_runtime::load(vault, id)?;
@@ -65,7 +66,14 @@ pub(crate) fn refresh(state: &Arc<AgentState>, id: Uuid) -> ServiceResult<Subscr
         let outbound = crate::provider_runtime::outbound(&prefs)
             .map_err(invalid)?
             .unwrap_or(global);
-        Ok((marker, account.provider, outbound, proxy.community_bridge()))
+        let console_url = super::console::account_url(&account);
+        Ok((
+            marker,
+            account.provider,
+            console_url,
+            outbound,
+            proxy.community_bridge(),
+        ))
     })?;
     let usage = match bridge.refresh(id, marker.expose(), &proxy) {
         Ok(usage) => usage,
@@ -74,6 +82,7 @@ pub(crate) fn refresh(state: &Arc<AgentState>, id: Uuid) -> ServiceResult<Subscr
         Err(error) => json!({"error":error}),
     };
     let mut snapshot = snapshot(&provider, &usage);
+    snapshot.console_url = console_url;
     with_vault(state, false, |vault| {
         read(vault, id, marker.expose())?;
         if snapshot.error.is_some() {
@@ -165,7 +174,9 @@ pub(crate) fn quota(vault: &Vault, id: Uuid) -> Vec<aipass_proxy::QuotaWindow> {
         if let Ok(prefs) = crate::provider_runtime::load(vault, id) {
             // Admission performs a live CLI allowance read before generation
             // when reset is enabled and paid credits remain disabled.
-            if prefs.subscription.allow_paid_credits || prefs.subscription.auto_reset_credits {
+            if prefs.subscription.quota_use_limit_percent.is_none()
+                && (prefs.subscription.allow_paid_credits || prefs.subscription.auto_reset_credits)
+            {
                 return Vec::new();
             }
         }
@@ -213,6 +224,7 @@ pub(crate) fn native_quota(vault: &Vault, id: Uuid) -> Vec<aipass_proxy::QuotaWi
                 })
             };
             Some(aipass_proxy::QuotaWindow {
+                span_seconds: w["span"].as_u64(),
                 model_family: None,
                 used_basis_points: (used.min(100.) * 100.).round() as u16,
                 observed_at: w["observedAt"].as_u64().unwrap_or(observed_at),
