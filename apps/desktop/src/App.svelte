@@ -3574,7 +3574,6 @@
     {invokeTauri}
     onClose={() => { showOAuthConnect = false; }}
     onConnected={onSubscriptionConnected}
-    onCommunity={() => { showOAuthConnect = false; showCommunityConnect = true; }}
     initialProvider={subscriptionLoginProvider === "anthropic" ? "claude" : subscriptionLoginProvider}
     onImportCli={refreshOfficialAccounts}
   />

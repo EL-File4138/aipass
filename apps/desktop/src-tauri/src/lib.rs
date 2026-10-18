@@ -11,6 +11,13 @@ mod oauth_browser;
 mod panel_commands;
 mod provider_inputs;
 mod runtime_check;
+mod window_chrome;
+use window_chrome::configure_window_chrome;
+mod window_geometry;
+pub(crate) use window_geometry::persist_window_size;
+use window_geometry::{
+    persist_window_size_for_target, target_uses_persisted_window_size, window_size_for_target,
+};
 mod runtime_lifecycle;
 #[cfg(target_os = "macos")]
 mod self_install;
@@ -91,19 +98,6 @@ pub(crate) static ALLOW_PROCESS_EXIT: AtomicBool = AtomicBool::new(false);
 struct DesktopWindowState {
     frontend_ready: bool,
     target: String,
-}
-
-const DESKTOP_WINDOW_SIZE_FILE: &str = "window-size.json";
-const DESKTOP_WINDOW_SIZE_TOLERANCE: f64 = 0.25;
-const MIN_DESKTOP_WINDOW_WIDTH: f64 = 960.0;
-const MIN_DESKTOP_WINDOW_HEIGHT: f64 = 640.0;
-const DEFAULT_DESKTOP_WINDOW_WIDTH: f64 = 1280.0;
-const DEFAULT_DESKTOP_WINDOW_HEIGHT: f64 = 820.0;
-
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
-struct DesktopWindowSize {
-    width: f64,
-    height: f64,
 }
 
 impl DesktopWindowState {
@@ -242,6 +236,13 @@ pub(crate) fn install_tray_autostart_for_current_desktop(
             .map(|_| ())
             .map_err(|err| err.to_string())
     }
+}
+
+#[cfg(target_os = "linux")]
+fn ensure_tray_autostart_for_current_desktop(binary: &Path, vault: &Path) -> Result<(), String> {
+    aipass_agent::install_tray_autostart(binary, vault)
+        .map(|_| ())
+        .map_err(|err| err.to_string())
 }
 
 #[cfg(target_os = "macos")]
@@ -1073,7 +1074,7 @@ fn known_browser_targets() -> Vec<BrowserTarget> {
         let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
             return Vec::new();
         };
-        let config = home.join(".config");
+        let config = aipass_agent::paths::linux_config_home(&home);
         vec![
             linux_browser_target(
                 "chrome",
@@ -1614,15 +1615,7 @@ fn native_host_binary_path() -> Result<PathBuf, String> {
     } else {
         "aipass-native-host"
     };
-    let mut candidates = vec![exe.with_file_name(host_name)];
-    if let Some(exe_dir) = exe.parent() {
-        candidates.push(exe_dir.join("resources").join(host_name));
-        candidates.push(exe_dir.join("Resources").join(host_name));
-        if let Some(contents_dir) = exe_dir.parent() {
-            candidates.push(contents_dir.join("Resources").join(host_name));
-            candidates.push(contents_dir.join("resources").join(host_name));
-        }
-    }
+    let mut candidates = aipass_agent::bundled::helper_candidates(&exe, host_name);
     if let Some(found) = candidates
         .iter()
         .find(|candidate| native_host_binary_status(candidate).usable)
@@ -1801,102 +1794,6 @@ fn normalize_window_target(target: &str) -> &str {
     }
 }
 
-fn default_window_size(target: &str) -> DesktopWindowSize {
-    match target {
-        "unlock" => DesktopWindowSize {
-            width: 420.0,
-            height: 560.0,
-        },
-        "quick-access" => DesktopWindowSize {
-            width: 520.0,
-            height: 640.0,
-        },
-        _ => DesktopWindowSize {
-            width: DEFAULT_DESKTOP_WINDOW_WIDTH,
-            height: DEFAULT_DESKTOP_WINDOW_HEIGHT,
-        },
-    }
-}
-
-fn window_size_path(app: &AppHandle) -> Result<PathBuf, String> {
-    if let Some(path) = runtime_check::path("window-size.json") {
-        return Ok(path);
-    }
-    let dir = app.path().app_config_dir().map_err(|err| err.to_string())?;
-    Ok(dir.join(DESKTOP_WINDOW_SIZE_FILE))
-}
-
-fn window_size_is_valid(size: &DesktopWindowSize) -> bool {
-    size.width.is_finite() && size.height.is_finite() && size.width > 0.0 && size.height > 0.0
-}
-
-fn window_size_within_tolerance(saved: &DesktopWindowSize, default: &DesktopWindowSize) -> bool {
-    window_size_is_valid(saved)
-        && (saved.width - default.width).abs() / default.width <= DESKTOP_WINDOW_SIZE_TOLERANCE
-        && (saved.height - default.height).abs() / default.height <= DESKTOP_WINDOW_SIZE_TOLERANCE
-}
-
-fn target_uses_persisted_window_size(target: &str) -> bool {
-    matches!(target, "main" | "server")
-}
-
-fn clamp_main_window_size(size: DesktopWindowSize) -> DesktopWindowSize {
-    DesktopWindowSize {
-        width: size.width.max(MIN_DESKTOP_WINDOW_WIDTH),
-        height: size.height.max(MIN_DESKTOP_WINDOW_HEIGHT),
-    }
-}
-
-fn load_saved_window_size(app: &AppHandle) -> Option<DesktopWindowSize> {
-    let path = window_size_path(app).ok()?;
-    let bytes = fs::read(path).ok()?;
-    let size = serde_json::from_slice::<DesktopWindowSize>(&bytes).ok()?;
-    window_size_is_valid(&size).then_some(size)
-}
-
-fn window_size_for_target(app: &AppHandle, target: &str) -> DesktopWindowSize {
-    let default = default_window_size(target);
-    if !target_uses_persisted_window_size(target) {
-        return default;
-    }
-
-    load_saved_window_size(app)
-        .filter(|saved| window_size_within_tolerance(saved, &default))
-        .map(clamp_main_window_size)
-        .unwrap_or(default)
-}
-
-fn persist_window_size_for_target(app: &AppHandle, target: &str) -> Result<(), String> {
-    if !target_uses_persisted_window_size(target) {
-        return Ok(());
-    }
-
-    let window = app
-        .get_webview_window("main")
-        .ok_or_else(|| "main desktop window is unavailable".to_string())?;
-    let physical_size = window.inner_size().map_err(|err| err.to_string())?;
-    let scale_factor = window.scale_factor().map_err(|err| err.to_string())?;
-    if !scale_factor.is_finite() || scale_factor <= 0.0 {
-        return Err("desktop window scale factor is invalid".to_string());
-    }
-
-    let size = DesktopWindowSize {
-        width: f64::from(physical_size.width) / scale_factor,
-        height: f64::from(physical_size.height) / scale_factor,
-    };
-    if !window_size_is_valid(&size) {
-        return Err("desktop window size is invalid".to_string());
-    }
-
-    let path = window_size_path(app)?;
-    write_json_atomic(&path, &size)
-}
-
-pub(crate) fn persist_window_size(app: &AppHandle) -> Result<(), String> {
-    let target = app.state::<AppState>().window_target();
-    persist_window_size_for_target(app, &target)
-}
-
 fn prepare_window_target(app: &AppHandle, target: &str, center: bool) {
     let Some(window) = app.get_webview_window("main") else {
         return;
@@ -1941,6 +1838,7 @@ fn reveal_window_target(app: &AppHandle, target: &str) -> Result<(), String> {
         let _ = app.show();
     }
 
+    window_geometry::fit_existing_window(&window)?;
     window.show().map_err(|err| err.to_string())?;
     let _ = window.unminimize();
     let _ = window.set_focus();
@@ -2108,7 +2006,7 @@ fn ensure_agent_resident_async(app: AppHandle) {
             }
         }
 
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         if singleton::should_install_tray_autostart() {
             match std::env::current_exe() {
                 Ok(desktop_binary) => {
@@ -2137,50 +2035,6 @@ fn ensure_agent_resident_async(app: AppHandle) {
 fn repair_bundled_native_host_manifest(app: &AppHandle) -> Result<NativeHostStatus, String> {
     let package = bundled_extension_package(app)?;
     repair_native_host_manifest(vec![package.id])
-}
-
-#[cfg(target_os = "macos")]
-fn configure_window_chrome(window: &tauri::WebviewWindow) {
-    const WINDOW_CORNER_RADIUS: f64 = 12.0;
-
-    let _ = window.set_background_color(Some(tauri::webview::Color(0, 0, 0, 0)));
-    let _ = window.with_webview(|webview| unsafe {
-        use objc2_app_kit::{NSColor, NSView, NSWindow};
-
-        let ns_window: &NSWindow = &*webview.ns_window().cast();
-        let clear = NSColor::clearColor();
-        ns_window.setOpaque(false);
-        ns_window.setBackgroundColor(Some(&clear));
-        ns_window.setHasShadow(true);
-
-        if let Some(content_view) = ns_window.contentView() {
-            round_macos_view(&content_view, WINDOW_CORNER_RADIUS);
-            if let Some(frame_view) = content_view.superview() {
-                round_macos_view(&frame_view, WINDOW_CORNER_RADIUS);
-            }
-        }
-
-        let webview_view: &NSView = &*webview.inner().cast();
-        round_macos_view(webview_view, WINDOW_CORNER_RADIUS);
-        ns_window.invalidateShadow();
-    });
-}
-
-#[cfg(not(target_os = "macos"))]
-fn configure_window_chrome(_: &tauri::WebviewWindow) {}
-
-#[cfg(target_os = "macos")]
-fn round_macos_view(view: &objc2_app_kit::NSView, radius: f64) {
-    use objc2_quartz_core::kCACornerCurveContinuous;
-
-    view.setWantsLayer(true);
-    if let Some(layer) = view.layer() {
-        layer.setCornerRadius(radius);
-        let continuous_curve = unsafe { kCACornerCurveContinuous };
-        layer.setCornerCurve(continuous_curve);
-        layer.setMasksToBounds(true);
-        layer.setOpaque(false);
-    }
 }
 
 pub fn run() {
@@ -2219,6 +2073,7 @@ pub fn run() {
     let mut singleton = Some(singleton);
 
     let mut context = tauri::generate_context!();
+    window_chrome::configure_context(&mut context);
     runtime_check::configure(&mut context);
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -2264,7 +2119,9 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             cloudkit::start(app.handle().clone());
             // Install CLI on first run
-            cli_install::ensure_cli_installed();
+            if !runtime_check::active() {
+                cli_install::ensure_cli_installed();
+            }
             ensure_agent_resident_async(app.handle().clone());
             runtime_check::start(app.handle().clone());
             let extension_sync_handle = app.handle().clone();
@@ -2282,6 +2139,10 @@ pub fn run() {
         .build(context)
         .expect("error while building tauri application")
         .run(|app, event| match event {
+            #[cfg(target_os = "linux")]
+            RunEvent::WindowEvent { label, event, .. } => {
+                window_geometry::fit_after_native_event(app, &label, &event);
+            }
             RunEvent::ExitRequested { api, code, .. } => {
                 let _ = persist_window_size(app);
                 let explicitly_allowed = ALLOW_PROCESS_EXIT.swap(false, Ordering::SeqCst);
@@ -2449,74 +2310,6 @@ mod tests {
         assert_eq!(state.complete_startup(), "main");
         assert!(state.set_target("unknown"));
         assert_eq!(state.target, "main");
-    }
-
-    #[test]
-    fn desktop_window_size_restores_at_or_below_twenty_five_percent_deviation() {
-        let default = default_window_size("main");
-        let saved = DesktopWindowSize {
-            width: default.width * 1.25,
-            height: default.height * 0.75,
-        };
-
-        assert!(window_size_within_tolerance(&saved, &default));
-    }
-
-    #[test]
-    fn desktop_window_size_falls_back_when_either_dimension_exceeds_tolerance() {
-        let default = default_window_size("main");
-        let saved = DesktopWindowSize {
-            width: default.width * 1.251,
-            height: default.height,
-        };
-
-        assert!(!window_size_within_tolerance(&saved, &default));
-    }
-
-    #[test]
-    fn desktop_window_size_rejects_non_positive_and_non_finite_values() {
-        let default = default_window_size("main");
-
-        for saved in [
-            DesktopWindowSize {
-                width: 0.0,
-                height: default.height,
-            },
-            DesktopWindowSize {
-                width: f64::NAN,
-                height: default.height,
-            },
-            DesktopWindowSize {
-                width: default.width,
-                height: f64::INFINITY,
-            },
-        ] {
-            assert!(!window_size_within_tolerance(&saved, &default));
-        }
-    }
-
-    #[test]
-    fn desktop_main_window_size_never_drops_below_tauri_minimum() {
-        let clamped = clamp_main_window_size(DesktopWindowSize {
-            width: 960.0,
-            height: 615.0,
-        });
-
-        assert_eq!(clamped.width, MIN_DESKTOP_WINDOW_WIDTH);
-        assert_eq!(clamped.height, MIN_DESKTOP_WINDOW_HEIGHT);
-    }
-
-    #[test]
-    fn desktop_special_window_targets_keep_their_fixed_sizes() {
-        let main = default_window_size("main");
-
-        assert!(target_uses_persisted_window_size("main"));
-        assert!(target_uses_persisted_window_size("server"));
-        assert!(!target_uses_persisted_window_size("unlock"));
-        assert!(!target_uses_persisted_window_size("quick-access"));
-        assert_eq!(default_window_size("unlock").width, 420.0);
-        assert_eq!(default_window_size("quick-access").height, 640.0);
-        assert_eq!(default_window_size("server").width, main.width);
     }
 
     #[test]

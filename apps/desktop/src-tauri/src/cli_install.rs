@@ -34,14 +34,8 @@ fn cli_install_path() -> Option<PathBuf> {
 
 #[cfg(target_os = "linux")]
 fn cli_install_path() -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
-    let user_bin = PathBuf::from(home).join(".local/bin/aipass");
-
-    if user_bin.parent().map(|p| p.exists()).unwrap_or(false) {
-        return Some(user_bin);
-    }
-
-    Some(PathBuf::from("/usr/local/bin/aipass"))
+    let home = std::env::var_os("HOME")?;
+    Some(PathBuf::from(home).join(".local/bin/aipass"))
 }
 
 /// Get the path to the bundled CLI binary
@@ -73,8 +67,9 @@ fn bundled_cli_path() -> Option<PathBuf> {
     #[cfg(target_os = "linux")]
     {
         let exe_path = std::env::current_exe().ok()?;
-        let app_dir = exe_path.parent()?;
-        Some(app_dir.join("aipass"))
+        aipass_agent::bundled::helper_candidates(&exe_path, "aipass")
+            .into_iter()
+            .find(|candidate| candidate.is_file())
     }
 }
 
@@ -99,22 +94,57 @@ pub fn install_cli() -> Result<PathBuf, String> {
             .map_err(|e| format!("Failed to create installation directory: {}", e))?;
     }
 
+    #[cfg(target_os = "linux")]
+    install_linux_helpers(&bundled_path, &install_path)?;
+
+    // A distro package may already install the CLI at this exact path.
+    if fs::canonicalize(&bundled_path).ok() == fs::canonicalize(&install_path).ok()
+        && install_path.exists()
+    {
+        return Ok(install_path);
+    }
+
     // Copy the binary
-    fs::copy(&bundled_path, &install_path)
-        .map_err(|e| format!("Failed to copy CLI binary: {}", e))?;
+    copy_executable(&bundled_path, &install_path)?;
+
+    Ok(install_path)
+}
+
+fn copy_executable(source: &Path, destination: &Path) -> Result<(), String> {
+    let bytes = fs::read(source).map_err(|err| err.to_string())?;
+    // Rename a new inode into place: overwriting a running ELF fails with
+    // ETXTBSY on Linux and can leave a partial executable after an IO error.
+    if !fs::read(destination).is_ok_and(|installed| installed == bytes) {
+        aipass_storage::atomic_write_bytes(destination, &bytes).map_err(|err| err.to_string())?;
+    }
 
     // Set executable permissions on Unix
     #[cfg(unix)]
     {
-        let mut perms = fs::metadata(&install_path)
+        let mut perms = fs::metadata(destination)
             .map_err(|e| format!("Failed to read file permissions: {}", e))?
             .permissions();
         perms.set_mode(0o755);
-        fs::set_permissions(&install_path, perms)
+        fs::set_permissions(destination, perms)
             .map_err(|e| format!("Failed to set executable permissions: {}", e))?;
     }
 
-    Ok(install_path)
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+fn install_linux_helpers(bundled: &Path, installed: &Path) -> Result<(), String> {
+    let resources = bundled.parent().ok_or("invalid bundled CLI path")?;
+    let prefix = installed
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("invalid CLI installation path")?;
+    let destination = prefix.join("lib/AIPass");
+    fs::create_dir_all(&destination).map_err(|err| err.to_string())?;
+    for name in ["aipass-agent", "aipass-native-host"] {
+        copy_executable(&resources.join(name), &destination.join(name))?;
+    }
+    Ok(())
 }
 
 /// Check if the CLI is already installed and matches the bundled binary
@@ -141,6 +171,14 @@ pub fn is_cli_installed() -> bool {
 
 /// Attempt to install CLI on first run
 pub fn ensure_cli_installed() {
+    // Matching CLI bytes do not prove its companion binaries are current.
+    #[cfg(target_os = "linux")]
+    if let (Some(bundled), Some(installed)) = (bundled_cli_path(), cli_install_path()) {
+        if let Err(error) = install_linux_helpers(&bundled, &installed) {
+            log::warn!("Failed to install CLI helpers: {error}");
+            return;
+        }
+    }
     if is_cli_installed() {
         return;
     }
@@ -160,6 +198,37 @@ pub fn ensure_cli_installed() {
         Err(e) => {
             log::warn!("Failed to install CLI: {}", e);
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linux_helpers_survive_removing_the_appimage_mount_and_refresh_atomically() {
+        let root = tempfile::tempdir().unwrap();
+        let mount = root.path().join("mount/usr/lib/AIPass");
+        fs::create_dir_all(&mount).unwrap();
+        for name in ["aipass-agent", "aipass-native-host"] {
+            fs::write(mount.join(name), b"original helper").unwrap();
+        }
+        let installed = root.path().join("home/.local/bin/aipass");
+        install_linux_helpers(&mount.join("aipass"), &installed).unwrap();
+        let agent = root.path().join("home/.local/lib/AIPass/aipass-agent");
+        let old_inode = fs::File::open(&agent).unwrap();
+        fs::write(mount.join("aipass-agent"), b"updated helper").unwrap();
+        install_linux_helpers(&mount.join("aipass"), &installed).unwrap();
+        fs::remove_dir_all(root.path().join("mount")).unwrap();
+        assert_eq!(fs::read(&agent).unwrap(), b"updated helper");
+        assert_ne!(
+            fs::metadata(&agent).unwrap().permissions().mode() & 0o111,
+            0
+        );
+        use std::io::Read;
+        let mut previous = String::new();
+        (&old_inode).read_to_string(&mut previous).unwrap();
+        assert_eq!(previous, "original helper");
     }
 }
 

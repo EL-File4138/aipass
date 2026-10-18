@@ -1,6 +1,9 @@
 import App from "./App.svelte";
 import "./styles.scss";
 import { mount } from "svelte";
+import { targetPlatform } from "./lib/platform";
+
+document.documentElement.dataset.platform = targetPlatform;
 
 declare const __AIPASS_RELEASE_BUILD__: boolean;
 

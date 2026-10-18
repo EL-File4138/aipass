@@ -16,9 +16,10 @@ pub(crate) fn native_host_binary_candidate(explicit: Option<PathBuf>) -> Result<
     } else {
         "aipass-native-host"
     };
-    let sibling = exe.with_file_name(host_name);
-    if sibling.exists() {
-        return absolute_path(sibling);
+    for candidate in aipass_agent::bundled::helper_candidates(&exe, host_name) {
+        if native_host_binary_status(&candidate).usable {
+            return absolute_path(candidate);
+        }
     }
     absolute_path(PathBuf::from(host_name))
 }
@@ -131,7 +132,7 @@ pub(crate) fn default_native_manifest_path(browser: &BrowserArg) -> Option<PathB
             BrowserArg::Brave => "BraveSoftware/Brave-Browser",
         };
         Some(
-            home.join(".config")
+            aipass_agent::paths::linux_config_home(&home)
                 .join(vendor_dir)
                 .join("NativeMessagingHosts")
                 .join("dev.aipass.native.json"),

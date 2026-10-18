@@ -72,6 +72,9 @@ windows-service.workspace = true
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["event", "process", "system"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "5.19", default-features = false, features = ["tokio"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "0.6", default-features = false, features = ["std"] }
 objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "objc2", "CGEventSource", "CGEventTypes"] }

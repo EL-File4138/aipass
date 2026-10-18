@@ -66,8 +66,8 @@ pub(crate) fn initialize() -> Result<(), String> {
     let root = args
         .next()
         .ok_or("missing runtime verification directory")?;
-    if args.next().is_some() || !cfg!(target_os = "macos") {
-        return Err("runtime verification requires macOS and one fixture directory".into());
+    if args.next().is_some() || !cfg!(any(target_os = "macos", target_os = "linux")) {
+        return Err("runtime verification requires macOS/Linux and one fixture directory".into());
     }
     let root = std::fs::canonicalize(root).map_err(|err| err.to_string())?;
     let exe = std::env::current_exe()
@@ -79,6 +79,9 @@ pub(crate) fn initialize() -> Result<(), String> {
     )
     .map_err(|err| err.to_string())?;
     validate_endpoint(&config.endpoint)?;
+    if cfg!(target_os = "linux") && !matches!(config.mode, Mode::Startup | Mode::Interactive) {
+        return Err("Linux runtime verification currently supports startup only".into());
+    }
     let restarted_from = match std::fs::read(root.join("installed.json")) {
         Ok(bytes) => Some(serde_json::from_slice(&bytes).map_err(|err| err.to_string())?),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
@@ -94,10 +97,12 @@ pub(crate) fn initialize() -> Result<(), String> {
         std::fs::create_dir_all(&value).map_err(|err| err.to_string())?;
         std::env::set_var(key, value);
     }
-    std::env::set_var(
-        "AIPASS_AGENT_BINARY",
-        root.join("AIPass.app/Contents/Resources/aipass-agent"),
-    );
+    if cfg!(target_os = "macos") {
+        std::env::set_var(
+            "AIPASS_AGENT_BINARY",
+            root.join("AIPass.app/Contents/Resources/aipass-agent"),
+        );
+    }
     // A local-only fixture must never discover or migrate the user's iCloud vault.
     let settings = root.join("data/agent/sync-settings.json");
     atomic_write_bytes(
@@ -125,7 +130,12 @@ fn validate_fixture_executable(root: &Path, exe: &Path) -> Result<(), String> {
         || !root
             .file_name()
             .is_some_and(|name| name.to_string_lossy().starts_with("aipass-runtime-"))
-        || exe != root.join("AIPass.app/Contents/MacOS/aipass-desktop")
+        || exe
+            != root.join(if cfg!(target_os = "linux") {
+                "package/usr/bin/aipass-desktop"
+            } else {
+                "AIPass.app/Contents/MacOS/aipass-desktop"
+            })
     {
         return Err(
             "runtime verification only accepts a disposable /tmp/aipass-runtime-* app copy".into(),

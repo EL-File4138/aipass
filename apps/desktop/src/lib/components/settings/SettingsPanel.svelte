@@ -1,11 +1,12 @@
 <script lang="ts">
+  import SyncTargetSettings from "./SyncTargetSettings.svelte";
   import ModelPricingFields from "./ModelPricingFields.svelte";
   import CcSwitchImportPanel from "./CcSwitchImportPanel.svelte";
   import ControlPanelSettings from "./ControlPanelSettings.svelte";
   import { listen } from "@tauri-apps/api/event";
   import { getVersion } from "@tauri-apps/api/app";
   import { Dialog, Tabs } from "bits-ui";
-  import { Check, Download, Plus, Puzzle, RefreshCw, RotateCw, Server, Trash2, Upload, Wifi, X } from "lucide-svelte";
+  import { Check, Download, Plus, Puzzle, RefreshCw, RotateCw, Server, Trash2, Upload, X } from "lucide-svelte";
   import { onDestroy, onMount, tick } from "svelte";
 
   import { themeStore, setTheme } from "../../stores/appearance";
@@ -96,12 +97,6 @@
 
   $: exportReady = exportPath.trim().length > 0 && exportPassword.trim().length > 0;
   $: importReady = importPath.trim().length > 0 && importPassword.trim().length > 0;
-  $: syncReady =
-    syncMode === "local"
-      ? syncFolder.trim().length > 0
-      : syncMode === "webdav"
-        ? webdavUrl.trim().length > 0
-        : true;
   $: syncBusy = syncState === "syncing";
   $: browserExtensionInstallDisabled =
     !!browserExtensionBusy ||
@@ -647,53 +642,13 @@
           </Tabs.Content>
 
           <Tabs.Content value="sync" class="tab-panel">
-            <Card title={$t("settings.syncTarget")}>
-              <div class="rows">
-                <SegmentedControl
-                  ariaLabel={$t("settings.syncTarget")}
-                  bind:value={syncMode}
-                  options={[
-                    { value: "local", label: $t("settings.local") },
-                    { value: "icloud", label: "iCloud" },
-                    { value: "onedrive", label: "OneDrive" },
-                    { value: "webdav", label: "WebDAV" }
-                  ]}
-                />
-                {#if syncMode === "local"}
-                  <Field label={$t("settings.folder")}>
-                    <input bind:value={syncFolder} placeholder="~/Sync/AIPass" />
-                  </Field>
-                {:else if syncMode === "icloud"}
-                  <p class="hint">{$t("settings.icloudDesc")}</p>
-                {:else if syncMode === "onedrive"}
-                  <p class="hint">{$t("settings.onedriveDesc")}</p>
-                {:else}
-                  <Field label={$t("settings.url")}>
-                    <input bind:value={webdavUrl} placeholder="https://cloud.example/dav" />
-                  </Field>
-                  <Field label={$t("settings.username")}>
-                    <input bind:value={webdavUsername} autocomplete="username" placeholder={$t("settings.usernamePlaceholder")} />
-                  </Field>
-                  <Field label={$t("settings.password")}>
-                    <input bind:value={webdavPassword} type="password" autocomplete="current-password" placeholder="••••••••" />
-                  </Field>
-                  {#if hasSavedWebdavPassword}
-                    <p class="hint">{$t("settings.savedPasswordHint")}</p>
-                  {/if}
-                {/if}
-                <div class="row-actions">
-                  <Button variant="secondary" on:click={saveSyncTarget} disabled={syncBusy} loading={savingSyncSettings}>
-                    {$t("common.save")}
-                  </Button>
-                  {#if syncMode === "webdav" && hasSavedWebdavPassword}
-                    <Button variant="ghost" on:click={() => { operationError = ""; void onClearSavedWebdavPassword(); }} disabled={syncBusy || savingSyncSettings}>{$t("settings.clearPassword")}</Button>
-                  {/if}
-                  <Button variant="primary" on:click={() => { operationError = ""; void onRunSync(); }} disabled={!syncReady || syncBusy || savingSyncSettings}>
-                    <Wifi size={14} /> {syncBusy ? $t("syncStatus.syncing") : $t("settings.syncNow")}
-                  </Button>
-                </div>
-              </div>
-            </Card>
+            <SyncTargetSettings
+              bind:syncMode bind:syncFolder bind:webdavUrl bind:webdavUsername bind:webdavPassword
+              {hasSavedWebdavPassword} {syncBusy} {savingSyncSettings}
+              onSave={saveSyncTarget}
+              onRun={() => { operationError = ""; void onRunSync(); }}
+              onClear={() => { operationError = ""; void onClearSavedWebdavPassword(); }}
+            />
 
             <Card title={$t("settings.conflicts")}>
               <span slot="actions">

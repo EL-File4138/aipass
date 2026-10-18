@@ -423,7 +423,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - run: cargo build --release -p aipass-cli -p aipass-native-host
+      - run: cargo build --release -p aipass-cli -p aipass-agent -p aipass-native-host
 
       - name: Verify CLI release version
         env:
@@ -446,6 +446,7 @@ jobs:
           mkdir -p artifacts/stage
           cp target/release/aipass artifacts/stage/
           cp target/release/aipass-native-host artifacts/stage/
+          cp target/release/aipass-agent artifacts/stage/
           cp LICENSE NOTICE README.md artifacts/stage/
           tar -czf "artifacts/${{ matrix.archive }}" -C artifacts/stage .
 
@@ -456,8 +457,13 @@ jobs:
           New-Item -ItemType Directory -Force -Path artifacts/stage | Out-Null
           Copy-Item target/release/aipass.exe artifacts/stage/
           Copy-Item target/release/aipass-native-host.exe artifacts/stage/
+          Copy-Item target/release/aipass-agent.exe artifacts/stage/
           Copy-Item LICENSE, NOTICE, README.md artifacts/stage/
           Compress-Archive -Path artifacts/stage/* -DestinationPath "artifacts/${{ matrix.archive }}" -Force
+
+      - name: Verify standalone CLI and Native Messaging runtime
+        if: runner.os != 'Windows'
+        run: node scripts/verify-cli-runtime.mjs artifacts/stage
 
       - uses: actions/upload-artifact@v4
         with:

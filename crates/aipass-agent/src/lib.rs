@@ -1,4 +1,5 @@
 pub mod autostart;
+pub mod bundled;
 pub(crate) mod ccswitch;
 pub mod claude_bridge;
 pub mod claude_cli;
@@ -15,6 +16,7 @@ pub(crate) mod oauth;
 pub(crate) mod official_accounts;
 pub(crate) mod operation_log;
 pub mod paths;
+mod power;
 pub mod pricing;
 mod provider_runtime;
 pub mod proxy_service;

@@ -193,14 +193,8 @@ fn find_agent_binary() -> AgentBinarySearch {
     let name = agent_binary_name();
 
     if let Ok(current) = env::current_exe() {
-        add_candidate(&mut search, current.with_file_name(name));
-        if let Some(exe_dir) = current.parent() {
-            add_candidate(&mut search, exe_dir.join("resources").join(name));
-            add_candidate(&mut search, exe_dir.join("Resources").join(name));
-            if let Some(contents_dir) = exe_dir.parent() {
-                add_candidate(&mut search, contents_dir.join("Resources").join(name));
-                add_candidate(&mut search, contents_dir.join("resources").join(name));
-            }
+        for candidate in crate::bundled::helper_candidates(&current, name) {
+            add_candidate(&mut search, candidate);
         }
     }
 

@@ -4,9 +4,10 @@
   import { Logo } from "@aipass/ui";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { DropdownMenu } from "bits-ui";
-  import { Lock, Menu, Minus, Settings, Square, X, RotateCcw } from "lucide-svelte";
+  import { Copy, Lock, Menu, Minus, Settings, Square, X, RotateCcw } from "lucide-svelte";
   import { onDestroy, onMount, tick } from "svelte";
 
+  import { targetPlatform } from "../../platform";
   import { t } from "../../stores/i18n";
   import type { MaybePromise } from "../../types";
 
@@ -17,6 +18,7 @@
   export let onResetProvider: () => MaybePromise = () => {};
   export let showResetProvider = false;
 
+  const isLinux = targetPlatform === "linux";
   let isMac = false;
   let isMaximized = false;
   let isFocused = true;
@@ -75,6 +77,8 @@
   }
 
   function handleDoubleClick(event: MouseEvent) {
+    // Tauri already handles double-clicks on Linux drag regions.
+    if (isLinux) return;
     if ((event.target as HTMLElement | null)?.closest("button")) return;
     toggleMaximize();
   }
@@ -107,6 +111,7 @@
 <header
   class="titlebar"
   class:mac={isMac}
+  class:linux={isLinux}
   class:blurred={!isFocused}
   data-tauri-drag-region
   on:dblclick={handleDoubleClick}
@@ -169,12 +174,12 @@
   <div class="spacer" data-tauri-drag-region></div>
 
   {#if !isMac}
-    <div class="win-controls" aria-label={$t("titlebar.windowControls")}>
+    <div class="win-controls" data-tauri-drag-region aria-label={$t("titlebar.windowControls")}>
       <button class="win-btn" type="button" aria-label={$t("titlebar.minimize")} on:click|stopPropagation={minimize}>
         <Minus size={14} strokeWidth={2} />
       </button>
       <button class="win-btn" type="button" aria-label={$t("titlebar.toggleMaximize")} on:click|stopPropagation={toggleMaximize}>
-        <Square size={11} strokeWidth={2} />
+        {#if isMaximized}<Copy size={12} strokeWidth={2} />{:else}<Square size={11} strokeWidth={2} />{/if}
       </button>
       <button class="win-btn close" type="button" aria-label={$t("common.close")} on:click|stopPropagation={close}>
         <X size={14} strokeWidth={2} />
@@ -198,6 +203,47 @@
     position: absolute;
     inset: 0 0 auto 0;
     z-index: 100;
+  }
+
+  // Match the workspace columns: title/menu in the list, window controls in
+  // the detail pane. Only those two 34px strips receive pointer input.
+  .titlebar.linux {
+    height: calc(34px + var(--workspace-top) + var(--linux-header-inset));
+    pointer-events: none;
+  }
+
+  .titlebar.linux .items-list-slot {
+    top: calc(var(--workspace-top) + var(--linux-header-inset));
+    pointer-events: auto;
+  }
+
+  .titlebar.linux .win-controls {
+    position: absolute;
+    top: calc(var(--workspace-top) + var(--linux-header-inset));
+    left: calc(var(--workspace-padding) + var(--sidebar-width) + var(--items-list-width) + 2 * var(--workspace-gap));
+    right: var(--workspace-padding);
+    height: 34px;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 0 var(--pane-content-inset);
+    gap: 6px;
+    pointer-events: auto;
+  }
+
+  .titlebar.linux .win-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--surface-2);
+  }
+
+  .titlebar.linux .win-btn:hover {
+    background: color-mix(in oklab, var(--text) 14%, var(--surface));
+  }
+
+  .titlebar.linux .win-btn.close:hover {
+    background: #d84a53;
+    color: #fff;
   }
 
   .titlebar.blurred .items-list-slot {
@@ -326,7 +372,7 @@
     --background-inactive: #cccccc;
   }
 
-  /* Windows / Linux controls */
+  /* Windows controls */
   .win-controls {
     display: inline-flex;
     align-items: stretch;

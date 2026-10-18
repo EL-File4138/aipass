@@ -17,7 +17,7 @@ use tauri::{App, AppHandle, Emitter, Listener, Manager, WindowEvent};
 #[cfg(not(target_os = "macos"))]
 use tauri::menu::CheckMenuItem;
 #[cfg(not(target_os = "macos"))]
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::menu::{MenuItem, Submenu};
 #[cfg(not(target_os = "macos"))]
 use tauri::tray::{MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
@@ -138,6 +138,8 @@ impl TrayFeedback {
                     let _ = item.set_enabled(panel_url.is_some());
                 }
                 sync_group_menu(&items.group_menu, &snapshot.routes);
+                #[cfg(target_os = "linux")]
+                items.refresh_locale(app);
 
                 if let Some(tray) = app.tray_by_id(TRAY_ID) {
                     let _ = tray.set_tooltip(Some(snapshot.tooltip()));
@@ -195,29 +197,9 @@ impl TrayFeedback {
 }
 
 #[cfg(not(target_os = "macos"))]
-#[derive(Clone)]
-struct TrayMenuItems {
-    panel_menu: Submenu<tauri::Wry>,
-    panel_status: MenuItem<tauri::Wry>,
-    panel_open: MenuItem<tauri::Wry>,
-    panel_copy: MenuItem<tauri::Wry>,
-    panel_stop: MenuItem<tauri::Wry>,
-    open: MenuItem<tauri::Wry>,
-    hide: MenuItem<tauri::Wry>,
-    refresh: MenuItem<tauri::Wry>,
-    quit: MenuItem<tauri::Wry>,
-    proxy_menu: Submenu<tauri::Wry>,
-    status: MenuItem<tauri::Wry>,
-    start_agent: MenuItem<tauri::Wry>,
-    lock: MenuItem<tauri::Wry>,
-    install_login_agent: MenuItem<tauri::Wry>,
-    proxy_status: MenuItem<tauri::Wry>,
-    proxy_open: MenuItem<tauri::Wry>,
-    proxy_start: MenuItem<tauri::Wry>,
-    proxy_stop: MenuItem<tauri::Wry>,
-    proxy_refresh: MenuItem<tauri::Wry>,
-    group_menu: Submenu<tauri::Wry>,
-}
+mod classic_menu;
+#[cfg(not(target_os = "macos"))]
+use classic_menu::TrayMenuItems;
 
 pub(crate) fn setup(app: &App) -> tauri::Result<()> {
     #[cfg(target_os = "macos")]
@@ -235,154 +217,7 @@ pub(crate) fn setup(app: &App) -> tauri::Result<()> {
 
 #[cfg(not(target_os = "macos"))]
 fn setup_menu(app: &App) -> tauri::Result<()> {
-    let status = MenuItem::with_id(app, MENU_STATUS, tr("tray.checking"), false, None::<&str>)?;
-    let open = MenuItem::with_id(app, MENU_OPEN, tr("ext.openApp"), true, None::<&str>)?;
-    let hide = MenuItem::with_id(app, MENU_HIDE, tr("tray.hideWindow"), true, None::<&str>)?;
-    let refresh = MenuItem::with_id(app, MENU_REFRESH, tr("ext.refresh"), true, None::<&str>)?;
-    let start_agent = MenuItem::with_id(
-        app,
-        MENU_START_AGENT,
-        tr("tray.startAgent"),
-        false,
-        None::<&str>,
-    )?;
-    let lock = MenuItem::with_id(app, MENU_LOCK, tr("titlebar.lock"), false, None::<&str>)?;
-    let proxy_status = MenuItem::with_id(
-        app,
-        MENU_PROXY_STATUS,
-        tr("tray.checking"),
-        false,
-        None::<&str>,
-    )?;
-    let proxy_open = MenuItem::with_id(
-        app,
-        MENU_PROXY_OPEN,
-        tr("tray.openServer"),
-        true,
-        None::<&str>,
-    )?;
-    let proxy_start = MenuItem::with_id(
-        app,
-        MENU_PROXY_START,
-        tr("tray.startProxy"),
-        false,
-        None::<&str>,
-    )?;
-    let proxy_stop = MenuItem::with_id(
-        app,
-        MENU_PROXY_STOP,
-        tr("tray.stopProxy"),
-        false,
-        None::<&str>,
-    )?;
-    let proxy_refresh = MenuItem::with_id(
-        app,
-        MENU_PROXY_REFRESH,
-        tr("ext.refresh"),
-        true,
-        None::<&str>,
-    )?;
-    let group_menu = Submenu::with_items(app, tr("tray.switchGroup"), true, &[])?;
-    let proxy_menu = Submenu::with_items(
-        app,
-        tr("tray.proxy"),
-        true,
-        &[
-            &proxy_status,
-            &proxy_open,
-            &PredefinedMenuItem::separator(app)?,
-            &proxy_start,
-            &proxy_stop,
-            &proxy_refresh,
-            &PredefinedMenuItem::separator(app)?,
-            &group_menu,
-        ],
-    )?;
-
-    let install_login_agent = MenuItem::with_id(
-        app,
-        MENU_INSTALL_LOGIN_AGENT,
-        tr("tray.repairAutostart"),
-        true,
-        None::<&str>,
-    )?;
-
-    let quit = MenuItem::with_id(app, MENU_QUIT, tr("tray.quit"), true, None::<&str>)?;
-    let panel_status = MenuItem::with_id(
-        app,
-        "panel-status",
-        tr("tray.panelOff"),
-        false,
-        None::<&str>,
-    )?;
-    let panel_open = MenuItem::with_id(
-        app,
-        action::PANEL_OPEN_URL,
-        tr("tray.panelOpen"),
-        false,
-        None::<&str>,
-    )?;
-    let panel_copy = MenuItem::with_id(
-        app,
-        action::PANEL_COPY,
-        tr("tray.panelCopy"),
-        false,
-        None::<&str>,
-    )?;
-    let panel_stop = MenuItem::with_id(
-        app,
-        action::PANEL_STOP,
-        tr("tray.panelStop"),
-        false,
-        None::<&str>,
-    )?;
-    let panel_menu = Submenu::with_items(
-        app,
-        tr("tray.panel"),
-        true,
-        &[&panel_status, &panel_open, &panel_copy, &panel_stop],
-    )?;
-    let menu = Menu::with_items(
-        app,
-        &[
-            &status,
-            &PredefinedMenuItem::separator(app)?,
-            &open,
-            &hide,
-            &PredefinedMenuItem::separator(app)?,
-            &refresh,
-            &start_agent,
-            &lock,
-            &install_login_agent,
-            &proxy_menu,
-            &panel_menu,
-            &PredefinedMenuItem::separator(app)?,
-            &quit,
-        ],
-    )?;
-
-    let items = TrayMenuItems {
-        panel_menu,
-        panel_status,
-        panel_open,
-        panel_copy,
-        panel_stop,
-        open,
-        hide,
-        refresh,
-        quit,
-        proxy_menu,
-        status,
-        start_agent,
-        lock,
-        install_login_agent,
-        proxy_status,
-        proxy_open,
-        proxy_start,
-        proxy_stop,
-        proxy_refresh,
-        group_menu,
-    };
+    let (menu, items) = classic_menu::build(app)?;
 
     let menu_feedback = TrayFeedback::Menu(items.clone());
     let tray_feedback = TrayFeedback::Menu(items.clone());

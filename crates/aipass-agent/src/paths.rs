@@ -47,6 +47,17 @@ pub fn agent_service_name(path: impl AsRef<Path>) -> Result<String> {
     ))
 }
 
+/// XDG configuration roots must be absolute; ignore invalid relative overrides.
+pub fn linux_config_home(home: &Path) -> PathBuf {
+    linux_config_home_from(home, std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from))
+}
+
+fn linux_config_home_from(home: &Path, configured: Option<PathBuf>) -> PathBuf {
+    configured
+        .filter(|path| path.is_absolute())
+        .unwrap_or_else(|| home.join(".config"))
+}
+
 pub fn agent_runtime_dir() -> Result<PathBuf> {
     let dirs =
         ProjectDirs::from("dev", "aipass", "desktop").context("cannot determine project dir")?;
@@ -217,6 +228,20 @@ mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
+
+    #[test]
+    fn linux_configuration_uses_only_absolute_xdg_overrides() {
+        let home = Path::new("/home/fixture");
+        assert_eq!(
+            linux_config_home_from(home, Some("/custom/config".into())),
+            Path::new("/custom/config")
+        );
+        assert_eq!(
+            linux_config_home_from(home, Some("relative".into())),
+            home.join(".config")
+        );
+        assert_eq!(linux_config_home_from(home, None), home.join(".config"));
+    }
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();

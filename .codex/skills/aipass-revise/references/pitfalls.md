@@ -341,6 +341,8 @@ Newest entries last within each section.
 - **Subscription coverage (2026-10-16)**: Agent subscription transport must also disable automatic retries and response read timeouts. Retire the operation setup deadline before provider generation dispatch; never put an idle timer around buffered SSE aggregation. Shield rotating credentials through durable ACK even if the setup deadline expires. Virtual-clock regressions live in `subscriptions/lifecycle/tests.rs` and proxy `subscription.rs`; establish real TCP connections before pausing Tokio time so scheduler auto-advance cannot masquerade as a connect failure.
 - **Test guardrail**: allow CI startup/parsing/SQLite work before upstream submission, then wait beyond the configured budgets after the upstream acknowledges receipt. A 30 ms hold budget can expire before submission and falsely fail a slow-response test; race arrival against early request completion for actionable failures. Local development tools can send unauthenticated `GET /` probes to IPv4 and IPv6 test listeners: LocalStack traffic caused a false backup-connection failure on macOS. Ignore only those root probes in HTTP and WebSocket fixtures (including multimodal failover and handshake attempt counters), reject API/authenticated traffic at the backup, and independently verify that no diagnostic references the backup target.
 
+- **Shared fixture correction (2026-10-19)**: `tests/mock_upstream.rs` now filters unauthenticated root discovery probes before capturing the expected request. Regressions preserve actual API requests and authenticated root requests. An isolated rerun cannot replace the full workspace validation.
+
 ### Passive quota updates must reach held requests
 - **Symptom**: an exhausted subscription recovers while a local request waits, but every retry still filters it out until the hold budget expires.
 - **Root cause**: forwarding retained the authenticated route snapshot, including stale quota and admission metadata; quota updates intentionally do not invalidate active generations.
@@ -536,6 +538,41 @@ Newest entries last within each section.
 
 
 ## OAuth lifecycle and native credential reconciliation
+
+### Similar plan names do not share credential or billing rules
+- **Symptom**: valid Token Plan keys were rejected locally for missing a Coding Plan prefix.
+- **Root cause**: `subscriptions/plans.rs::fresh` required `sk-sp-` for Qwen/Bailian Token Plan, copying a restriction from the separate Coding Plan product.
+- **Fix**: stop inferring Token Plan key format from Coding Plan; preserve the fixed provider/region endpoint and key-digest ownership checks. Correct the expansion documentation and avoid claiming that the vendor has no quota API merely because AIPass has not integrated one.
+- **Guardrail**: confirm credential rules against current vendor docs per billing product. Test non-prefixed Token Plan keys, each region, durable identity ACK, reconnect idempotency and changed-key refusal. Do not relabel usage-based Token Plan billing as a fixed monthly subscription.
+- **Watch points**: plan specs/authentication, catalog methods, quota placeholders and localized UI copy. See the current Qwen Code authentication guide and `token_plan_keys_without_coding_plan_prefix_keep_their_region_and_identity`.
+
+### New subscription adapters need complete protocol and allowance boundaries
+- **Symptom**: a public model catalog suggested a usable free login although generation rejected it; text-tool examples could dispatch tools, scoped usage could fabricate unused bonus capacity, and Messages paths omitted `/v1`.
+- **Root cause**: `subscriptions/opencode.rs:52` admitted the public key, `subscriptions/plans.rs:270` joined an SDK base as a full URL, and the Trae decoder/allowance parser did not enforce request tool policy or distinguish missing usage from zero.
+- **Fix**: reject unsupported public grants after a real public-only probe; use exact Messages paths; validate tool choice, quoted examples, complete JSON and call IDs; exclude expired packs and require reported usage for positive bonus pools.
+- **Guardrail**: test full request URLs, actual generation admission separately from catalog availability, all tool-choice modes, quoted text and embedded closing tags, missing/zero/expired quota, numeric tenant IDs and the earliest token expiry. Check first plain-text delivery before completion, and reject output constraints that conversion cannot preserve before dispatch. Never impersonate the vendor client to bypass a free-tier restriction.
+- **Watch points**: native subscription modules, proxy-conversion provider codecs, Agent quota scopes, connection catalog/methods, regional key-page links and Tauri URL allowlists.
+
+### Partial quota failures must preserve valid model-scoped limits
+- **Symptom**: a failed Cline paid-balance request discarded successfully read ClinePass limits; model scope also depended on a naming prefix instead of catalog membership.
+- **Root cause**: `subscriptions/cline.rs::usage` marked the entire result with `error`, and `community/quota.rs::native_quota` correctly rejects such failed readings wholesale.
+- **Fix**: assemble independently known balance and limits without a global error when useful allowance data exists; use the catalog's subscription flag and exact IDs, retaining an explicit empty scope when no plan models are known.
+- **Guardrail**: test missing and invalid balance with valid exhausted plan windows, unknown total allowance and non-prefix plan IDs. Unknown balance must stay absent, and scoped limits must never expand to all paid models.
+- **Watch points**: Cline catalog/usage assembly, Agent snapshot errors and proxy exact model matching.
+
+### Connection failures must preserve region and reveal the error
+- **Symptom**: a failed international login showed China on retry; focus-induced scrolling left the error above the visible form.
+- **Root cause**: `CommunityConnectDialog.svelte` cleared select inputs after login start and did not reveal newly inserted error banners. An inline reactive DOM-ref assignment can also invalidate its own dependency repeatedly.
+- **Fix**: retain select values while clearing credentials; reveal new errors through a helper dependent only on the error transition, and clear credential drafts on unmount.
+- **Guardrail**: test failed login with a non-default region, empty secret input and an initially scrolled form. Do not assign a DOM-ref property inside a reactive expression that reads the same ref; verify that error-state rendering settles.
+- **Watch points**: provider/method switching, connection retries, key-page links, close/cancel and 960×640 dialog scrolling.
+
+### Subscription directories and generated titles must share provider metadata
+- **Symptom**: new Agent subscriptions were missing from the first connection picker; generated regional account names retained English labels and dotted titles in Chinese.
+- **Root cause**: the root picker kept a second provider list, and `packages/schemas/src/account-presentation.ts` recognized generated titles only when their suffix exactly matched the ownership key.
+- **Fix**: load the Agent catalog in both connection dialogs, localize descriptor keys, and split generated brand/friendly-name fields in shared presentation. Scroll the selected provider into view after catalog loading.
+- **Guardrail**: add new subscriptions to the Rust catalog and dispatch together; render the full catalog without a frontend allowlist. Preserve custom titles and ownership keys while localizing generated brands. Cover catalog search, region input and friendly names in tests.
+- **Watch points**: `subscriptions/{catalog.json,mod.rs}`, `community.rs`, OAuth/Community connection dialogs, account/list/detail presentation and shared locale/icon catalogs.
 
 ### Claude subscriptions must use the installed vendor CLI throughout
 - **Symptom**: Claude subscriptions could only be imported; usage called Anthropic HTTP directly even though generation used real Claude Code. Missing or incompatible CLI installations were discovered only when a request failed.
@@ -924,6 +961,7 @@ Newest entries last within each section.
 - **Fix**: Non-interactive attribute selection, in-flight coalescing, bounded zeroizing discovery snapshots, refusal cooldown and explicit reconnect retry. Fresh reads remain mandatory at generation/backup boundaries.
 - **Follow-up (2026-10-16)**: A shared completed-generation counter let a faster fresh read overwrite an earlier waiter's completion. Each in-flight read now owns its result until its waiters finish. Capacity eviction cannot discard live callers or an unexpired refusal. The 16-caller/1,024-read regression failed before the fix and passes after it.
 - **Guardrail**: Never treat attribute/ACL failure as absence. Keep unanswered reads coalesced, scope explicit retry to the selected account, preserve other refusal cooldowns across lock/invalidation and capacity eviction, invalidate in-flight epochs on writes/lock, erase idle snapshots, and test overlapping fresh reads as well as completed-cache bypass. A new completion must not erase another read's outcome.
+- **Absence follow-up (2026-10-19)**: an attributes-only `None` now immediately clears snapshots and returns absence, without starting an authorization worker. The former worker raced global epoch invalidation from parallel vault locks, causing unrelated file-backed Claude operations to fail. Attribute/ACL errors still propagate; a regression covers cached-byte erasure and concurrent invalidation.
 - **Watch points**: `native_auth/keychain_cache`, CLI account fresh/generate/login, native switching and session locking.
 
 ### Launchd fixtures must publish complete readiness data atomically
@@ -939,3 +977,52 @@ Newest entries last within each section.
 - **Fix**: Shared request/JSON/SSE adapter for explicit Grok profiles and native Build; deterministic alias mapping, bounded custom-input envelopes, lexical per-call number normalization and schema-position walking.
 - **Guardrail**: Apply identity restoration to item/done/completed events and historical calls/tool choice. Test every delta cut and interleaved calls; preserve strings/fractions/exponents and schema defaults/enums. Reject unsupported grammar tools explicitly. Protobuf Struct decoders must also preserve safe integral tool values for strictly typed clients.
 - **Watch points**: `providers/grok`, Cursor protobuf values, API HTTP/adapted WS and native subscription dispatch.
+
+### Linux packages must resolve helpers from their installed resource directory
+- **Symptom**: Linux desktop/CLI could not find Agent or Native Host outside a build checkout; standalone CLI archives omitted Agent, and Linux tray login registration silently returned unsupported.
+- **Root cause**: sibling-only discovery in desktop CLI/native-host installation and Agent launch omitted Tauri's `usr/lib/AIPass` product resource directory; CLI release staging copied only two of the three required binaries. Linux autostart was a stub and browser configuration assumed `~/.config`.
+- **Fix**: share helper candidates and absolute XDG configuration resolution, package Agent with CLI, register the tray through XDG desktop login and retain the persistent AppImage launch path. Add isolated CLI/Native Messaging smoke and Linux deb main/tray startup CI at 960×640.
+- **Guardrail**: validate helpers from installed package layouts and test standalone packages with isolated HOME and no helper overrides. Linux build success is not desktop runtime evidence. Record actual remote results; native macOS tests cannot establish Linux/Wayland, update or vendor-login behavior.
+- **Watch points**: `bundled`, `launcher`, CLI/desktop native-host discovery, `cli_install`, Linux autostart, `runtime_check`, CI and release staging.
+
+### Dedicated plan keys, current model metadata and quota headroom must share scopes
+- **Symptom**: Coding Plan and Token Plan keys were conflated; failed catalog refreshes replaced successful account models; global allowance gates could suppress free or unrelated models.
+- **Root cause**: Product-name/prefix heuristics and static fallback rebuilding in `subscriptions/plans.rs`; protocol metadata without current price/scope in `subscriptions/opencode.rs`.
+- **Fix**: Separate Kimi Code, MiniMax M Plan and Bailian Coding Plan entries; retain last successful catalogs; refresh bounded provider-specific metadata; parse native key allowance with exact metered-model scopes. Bind console URLs to encrypted account region. Apply optional quota headroom only to routing readings and keep display percentages unchanged.
+- **Guardrail**: Never infer a billing product or wire from a model name. Keep missing usage unknown, exclude only explicitly free models, preserve model scopes and freshness in reset/pace ordering, and enforce configured headroom even when paid-credit/reset policies are enabled. Reject duplicate/truncated tool JSON and preserve declared string parameters in vendor templates.
+- **Watch points**: `plans`, `plan_quota`, `opencode`, `providers/trae/tools`, `community/console`, `subscription_policy`, proxy eligibility/affinity and quota UI.
+
+### Desktop startup sizes must fit the monitor work area
+- **Symptom**: the installed Linux app opened at 1280×820 on a 1280×800 X11 desktop, hiding bottom navigation below the screen.
+- **Root cause**: default and restored window sizes enforced only the 960×640 minimum and a saved-size tolerance, without limiting the size to the current monitor work area.
+- **Fix**: extract window sizing/persistence into `window_geometry.rs` and cap main/server dimensions to the monitor work area in logical pixels, retaining the Tauri minimum and invalid-monitor fallback.
+- **Guardrail**: test first-launch and restored sizes on small work areas and HiDPI monitors; visually verify the installed app with desktop panels present, in addition to the 960×640 runtime fixture.
+- **Watch points**: initial activation, existing-window reveal from the tray, server targets, saved window size, monitor scale and minimum-window configuration.
+
+### Sync settings must respect the desktop build target
+- **Symptom**: Linux offered active iCloud CloudKit save/sync actions even though its Agent cannot execute the macOS-native transport.
+- **Root cause**: the settings target list was unconditional; native CloudKit rejection occurred only after the user chose an unusable action.
+- **Fix**: extract sync target controls and use Tauri's target-platform build variable for CloudKit presentation. Omit the unavailable option and explain/block an existing iCloud selection until a supported target is chosen.
+- **Guardrail**: test non-Apple choices, an existing unsupported selection, recovery to local sync and macOS CloudKit actions. Keep Rust's platform rejection authoritative.
+- **Watch points**: Vite target injection, sync target settings, local/OneDrive/WebDAV controls, saved settings and native CloudKit bridge.
+
+### GTK tray submenu captions need reconstruction after locale changes
+- **Symptom**: Linux leaf actions switched to Chinese while Local proxy and Control panel submenu captions stayed in English.
+- **Root cause**: muda 0.19.2 creates GTK submenus with a custom AccelLabel child, but its set_text changes only MenuItem.label; the visible custom label retains its original text.
+- **Fix**: extract classic-menu construction and rebuild the root tray menu once per locale change on Linux, retaining the existing action IDs, enabled states and group items.
+- **Guardrail**: switch language in a running X11 app and inspect submenu captions plus leaf actions; verify menu actions still work after reconstruction. Translation catalog tests alone cannot establish native GTK updates.
+- **Watch points**: tray feedback, localized submenu captions, dynamic group menu, classic menu creation and Linux AppIndicator.
+
+### Linux session policy needs native event sources
+- **Symptom**: sleep/screen-lock preferences appeared available on Linux, but the power watcher was a no-op; the Agent remained unlocked after the X11 session ended.
+- **Root cause**: native power and system-idle integration existed only inside the macOS branch of `session.rs`.
+- **Fix**: extract platform power modules; subscribe to authenticated logind and desktop screensaver signals through zbus, verify the owning UID before applying per-session logind locks, and apply the current policy on active signals or loss of the desktop bus. Cache supported desktop idle APIs without blocking IPC.
+- **Guardrail**: test real private DBus transport, sender filtering, own/other session ownership, inactive/resume signals and policy switches. Verify installed Agent lock/unlock and an actual X11 bus teardown separately from physical suspend/resume.
+- **Watch points**: Agent startup, current session policy, vault lock and proxy sanitization, DBus reconnect, system-idle fallback and native macOS observer behavior.
+
+### Linux window chrome must preserve column ownership
+- **Symptom**: custom buttons overlapped detail actions. Native decorations and then a separate full-window header both violated the requested appearance/layout.
+- **Root cause**: the fix treated window chrome as a separate whole-window row instead of preserving the existing middle-list title/menu and right-detail control strip.
+- **Fix**: retain the shared middle-column title/menu placement; constrain Linux custom window controls to the right column, share its first row with the detail identity and place metadata/actions in the next row. Use one shared 8-pixel inner top inset for the sidebar, middle title/menu, detail identity and window buttons; reclaim the old empty strip without placing content against the panel edge. Cover provider, edit, server and spanning Agent management views. Keep decorations disabled and opaque rendering. Tauri owns Linux drag-region double-click handling.
+- **Guardrail**: preserve the three-column layout and shared column variables. Do not move the app title to the navigation column or add a full-width header row. At 960×640 and maximized size, verify title/menu alignment, window controls, detail actions, drag and close/reopen. Match native-window configuration and frontend build target for packaged, dev and tray-first entry paths.
+- **Watch points**: `AppTitleBar`, `linux-window.scss`, provider/server detail and Agent management roots, platform build define, `window_geometry` and tray reveal.

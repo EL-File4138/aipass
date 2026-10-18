@@ -6,6 +6,7 @@ export default defineConfig(({ mode }) => ({
   define: {
     // Stamped at every build so the About tab can identify which build is running.
     __AIPASS_BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+    __AIPASS_TARGET_PLATFORM__: JSON.stringify(process.env.TAURI_ENV_PLATFORM ?? process.platform),
     __AIPASS_RELEASE_BUILD__: JSON.stringify(mode === "production")
   },
   resolve: {

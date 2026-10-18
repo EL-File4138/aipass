@@ -341,12 +341,12 @@ fn singleton_socket_name(instance: DesktopInstanceKind) -> &'static str {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) fn should_install_tray_autostart() -> bool {
     should_install_tray_autostart_for(current_desktop_instance())
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn should_install_tray_autostart_for(instance: DesktopInstanceKind) -> bool {
     // Packaged builds (release and packaged development) register the tray for
     // auto-start on launch; only the live dev server stays unregistered.

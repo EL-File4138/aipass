@@ -834,273 +834,17 @@ cleanup
     mod tests;
 }
 
+#[cfg(any(target_os = "linux", all(test, unix)))]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[path = "autostart/linux_tray.rs"]
+mod linux_tray;
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[path = "autostart/linux.rs"]
+mod linux;
 #[cfg(target_os = "linux")]
-mod imp {
-    use super::*;
-    use crate::paths::agent_service_name;
-
-    pub(super) fn install(agent_binary: &Path, vault_dir: &Path) -> Result<AgentAutostartStatus> {
-        let service_name = agent_service_name(vault_dir)?;
-        let paths = linux_paths(&service_name)?;
-        let agent_binary = absolute_path(agent_binary);
-        let vault_dir = absolute_path(vault_dir);
-
-        fs::create_dir_all(
-            paths
-                .supervisor_path
-                .parent()
-                .context("invalid supervisor path")?,
-        )?;
-        fs::create_dir_all(paths.log_dir.as_path())?;
-        write_supervisor(
-            &paths.supervisor_path,
-            &linux_supervisor_script(
-                &paths.unit_name,
-                &paths.unit_path,
-                &agent_binary,
-                &vault_dir,
-                &paths.out_log,
-                &paths.err_log,
-            ),
-        )?;
-
-        fs::create_dir_all(
-            paths
-                .unit_path
-                .parent()
-                .context("invalid systemd unit path")?,
-        )?;
-        let unit = linux_unit(&service_name, &paths.supervisor_path);
-        atomic_write_bytes(&paths.unit_path, unit.as_bytes())?;
-
-        systemctl(["daemon-reload"])?;
-        systemctl(["enable", "--now", paths.unit_name.as_str()])?;
-
-        let running = systemctl_success(["is-active", "--quiet", paths.unit_name.as_str()]);
-        Ok(AgentAutostartStatus {
-            service_name: paths.unit_name,
-            registered: paths.unit_path.exists(),
-            running,
-            install_path: Some(paths.unit_path),
-            supervisor_path: Some(paths.supervisor_path),
-            agent_binary: Some(agent_binary),
-        })
-    }
-
-    pub(super) fn uninstall(vault_dir: &Path) -> Result<AgentAutostartStatus> {
-        let service_name = agent_service_name(vault_dir)?;
-        let paths = linux_paths(&service_name)?;
-        let _ = systemctl(["disable", "--now", paths.unit_name.as_str()]);
-        shutdown_agent(vault_dir);
-        let _ = fs::remove_file(&paths.unit_path);
-        let _ = fs::remove_file(&paths.supervisor_path);
-        let _ = systemctl(["daemon-reload"]);
-        Ok(AgentAutostartStatus {
-            service_name: paths.unit_name,
-            registered: false,
-            running: false,
-            install_path: Some(paths.unit_path),
-            supervisor_path: Some(paths.supervisor_path),
-            agent_binary: None,
-        })
-    }
-
-    pub(super) fn stop(vault_dir: &Path) -> Result<AgentAutostartStatus> {
-        let service_name = agent_service_name(vault_dir)?;
-        let paths = linux_paths(&service_name)?;
-        let _ = systemctl(["stop", paths.unit_name.as_str()]);
-        shutdown_agent(vault_dir);
-        Ok(AgentAutostartStatus {
-            service_name: paths.unit_name,
-            registered: paths.unit_path.exists(),
-            running: false,
-            install_path: Some(paths.unit_path),
-            supervisor_path: Some(paths.supervisor_path),
-            agent_binary: None,
-        })
-    }
-
-    pub(super) fn query(vault_dir: &Path) -> Result<AgentAutostartStatus> {
-        let service_name = agent_service_name(vault_dir)?;
-        let paths = linux_paths(&service_name)?;
-        Ok(AgentAutostartStatus {
-            service_name: paths.unit_name.clone(),
-            registered: paths.unit_path.exists()
-                || systemctl_success(["is-enabled", "--quiet", paths.unit_name.as_str()]),
-            running: systemctl_success(["is-active", "--quiet", paths.unit_name.as_str()]),
-            install_path: Some(paths.unit_path),
-            supervisor_path: Some(paths.supervisor_path),
-            agent_binary: None,
-        })
-    }
-
-    pub(super) fn install_tray(
-        _desktop_binary: &Path,
-        vault_dir: &Path,
-    ) -> Result<TrayAutostartStatus> {
-        unsupported_tray(vault_dir)
-    }
-
-    pub(super) fn uninstall_tray(vault_dir: &Path) -> Result<TrayAutostartStatus> {
-        unsupported_tray(vault_dir)
-    }
-
-    pub(super) fn stop_tray(vault_dir: &Path) -> Result<TrayAutostartStatus> {
-        unsupported_tray(vault_dir)
-    }
-
-    pub(super) fn query_tray(vault_dir: &Path) -> Result<TrayAutostartStatus> {
-        unsupported_tray(vault_dir)
-    }
-
-    fn unsupported_tray(vault_dir: &Path) -> Result<TrayAutostartStatus> {
-        Ok(TrayAutostartStatus {
-            service_name: tray_service_name(vault_dir)?,
-            registered: false,
-            running: false,
-            install_path: None,
-            supervisor_path: None,
-            desktop_binary: None,
-        })
-    }
-
-    struct LinuxAutostartPaths {
-        unit_name: String,
-        unit_path: PathBuf,
-        supervisor_path: PathBuf,
-        log_dir: PathBuf,
-        out_log: PathBuf,
-        err_log: PathBuf,
-    }
-
-    fn linux_paths(service_name: &str) -> Result<LinuxAutostartPaths> {
-        let home = home_dir()?;
-        let unit_name = format!("aipass-agent-{service_name}.service");
-        let log_dir = home.join(".aipass").join("logs");
-        Ok(LinuxAutostartPaths {
-            unit_path: home
-                .join(".config")
-                .join("systemd")
-                .join("user")
-                .join(&unit_name),
-            supervisor_path: home
-                .join(".aipass")
-                .join("autostart")
-                .join(format!("{service_name}.sh")),
-            out_log: log_dir.join(format!("{service_name}.out.log")),
-            err_log: log_dir.join(format!("{service_name}.err.log")),
-            log_dir,
-            unit_name,
-        })
-    }
-
-    fn linux_unit(service_name: &str, supervisor_path: &Path) -> String {
-        format!(
-            r#"[Unit]
-Description=AIPass Agent ({service_name})
-
-[Service]
-Type=simple
-ExecStart={}
-Restart=on-failure
-RestartSec=2
-
-[Install]
-WantedBy=default.target
-"#,
-            systemd_quote(&supervisor_path.display().to_string()),
-        )
-    }
-
-    fn linux_supervisor_script(
-        unit_name: &str,
-        unit_path: &Path,
-        agent_binary: &Path,
-        vault_dir: &Path,
-        out_log: &Path,
-        err_log: &Path,
-    ) -> String {
-        format!(
-            r#"#!/bin/sh
-set -u
-
-UNIT={}
-UNIT_PATH={}
-AGENT={}
-VAULT={}
-OUT_LOG={}
-ERR_LOG={}
-child=""
-
-cleanup() {{
-  systemctl --user disable "$UNIT" >/dev/null 2>&1 || true
-  rm -f "$UNIT_PATH" "$0"
-  systemctl --user daemon-reload >/dev/null 2>&1 || true
-}}
-
-terminate() {{
-  if [ -n "$child" ]; then
-    kill "$child" >/dev/null 2>&1 || true
-    wait "$child" >/dev/null 2>&1 || true
-  fi
-  exit 0
-}}
-
-trap terminate TERM INT
-
-if [ ! -x "$AGENT" ]; then
-  cleanup
-  exit 0
-fi
-
-while [ -x "$AGENT" ]; do
-  "$AGENT" --vault "$VAULT" >>"$OUT_LOG" 2>>"$ERR_LOG" &
-  child=$!
-  while kill -0 "$child" >/dev/null 2>&1; do
-    if [ ! -x "$AGENT" ]; then
-      kill "$child" >/dev/null 2>&1 || true
-      wait "$child" >/dev/null 2>&1 || true
-      cleanup
-      exit 0
-    fi
-    sleep 1
-  done
-  wait "$child" >/dev/null 2>&1 || true
-  child=""
-  sleep 2
-done
-
-cleanup
-"#,
-            shell_quote(unit_name),
-            shell_quote(&unit_path.display().to_string()),
-            shell_quote(&agent_binary.display().to_string()),
-            shell_quote(&vault_dir.display().to_string()),
-            shell_quote(&out_log.display().to_string()),
-            shell_quote(&err_log.display().to_string()),
-        )
-    }
-
-    fn systemctl<const N: usize>(args: [&str; N]) -> Result<()> {
-        let status = Command::new("systemctl")
-            .arg("--user")
-            .args(args)
-            .status()
-            .context("failed to run systemctl --user")?;
-        if !status.success() {
-            anyhow::bail!("systemctl --user command failed");
-        }
-        Ok(())
-    }
-
-    fn systemctl_success<const N: usize>(args: [&str; N]) -> bool {
-        Command::new("systemctl")
-            .arg("--user")
-            .args(args)
-            .status()
-            .is_ok_and(|status| status.success())
-    }
-}
+use linux as imp;
 
 #[cfg(target_os = "windows")]
 mod imp {
@@ -1278,9 +1022,16 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", all(test, unix)))]
 fn systemd_quote(value: &str) -> String {
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+    format!(
+        "\"{}\"",
+        value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('%', "%%")
+            .replace('$', "$$")
+    )
 }
 
 #[cfg(target_os = "macos")]
