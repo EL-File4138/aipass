@@ -33,10 +33,12 @@
   import SettingsPanel from "./lib/components/settings/SettingsPanel.svelte";
   import AppTitleBar from "./lib/components/shared/AppTitleBar.svelte";
   import ErrorToast from "./lib/components/shared/ErrorToast.svelte";
+  import { copyCredential, copySensitive, clearSensitiveClipboard } from "./lib/services/secretClipboard";
   import ConfirmModal from "./lib/components/shared/ConfirmModal.svelte";
   import UpdateRestartConfirmModal from "./lib/components/shared/UpdateRestartConfirmModal.svelte";
   import type {
     AppPreferences,
+    SecurityPreferences,
     AuthMode,
     BrowserExtensionInstallResult,
     BrowserExtensionStatus,
@@ -285,12 +287,11 @@
   let providerFilter: ProviderFilter = "all";
   let revealedSecrets: Record<string, string> = {};
   let revealTimer: ReturnType<typeof setTimeout> | undefined;
-  let clipboardClearTimer: ReturnType<typeof setTimeout> | undefined;
-  /** The secret this app last copied, so a lock can wipe it immediately. */
-  let pendingClipboardSecret = "";
   let lastSessionTouchAt = 0;
   let autoLockMinutes = 60;
   let clipboardClearSeconds = 45;
+  let credentialClickAction: "reveal" | "copy" = "reveal";
+  let confirmSecretCopy = true;
   let lockOnSleep = true;
   let lockOnScreenLock = true;
   let officialAccountsImport = false;
@@ -821,7 +822,6 @@
     window.removeEventListener("focus", reconcileVisibleVaultStatus);
     document.removeEventListener("visibilitychange", reconcileVisibleVaultStatus);
     document.removeEventListener("visibilitychange", refreshVisibleProviderUsage);
-    clearTimeout(clipboardClearTimer);
     clearTimeout(revealTimer);
     clearTimeout(searchTimer);
     clearTimeout(updateCheckTimer);
@@ -1052,13 +1052,8 @@
 
   async function copyRecoveryKit() {
     if (!pendingRecoveryKey) return;
-    if (!navigator.clipboard?.writeText) {
-      reportError(localizedMessage("notice.clipboardUnavailable"));
-      return;
-    }
     try {
-      await navigator.clipboard.writeText(pendingRecoveryKey);
-      scheduleClipboardClear(pendingRecoveryKey);
+      if (!await copySensitive(pendingRecoveryKey)) return;
       copied = "recovery-key";
       setTimeout(() => {
         copied = "";
@@ -1122,7 +1117,7 @@
     setAuthMode("unlock");
     // Locking is exactly when a copied secret must not linger, so wipe it now
     // rather than only cancelling the timer that would have wiped it.
-    void clearCopiedSecretFromClipboard();
+    void clearSensitiveClipboard();
     clearTimeout(revealTimer);
   }
 
@@ -1178,7 +1173,7 @@
     importPassword = "";
     webdavPassword = "";
     hasSavedWebdavPassword = false;
-    void clearCopiedSecretFromClipboard();
+    void clearSensitiveClipboard();
   }
 
   async function loadEntries(
@@ -1653,7 +1648,12 @@
       revealedSecrets = next;
       return;
     }
-    const secret = await invokeTauri<string>("secret_reveal_field", { id: selected.id, field: secretId });
+    const entryId = selected.id;
+    const generation = editRequestGeneration;
+    let secret: string;
+    try { secret = await invokeTauri<string>("secret_reveal_field", { id: entryId, field: secretId }); }
+    catch (err) { reportError(String(err)); return; }
+    if (status.locked || selected?.id !== entryId || generation !== editRequestGeneration) return;
     revealedSecrets = { ...revealedSecrets, [secretId]: secret };
     clearTimeout(revealTimer);
     revealTimer = setTimeout(() => {
@@ -1673,9 +1673,9 @@
 
   async function copySecretById(secretId: string) {
     if (!selected) return;
-    const secret = await invokeTauri<string>("secret_reveal_field", { id: selected.id, field: secretId });
-    await navigator.clipboard?.writeText(secret);
-    scheduleClipboardClear(secret);
+    try {
+      if (!await copyCredential(selected.id, secretId)) return;
+    } catch (err) { reportError(String(err)); return; }
     copied = `secret:${secretId}`;
     setTimeout(() => {
       copied = "";
@@ -2333,13 +2333,13 @@
 
   async function copyServerValue(value: string, sensitive = false) {
     if (!value) return;
-    if (!navigator.clipboard?.writeText) {
+    if (!sensitive && !navigator.clipboard?.writeText) {
       reportError(localizedMessage("notice.clipboardUnavailable"));
       return;
     }
     try {
-      await navigator.clipboard.writeText(value);
-      if (sensitive) scheduleClipboardClear(value);
+      if (sensitive) { if (!await copySensitive(value)) return; }
+      else await navigator.clipboard.writeText(value);
       notice = localizedMessage("providerDetail.copied");
       setTimeout(() => (notice = ""), 1800);
     } catch (err) {
@@ -3042,42 +3042,6 @@
     void touchSession();
   }
 
-  function scheduleClipboardClear(secret: string) {
-    clearTimeout(clipboardClearTimer);
-    // Keep the value even when timed cleanup is disabled: locking the vault
-    // must still be able to remove the last secret this app copied.
-    pendingClipboardSecret = secret;
-    if (clipboardClearSeconds <= 0) return;
-    clipboardClearTimer = setTimeout(async () => {
-      await clearCopiedSecretFromClipboard();
-      revealedSecrets = {};
-    }, clipboardClearSeconds * 1000);
-  }
-
-  /**
-   * Wipes a secret this app put on the clipboard. The timer is cancelled first
-   * so a later lock cannot double-fire it, and the secret is forgotten whether
-   * or not the write succeeds.
-   */
-  async function clearCopiedSecretFromClipboard() {
-    clearTimeout(clipboardClearTimer);
-    const secret = pendingClipboardSecret;
-    pendingClipboardSecret = "";
-    if (!secret) return;
-    try {
-      const current = await navigator.clipboard?.readText?.();
-      if (!current || current === secret) {
-        await navigator.clipboard?.writeText("");
-      }
-    } catch {
-      try {
-        await navigator.clipboard?.writeText("");
-      } catch {
-        // Best-effort clipboard cleanup.
-      }
-    }
-  }
-
   async function loadSyncSettings(options: { preserveDraft?: boolean } = {}) {
     try {
       const settings = await invokeTauri<SyncSettings>("sync_settings_load");
@@ -3144,7 +3108,9 @@
     try {
       const prefs = await invokeTauri<AppPreferences>("preferences_load");
       autoLockMinutes = clampPreference(prefs.autoLockMinutes, 0, 1440, autoLockMinutes);
-      clipboardClearSeconds = clampPreference(prefs.clipboardClearSeconds, 0, 600, clipboardClearSeconds);
+      clipboardClearSeconds = clampPreference(prefs.clipboardClearSeconds || 45, 1, 600, clipboardClearSeconds);
+      credentialClickAction = prefs.credentialClickAction === "copy" ? "copy" : "reveal";
+      confirmSecretCopy = prefs.confirmSecretCopy ?? true;
       lockOnSleep = prefs.lockOnSleep ?? lockOnSleep;
       lockOnScreenLock = prefs.lockOnScreenLock ?? lockOnScreenLock;
       officialAccountsImport = prefs.officialAccountsImport ?? false;
@@ -3160,16 +3126,21 @@
     }
   }
 
-  async function savePreferences() {
+  async function savePreferences(preferences?: SecurityPreferences) {
+    if (preferences) {
+      ({ autoLockMinutes, clipboardClearSeconds, credentialClickAction, confirmSecretCopy, lockOnSleep, lockOnScreenLock } = preferences);
+    }
     const revision = ++preferencesRevision;
     preferencesSavesPending++;
     const operation = preferencesSaveChain.then(async () => {
       autoLockMinutes = clampPreference(autoLockMinutes, 0, 1440, 60);
-      clipboardClearSeconds = clampPreference(clipboardClearSeconds, 0, 600, 45);
+      clipboardClearSeconds = clampPreference(clipboardClearSeconds, 1, 600, 45);
       const saved = await invokeTauri<AppPreferences>("preferences_save", {
         request: {
           autoLockMinutes,
           clipboardClearSeconds,
+          credentialClickAction,
+          confirmSecretCopy,
           lockOnSleep,
           lockOnScreenLock,
           officialAccountsImport,
@@ -3373,6 +3344,7 @@
         {showTrash}
         {copied}
         {revealedSecrets}
+        {credentialClickAction}
         bind:newSecretLabel
         bind:newSecretKey
         {secretBusy}
@@ -3486,15 +3458,17 @@
 {#if showSettings && !status.locked}
   <SettingsPanel
     onCopyAccessCode={async (code) => {
-      await navigator.clipboard.writeText(code);
-      scheduleClipboardClear(code);
-      if (status.locked) await clearCopiedSecretFromClipboard();
+      const copied = await copySensitive(code);
+      if (status.locked) { await clearSensitiveClipboard(); return false; }
+      return copied;
     }}
     error={errorTarget === "settings" ? errorText : ""}
     notice={noticeText}
     initialTab={settingsInitialTab}
     bind:autoLockMinutes
     bind:clipboardClearSeconds
+    bind:credentialClickAction
+    bind:confirmSecretCopy
     bind:lockOnSleep
     bind:lockOnScreenLock
     bind:newPassword
@@ -3527,7 +3501,7 @@
     onUpdateChannelChanged={resetUpdatePromptForChannel}
     {serverBusy}
     onClose={() => settingsOperation(closeSettings)}
-    onSavePreferences={() => settingsOperation(savePreferences)}
+    onSavePreferences={(preferences) => settingsOperation(() => savePreferences(preferences))}
     onChangeMasterPassword={() => settingsOperation(changeMasterPassword)}
     onRotateVault={() => settingsOperation(rotateVault)}
     onExportVault={() => settingsOperation(exportVault)}

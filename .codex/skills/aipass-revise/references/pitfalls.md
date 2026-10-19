@@ -1026,3 +1026,12 @@ Newest entries last within each section.
 - **Fix**: retain the shared middle-column title/menu placement; constrain Linux custom window controls to the right column, share its first row with the detail identity and place metadata/actions in the next row. Use one shared 8-pixel inner top inset for the sidebar, middle title/menu, detail identity and window buttons; reclaim the old empty strip without placing content against the panel edge. Cover provider, edit, server and spanning Agent management views. Keep decorations disabled and opaque rendering. Tauri owns Linux drag-region double-click handling.
 - **Guardrail**: preserve the three-column layout and shared column variables. Do not move the app title to the navigation column or add a full-width header row. At 960×640 and maximized size, verify title/menu alignment, window controls, detail actions, drag and close/reopen. Match native-window configuration and frontend build target for packaged, dev and tray-first entry paths.
 - **Watch points**: `AppTitleBar`, `linux-window.scss`, provider/server detail and Agent management roots, platform build define, `window_geometry` and tray reveal.
+
+## Credential clipboard
+
+### Frontend timers and blind clears left credentials exposed or deleted user content
+- **Symptom**: secret cleanup depended on WebView timers; a failed clipboard read fell back to clearing unrelated user content.
+- **Root cause**: `apps/desktop/src/App.svelte::scheduleClipboardClear` retained plaintext in a frontend closure and `clearCopiedSecretFromClipboard` wrote an empty value after read failures.
+- **Fix**: native `secret_clipboard` owns clipboard lifetime, bounded retries, zeroizing pending values, confirmation before API-key reads, and lock/exit invalidation. All desktop sensitive-copy entry points reuse it.
+- **Guardrail**: clear only after a successful matching read; preserve newer clipboard content, keep previous cleanup after a failed copy, and invalidate pending confirmation/Agent responses on lock. Cover these paths in `secret_clipboard/tests.rs`.
+- **Watch points**: provider API keys, recovery kit, server tokens and panel access codes; UI preferences defaults/migration; native clipboard-history exclusion hints are best effort.

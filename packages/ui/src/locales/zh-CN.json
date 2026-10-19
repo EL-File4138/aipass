@@ -371,8 +371,8 @@
   "settings.autoLock24h": "24 小时",
   "settings.autoLockNever": "永不",
   "settings.autoLockCustom": "{minutes} 分钟",
-  "settings.clipboardClear": "清空剪贴板",
-  "settings.clipboardClearDesc": "复制密钥后多少秒自动清除。",
+  "settings.clipboardClear": "清除剪贴板（秒）",
+  "settings.clipboardClearDesc": "复制凭据后 1–600 秒自动清除。",
   "settings.lockOnSleep": "睡眠时锁定",
   "settings.lockOnSleepDesc": "系统进入睡眠时锁定保险库。",
   "settings.lockOnScreenLock": "屏幕锁定时锁定",
@@ -1278,5 +1278,9 @@
   "subscriptionPolicy.quotaCap": "额度切换阈值",
   "subscriptionPolicy.quotaCapPercent": "已用 {percent}%",
   "server.strategyResetSoonest": "优先即将重置",
-  "server.strategyQuotaPace": "按周额度节奏"
+  "server.strategyQuotaPace": "按周额度节奏",
+  "settings.credentialClickAction": "点击凭据",
+  "settings.credentialClickReveal": "显示",
+  "settings.credentialClickCopy": "复制",
+  "settings.confirmSecretCopy": "复制凭据前确认"
 }

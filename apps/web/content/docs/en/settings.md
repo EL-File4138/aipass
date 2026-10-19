@@ -20,6 +20,12 @@ Theme and display preferences. These are local to the app and do not touch the v
 
 Locking drops decrypted keys from the agent's memory; the desktop app, CLI, and browser extension all need the master password again afterwards.
 
+## Credential clipboard
+
+Clicking an API key reveals it by default. In **Settings → Security**, choose **Reveal** or **Copy** for credential clicks and enable or disable confirmation before copying (on by default). The dedicated copy button follows the same confirmation setting.
+
+Copied credentials are cleared after 45 seconds by default, adjustable from 1 to 600 seconds. Native cleanup continues while the app is in the background and runs on lock or exit. It only clears matching clipboard text; newer clipboard content is preserved. macOS and Windows receive clipboard-history exclusion hints, but third-party clipboard managers may ignore them.
+
 ## Master password
 
 Change the master password from the app, or with:

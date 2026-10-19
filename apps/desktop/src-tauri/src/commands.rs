@@ -6,23 +6,22 @@ use crate::auth_tasks::{
 };
 use crate::models::{
     from_agent_sync_conflict_response, from_agent_sync_settings, into_agent_cloud_sync_provider,
-    into_agent_sync_conflict_request, into_agent_sync_settings_update, AppPreferences,
+    into_agent_sync_conflict_request, into_agent_sync_settings_update,
     BrowserExtensionInstallResult, BrowserExtensionStatus, ChangePasswordRequest,
     CreateVaultRequest, NativeHostRepairRequest, NativeHostStatus, ProbeResult, ProviderAddRequest,
-    ProviderUpdateRequest, RecoveryVaultRequest, SavePreferencesRequest, SaveSyncSettingsRequest,
-    SyncCloudRequest, SyncConflictActionRequest, SyncConflictResponse, SyncConflictsRequest,
-    SyncLocalRequest, SyncSettings, SyncWebDavRequest, UnlockVaultRequest, VaultExportRequest,
-    VaultImportRequest, VaultStatus,
+    ProviderUpdateRequest, RecoveryVaultRequest, SaveSyncSettingsRequest, SyncCloudRequest,
+    SyncConflictActionRequest, SyncConflictResponse, SyncConflictsRequest, SyncLocalRequest,
+    SyncSettings, SyncWebDavRequest, UnlockVaultRequest, VaultExportRequest, VaultImportRequest,
+    VaultStatus,
 };
 use aipass_agent_protocol::{
     AgentRequest, CcSwitchDetection, FaviconBackfillRequest, FaviconBackfillResponse, LockReason,
     OAuthAccountSummary, OAuthDeviceStart, OAuthLoginPoll, OfficialAccountRefreshResult,
     PricingApplyScope, PricingConfig, PricingGroup, ProbeResult as AgentProbeResult,
     ProviderHeaderValues, SecretValue, SensitiveString, ServerTokenResponse, ServerUsageSummary,
-    SessionPolicy, SessionStatus, SessionUnlockMode,
-    SyncConflictResponse as AgentSyncConflictResponse, SyncSettings as AgentSyncSettings,
-    UsageGranularity, UsageProbeMode, UsageProbeResult as AgentUsageProbeResult, UsageProbeSource,
-    UsageTimeseriesPoint,
+    SessionStatus, SessionUnlockMode, SyncConflictResponse as AgentSyncConflictResponse,
+    SyncSettings as AgentSyncSettings, UsageGranularity, UsageProbeMode,
+    UsageProbeResult as AgentUsageProbeResult, UsageProbeSource, UsageTimeseriesPoint,
 };
 use aipass_provider_registry::{GatewayMetadata, OAuthProvider, QuotaInfo, SubscriptionSnapshot};
 use aipass_proxy::{ProxyConfig, ProxyStatus};
@@ -35,9 +34,9 @@ use uuid::Uuid;
 
 use crate::{
     agent_request, agent_request_no_unlock, agent_request_no_unlock_detailed, agent_status,
-    browser_extension_status_snapshot, install_browser_extension, load_preferences,
-    native_host_status_snapshot, provider_add_input, provider_update_input,
-    repair_native_host_manifest, run_blocking, run_blocking_agent, save_preferences, AppState,
+    browser_extension_status_snapshot, install_browser_extension, native_host_status_snapshot,
+    provider_add_input, provider_update_input, repair_native_host_manifest, run_blocking,
+    run_blocking_agent, AppState,
 };
 
 pub(crate) async fn agent_request_async<T: DeserializeOwned + Send + 'static>(
@@ -154,83 +153,6 @@ pub(crate) async fn session_touch(app: AppHandle) -> Result<VaultStatus, String>
         sync_revision: status.sync_revision,
         sync_status: status.sync_status,
     })
-}
-
-#[tauri::command]
-pub(crate) async fn preferences_load(app: AppHandle) -> Result<AppPreferences, String> {
-    run_blocking(move || {
-        let local = load_preferences(&app)?;
-        let language = load_language_settings(&app, local.locale)?;
-        let policy = agent_request_no_unlock::<SessionPolicy>(&app, AgentRequest::SessionPolicyGet)
-            .unwrap_or_default();
-        Ok(AppPreferences {
-            auto_lock_minutes: policy.idle_lock_minutes,
-            clipboard_clear_seconds: local.clipboard_clear_seconds,
-            lock_on_sleep: policy.lock_on_sleep,
-            lock_on_screen_lock: policy.lock_on_screen_lock,
-            theme: local.theme,
-            locale: language.locale,
-            resolved_locale: Some(language.resolved_locale),
-            official_accounts_import: local.official_accounts_import,
-        })
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn preferences_save(
-    app: AppHandle,
-    request: SavePreferencesRequest,
-) -> Result<AppPreferences, String> {
-    run_blocking(move || {
-        let current_policy =
-            agent_request_no_unlock::<SessionPolicy>(&app, AgentRequest::SessionPolicyGet)
-                .unwrap_or_default();
-        let stored = load_preferences(&app)?;
-        let language = load_language_settings(&app, stored.locale)?;
-        let preferences = AppPreferences {
-            auto_lock_minutes: request.auto_lock_minutes.min(1_440),
-            clipboard_clear_seconds: request.clipboard_clear_seconds.min(600),
-            lock_on_sleep: request
-                .lock_on_sleep
-                .unwrap_or(current_policy.lock_on_sleep),
-            lock_on_screen_lock: request
-                .lock_on_screen_lock
-                .unwrap_or(current_policy.lock_on_screen_lock),
-            theme: request.theme.unwrap_or(stored.theme),
-            locale: request.locale.unwrap_or(language.locale),
-            resolved_locale: None,
-            official_accounts_import: request
-                .official_accounts_import
-                .unwrap_or(stored.official_accounts_import),
-        };
-
-        let _: SessionPolicy = agent_request_no_unlock(
-            &app,
-            AgentRequest::SessionPolicySet {
-                policy: SessionPolicy {
-                    idle_lock_minutes: preferences.auto_lock_minutes,
-                    lock_on_sleep: preferences.lock_on_sleep,
-                    lock_on_screen_lock: preferences.lock_on_screen_lock,
-                },
-            },
-        )?;
-        let language: aipass_agent_protocol::LanguageSettings = agent_request_no_unlock(
-            &app,
-            AgentRequest::LanguageSettingsSet {
-                locale: preferences.locale,
-            },
-        )?;
-        crate::tray_i18n::set_locale(language.resolved_locale);
-        let _ = app.emit(crate::tray::REFRESH_PROXY_TRAY_EVENT, ());
-        let preferences = AppPreferences {
-            resolved_locale: Some(language.resolved_locale),
-            ..preferences
-        };
-        save_preferences(&app, &preferences)?;
-        Ok(preferences)
-    })
-    .await
 }
 
 #[tauri::command]

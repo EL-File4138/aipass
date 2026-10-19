@@ -371,8 +371,8 @@
   "settings.autoLock24h": "24 hours",
   "settings.autoLockNever": "Never",
   "settings.autoLockCustom": "{minutes} minutes",
-  "settings.clipboardClear": "Clipboard clear",
-  "settings.clipboardClearDesc": "Wipe copied secrets after this many seconds.",
+  "settings.clipboardClear": "Clear clipboard (seconds)",
+  "settings.clipboardClearDesc": "Clear copied credentials after 1–600 seconds.",
   "settings.lockOnSleep": "Lock on sleep",
   "settings.lockOnSleepDesc": "Lock the vault when the system goes to sleep.",
   "settings.lockOnScreenLock": "Lock on screen lock",
@@ -1278,5 +1278,9 @@
   "subscriptionPolicy.quotaCap": "Switch at quota usage",
   "subscriptionPolicy.quotaCapPercent": "{percent}% used",
   "server.strategyResetSoonest": "Reset soonest",
-  "server.strategyQuotaPace": "Weekly quota pace"
+  "server.strategyQuotaPace": "Weekly quota pace",
+  "settings.credentialClickAction": "Credential click",
+  "settings.credentialClickReveal": "Reveal",
+  "settings.credentialClickCopy": "Copy",
+  "settings.confirmSecretCopy": "Confirm before copying credentials"
 }

@@ -99,8 +99,8 @@ aee9eb05ecc931af04b784f4dd2e589de8f573fd90ad3f8c53de1c480d3bf186 ../../packages/
 f32b22b84b182859220ec87c2a1d06654d043774500151bc7c9c39dd606a2dc0 ../../packages/ui/src/index.test.ts
 30140eb1e0885a34c7b2504eb68d865ee0b3e82b5e25f289c314583843edfd07 ../../packages/ui/src/index.ts
 e869bc56c5048b80726d1c251a9868e5c36f96c4a6afdc7543b09478e77fe977 ../../packages/ui/src/locales/aliases.json
-bfcd2740a70b7bc613d8c699bbc5c698f50d0356c27d4964cf653ec4b2d128ac ../../packages/ui/src/locales/en.json
-e3510f57bc9e3d8b9de70077e0cd3d9ba41ab89e2bfe00cbaf80dc3a1a2be2b0 ../../packages/ui/src/locales/zh-CN.json
+39d25cacf95b058c4c960e86036f95b95a7d7b93eff7bd81fc3241b2e260b238 ../../packages/ui/src/locales/en.json
+19aa0ed8b2d0fecec088f46d4db822f77d5ffb5c144fa5c22c569e69211fb00c ../../packages/ui/src/locales/zh-CN.json
 b9018964d3462a82d1e63fe60da79bfd7034fb7723f7264d61ba4f9dd8c54be0 ../../packages/ui/src/provider-icons.ts
 2bbbbb6db9e1bf409e9f5a494d64bfec326689f1bc69b2632485df8514695d61 ../../packages/ui/src/styles/base.scss
 b324d7c8d1f94e41888ce20da7fdfc5eb9b0c5a9c68b04f7a88db07d3e45f01b ../../packages/ui/src/types.ts

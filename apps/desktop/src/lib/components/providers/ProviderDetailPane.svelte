@@ -71,6 +71,7 @@
   export let showArchived = false;
   export let showTrash = false;
   export let copied = "";
+  export let credentialClickAction: "reveal" | "copy" = "reveal";
   export let revealedSecrets: Record<string, string> = {};
   export let newSecretLabel = "";
   export let newSecretKey = "";
@@ -743,7 +744,7 @@
                     </button>
                   {/if}
                 </div>
-                <button type="button" class="secret-copy" title={secret.label} aria-label={$t("providerDetail.copySecret", { label: secret.label })} on:click={() => onCopySecret(secret.id)}></button>
+                <button type="button" class="secret-copy" title={secret.label} aria-label={$t(credentialClickAction === "copy" ? "providerDetail.copySecret" : revealedSecrets[secret.id] ? "providerDetail.hideSecret" : "providerDetail.revealSecret", { label: secret.label })} on:click={() => credentialClickAction === "copy" ? onCopySecret(secret.id) : onRevealSecret(secret.id)}></button>
                 <code use:scrollMask class="kv-value mono" class:revealed={Boolean(revealedSecrets[secret.id])}>{revealedSecrets[secret.id] || fullyMasked()}</code>
                 <span class="kv-actions">
                   {#if copied === `secret:${secret.id}`}

@@ -1,3 +1,6 @@
+mod preferences;
+mod secret_clipboard;
+use preferences::{load_preferences, preferences_load, preferences_save};
 mod auth_tasks;
 mod cli_install;
 #[cfg(target_os = "macos")]
@@ -283,13 +286,21 @@ pub(crate) fn agent_request_no_unlock_detailed<T: DeserializeOwned>(
     app: &AppHandle,
     request: AgentRequest,
 ) -> Result<T, AgentCommandError> {
+    let locking = matches!(&request, AgentRequest::SessionLock { .. });
+    if locking {
+        let _ = secret_clipboard::clear_now();
+    }
     let map_startup_error = |message| AgentCommandError {
         code: None,
         message,
     };
     let client = agent_client(app).map_err(map_startup_error)?;
     ensure_agent_running_for_desktop(&client).map_err(map_startup_error)?;
-    client.request(&request)
+    let result = client.request(&request);
+    if locking {
+        let _ = secret_clipboard::clear_now();
+    }
+    result
 }
 
 fn agent_status(app: &AppHandle) -> Result<SessionStatus, String> {
@@ -482,38 +493,6 @@ async fn run_blocking_agent<T: Send + 'static>(
             code: Some(aipass_agent_protocol::AgentErrorCode::Internal),
             message: err.to_string(),
         })?
-}
-
-fn load_preferences(app: &AppHandle) -> Result<AppPreferences, String> {
-    let path = preferences_path(app)?;
-    if !path.exists() {
-        return Ok(AppPreferences::default());
-    }
-    let bytes = fs::read(&path).map_err(|err| err.to_string())?;
-    let value: serde_json::Value = match serde_json::from_slice(&bytes) {
-        Ok(value) => value,
-        Err(_) => return Ok(AppPreferences::default()),
-    };
-    let had_persist_unlock = value.get("persistUnlock").is_some();
-    let preferences: AppPreferences =
-        serde_json::from_value(value).unwrap_or_else(|_| AppPreferences::default());
-    if had_persist_unlock {
-        write_json_atomic(&path, &preferences)?;
-    }
-    Ok(preferences)
-}
-
-fn save_preferences(app: &AppHandle, preferences: &AppPreferences) -> Result<(), String> {
-    let path = preferences_path(app)?;
-    write_json_atomic(&path, preferences)
-}
-
-fn preferences_path(app: &AppHandle) -> Result<PathBuf, String> {
-    if let Some(path) = runtime_check::path("preferences.json") {
-        return Ok(path);
-    }
-    let dir = app.path().app_config_dir().map_err(|err| err.to_string())?;
-    Ok(dir.join("preferences.json"))
 }
 
 fn browser_extension_status_snapshot(app: &AppHandle) -> Result<BrowserExtensionStatus, String> {
@@ -2155,6 +2134,7 @@ pub fn run() {
                 }
             }
             RunEvent::Exit => {
+                let _ = secret_clipboard::clear_now();
                 let _ = logging::log_event("desktop.exit.completed", &[]);
             }
             _ => {}
