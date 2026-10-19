@@ -106,21 +106,80 @@ compiler's LLVM 22 library dependency intact. Recheck the symlink and a freshly
 compiled stripped library after a Rust upgrade/reinstall. See `README.md` and
 the build-toolchain entry in the pitfalls registry for details.
 
-## Pre-push validation gate
+## Commit and push validation
 
-`git push` is prohibited until every required check below passes for the exact commit being pushed.
+Follow the proportionate validation rule in root `agents.md` (2026-10-20).
+Select checks by behavior and dependency impact, not by file count or size.
+Passing checks does not grant permission to push; push only when requested.
 
-1. Immediately before validation, re-read every file in `.github/workflows/`. Use their check commands, applying the macOS-only local validation rule above instead of matching Ubuntu runner environments.
-2. Passing this gate is necessary but does not grant permission to push. Only push when the user has explicitly requested it.
-3. Finalize the intended commits first. Record the source ref and commit SHA for every intended refspec, require a clean worktree, and run the gate against each unique commit being pushed. Never include unvalidated extra refs through `--all`, `--tags`, or additional refspecs.
-4. Run the complete local branch gate below for every code or documentation push, even when the changed files look unrelated to a job. Do not select checks based on the diff.
-5. Run `rust`, `node`, and `macOS desktop bundle` natively on macOS. Use Node 26 from `.nvmrc`, pnpm from the root `packageManager` field, stable Rust, and the required macOS build dependencies. Local Ubuntu jobs and Linux dependency setup are permanently excluded.
-6. Every setup step, command, and bundle assertion must exit successfully. A pre-existing failure is still a failure.
-7. After validation, require every recorded ref to resolve to the same commit and the worktree to still be clean. Any commit, amend, rebase, merge, generated-file change, or workflow change invalidates the result and requires the full gate again.
-8. Never bypass the required macOS gate with `--no-verify`, ignored exit codes, narrower package filters, or skipped tests. The explicit local Ubuntu exclusion above is a standing user rule, not a gate failure.
-9. If a required macOS check cannot run because a toolchain, dependency, credential, or service is unavailable, stop and report the blocker. Do not push.
+### Select the local scope
 
-### Required local branch commands
+| Change | Required local checks |
+| --- | --- |
+| Documentation only | Review diff, formatting and affected links. Run `pnpm repo:check` for repository instructions, structure or dependency rules, and the skill validator for edited skills. No application build. |
+| Simple copy, locale, CSS, layout or isolated UI fix | Affected package typecheck; relevant existing tests for changed behavior; inspect the affected UI at `960x640`. No new tests for copy/CSS alone, workspace checks or desktop bundle. |
+| Ordinary logic or feature change | Lint/typecheck/tests and, where compilation or output is affected, build the relevant packages/crates and dependent callers. Expand for shared contracts or uncertain impact. |
+| Security, credential ownership, durable storage, sync, IPC contract, startup/update lifecycle, dependency, build or CI behavior | Complete local gate below. Review relevant pitfalls and exercise the changed failure paths. |
+| Release/tag or artifact publication | Complete local gate and release checks below, against the exact release commit and finished artifacts. |
+
+Classify the actual change: editing a label in a login screen does not change
+authentication, while a one-line account-matching fix can change credential
+ownership. Failures or unclear dependencies justify broader checks; routine
+success does not justify repeating them.
+
+For a desktop display fix, typical commands are:
+
+```bash
+pnpm --filter @aipass/desktop typecheck
+# Only when related behavior changes; pass test files directly to Vitest.
+pnpm --dir apps/desktop exec vitest run src/lib/components/integration/IntegrationCard.test.ts
+```
+
+Use the actual affected package and tests. For a localized Rust logic fix outside
+the high-risk areas, use `cargo fmt -p <crate> -- --check`,
+`cargo clippy -p <crate> --all-targets -- -D warnings` and relevant
+`cargo test -p <crate> <filter>` tests, including dependent callers when needed.
+
+Shared UI locale changes require `pnpm --filter @aipass/control-panel build`
+because its embedded output includes those dictionaries. Review and commit the
+affected generated files together. For the full gate, verify the build leaves
+`apps/control-panel/embedded` unchanged. Generate outputs before finalizing the
+commit so they do not cause a second validation cycle.
+
+### Avoid redundant work
+
+- Validate the intended final content before or after committing. Reuse passing
+  results if source, tests, build configuration and dependencies used by those
+  checks still match the committed tree. Commit creation, signing and a
+  message-only amend do not change those inputs.
+- After a content change, rerun only checks whose inputs or expected behavior
+  changed. Release verification must still identify the exact commit and
+  artifact hashes; rebuilt artifacts require artifact validation again.
+- Reuse installed dependencies when lockfiles and the environment are unchanged.
+  Read the relevant workflow jobs as needed; a full workflow reread is required
+  only for the complete gate or changes to workflows.
+- Review staged files and preserve unrelated work. Do not require an otherwise
+  clean repository for a focused fix. If unrelated edits affect validation,
+  use an isolated worktree for the intended tree; do not copy the entire
+  `target` directory merely to validate a small fix.
+- Before pushing, verify the intended source refs/SHAs, committed diff and
+  applicable passing checks. Push only those refs; do not use `--all` or
+  `--tags` to include unvalidated work. For the complete gate, use a clean
+  validation checkout with the intended commit.
+- Required checks must pass. Investigate relevant failures; report unavailable
+  required checks and do not push past them. Do not ignore exit codes or bypass
+  hooks. Report which checks ran and which were out of scope; remote CI retains
+  its configured jobs and is separate evidence. Do not claim remote CI passed
+  when a branch push did not trigger it.
+
+### Complete local gate (high-risk changes and releases)
+
+Immediately before this gate, read every file in `.github/workflows/` and record
+the intended source refs and commit SHAs. Use a clean validation checkout of
+each unique commit being pushed. Afterward require the same refs/SHAs and clean
+checkout; input changes invalidate affected checks. Use the configured workflow
+commands, applying the permanent macOS-only local rule. Package filters are for
+the focused paths above, not substitutes for this complete gate.
 
 Run these from the repository root. Apply any shell wrapper required by the active agent instructions without changing the wrapped commands.
 
@@ -142,6 +201,7 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
+git diff --exit-code -- apps/control-panel/embedded
 ```
 
 `macOS desktop bundle` on macOS with Node 26 and stable Rust:

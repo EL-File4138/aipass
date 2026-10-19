@@ -5,6 +5,12 @@ artifacts can be uploaded for publication. Compile, unit tests, signatures and
 notarization remain required; they cannot establish that the app starts or
 finishes installing an update.
 
+Routine source commits and pushes use the proportionate local checks in
+[`agents.md`](../agents.md#proportionate-local-validation). A simple UI or
+documentation fix does not require producing a macOS bundle. Changes requiring
+the complete local gate and artifacts intended for publication still require
+the finished-DMG and updater checks described here.
+
 `scripts/verify-macos-runtime.mjs` validates the finished DMG and updater archive:
 
 - Copy the DMG's application into a disposable directory, open the main window
