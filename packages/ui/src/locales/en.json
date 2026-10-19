@@ -1122,6 +1122,7 @@
   "subscriptionImport.error.invalid_source": "Unsupported account directory or source; choose a directory again",
   "integration.switchAccount": "Switch account",
   "integration.current": "Current",
+  "integration.usingOfficialSubscription": "Using official subscription {account}",
   "integration.unmanaged": "Original CLI credentials",
   "integration.relogin": "Sign in again",
   "integration.restore": "Restore previous",

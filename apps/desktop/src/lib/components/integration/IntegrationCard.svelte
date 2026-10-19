@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { Banner, Button, IconButton } from "@aipass/ui";
+  import { readableAccountIdentity } from "@aipass/schemas";
   import { Eye, ScanSearch, X, Check, Minus } from "lucide-svelte";
 
   import { t } from "../../stores/i18n";
@@ -235,8 +236,13 @@
           {#if statuses[tool.id]}
             {@const status = statuses[tool.id]}
             <div class="tool-current">
-              <span>{$t("integration.current")}: {status.accountIdentity || status.entryTitle || $t("integration.unmanaged")}
-                · {$t(`integration.state.${status.state}`)}</span>
+              <span>
+                {#if status.accountIdentity && (!status.mode || status.mode === "official")}
+                  {$t("integration.usingOfficialSubscription", { account: readableAccountIdentity(status.accountIdentity) })}
+                {:else}
+                  {$t("integration.current")}: {status.entryTitle || $t("integration.unmanaged")}
+                {/if}
+              </span>
               {#if status.mode === "official" && ["login_required", "renewal_required"].includes(status.state)}
                 <Button size="sm" disabled={state.busy} on:click={() => onReconnect(tool)}>{$t("integration.relogin")}</Button>
               {/if}
@@ -244,6 +250,7 @@
                 <Button size="sm" disabled={state.busy || status.state === "conflict"} on:click={() => onRestore(tool)}>{$t("integration.restore")}</Button>
               {/if}
             </div>
+            {#if !["ready", "unmanaged", "api_key_invalid", "api_key_changed"].includes(status.state)}<Banner tone="warning">{$t(`integration.state.${status.state}`)}</Banner>{/if}
             {#if ["api_key_invalid", "api_key_changed"].includes(status.state)}<Banner tone="warning">{$t("integration.updateApiKey")}</Banner>{/if}
             {#if status.overrides.length}<Banner tone="warning">{$t("integration.environmentOverrides", { keys: status.overrides.join(", ") })}</Banner>{/if}
           {/if}
@@ -391,7 +398,7 @@
     gap: 8px;
   }
 
-  .tool-current { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 11px; color: var(--text-secondary); }
+  .tool-current { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-inline-start: 42px; font-size: 11px; color: var(--text-secondary); }
   .tool-current > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 
   .tool-options {

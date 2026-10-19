@@ -1122,6 +1122,7 @@
   "subscriptionImport.error.invalid_source": "账号目录或来源不受支持，请重新选择目录",
   "integration.switchAccount": "切换账号",
   "integration.current": "当前使用",
+  "integration.usingOfficialSubscription": "正在使用官方订阅 {account}",
   "integration.unmanaged": "原有 CLI 凭据",
   "integration.relogin": "重新登录",
   "integration.restore": "恢复上次配置",
