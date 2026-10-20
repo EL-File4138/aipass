@@ -257,10 +257,10 @@ Newest entries last within each section.
 
 ### Overlay teardown can outlive the test document
 - **Symptom**: all desktop assertions passed but CI failed with `document is not defined` from Bits UI's deferred body scroll-lock cleanup.
-- **Root cause**: `SettingsPanel.test.ts` unmounted a Select menu without waiting for its deferred cleanup; the callback could run after Vitest destroyed the browser environment.
+- **Root cause**: settings and search-dialog fixtures unmounted overlays without waiting for their deferred cleanup; the callback could run after Vitest destroyed the browser environment.
 - **Fix**: control timers from mount through unmount, drain deferred callbacks and assert the body scroll lock is released before restoring real timers.
 - **Guardrail**: drain overlay cleanup before destroying its test document; do not suppress uncaught errors or substitute arbitrary sleeps.
-- **Watch points**: settings auto-lock selection fixtures, Bits UI overlay teardown and test browser lifetime.
+- **Watch points**: `SettingsPanel.test.ts`, `SearchSettingsDialog.test.ts`, Bits UI overlay teardown and test browser lifetime. Keep the post-unmount scroll-lock assertion in both fixtures.
 
 ### Unified key editors must not resubmit a first-key snapshot
 - **Symptom**: the first key had a separate editor and could not be deleted; provider saves could overwrite an independently edited key or relabel its successor after deletion.

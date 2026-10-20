@@ -1,22 +1,34 @@
 // @vitest-environment happy-dom
 import { flushSync, mount, unmount } from "svelte";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import SearchSettingsDialog from "./SearchSettingsDialog.svelte";
 import { setLocale } from "../../stores/i18n";
 import type { ProxyConfig } from "../../types";
 let app: ReturnType<typeof mount> | undefined;
-afterEach(async () => { if (app) await unmount(app); app=undefined; document.body.innerHTML=""; });
+beforeEach(() => { vi.useFakeTimers(); });
+afterEach(async () => {
+  try {
+    if (app) await unmount(app);
+    // Bits UI releases the body scroll lock in a deferred callback.
+    await vi.runAllTimersAsync();
+    expect(document.body.style.overflow).not.toBe("hidden");
+  } finally {
+    app=undefined;
+    vi.useRealTimers();
+    document.body.innerHTML="";
+  }
+});
 const config: ProxyConfig={enabled:false,bindAddr:"127.0.0.1:8787",routes:[],pricing:[],upstreamProxy:{mode:"direct"},search:{apis:[{id:"source-one",vendor:"searxng",baseUrl:"https://search.example.com",enabled:true}],apiFirst:true}};
 function button(label:string){const button=[...document.body.querySelectorAll("button")].find(b => b.textContent?.trim() === label);expect(button).toBeTruthy();return button!;}
 test("saves vault references and preserves the rest of the proxy configuration",async()=>{
   setLocale("en");const onSave=vi.fn().mockResolvedValue(true);const onOpenChange=vi.fn();const target=document.createElement("div");document.body.append(target);
-  app=mount(SearchSettingsDialog,{target,props:{open:true,config,onSave,onOpenChange}});flushSync();button("Save").click();await new Promise(r=>setTimeout(r,30));
+  app=mount(SearchSettingsDialog,{target,props:{open:true,config,onSave,onOpenChange}});flushSync();button("Save").click();await vi.waitFor(()=>{flushSync();expect(button("Save").disabled).toBe(false);});
   expect(onSave).toHaveBeenCalledWith(config);expect(onOpenChange).toHaveBeenCalledWith(false);expect(config.search?.apis).toHaveLength(1);
 });
 test("keeps failed saves open and rejects incomplete search sources",async()=>{
   setLocale("en");const onSave=vi.fn().mockResolvedValue(false);const onOpenChange=vi.fn();const target=document.createElement("div");document.body.append(target);
-  app=mount(SearchSettingsDialog,{target,props:{open:true,config,onSave,onOpenChange}});flushSync();button("Save").click();await new Promise(r=>setTimeout(r,30));expect(onOpenChange).not.toHaveBeenCalled();expect(document.body.textContent).toContain("Could not save");
-  button("Add").click();flushSync();button("Save").click();await new Promise(r=>setTimeout(r,30));expect(onSave).toHaveBeenCalledTimes(1);expect(document.body.textContent).toContain("Select credentials");
+  app=mount(SearchSettingsDialog,{target,props:{open:true,config,onSave,onOpenChange}});flushSync();button("Save").click();await vi.waitFor(()=>{flushSync();expect(button("Save").disabled).toBe(false);});expect(onOpenChange).not.toHaveBeenCalled();expect(document.body.textContent).toContain("Could not save");
+  button("Add").click();flushSync();button("Save").click();await vi.waitFor(()=>{flushSync();expect(button("Save").disabled).toBe(false);});expect(onSave).toHaveBeenCalledTimes(1);expect(document.body.textContent).toContain("Select credentials");
 });
 test("changing vendor clears the previous endpoint and credential",async()=>{
   setLocale("en");const onSave=vi.fn().mockResolvedValue(true);const target=document.createElement("div");document.body.append(target);
