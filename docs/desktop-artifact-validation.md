@@ -82,3 +82,32 @@ upload these diagnostics even on failure. Runtime failures block publication;
 do not use `continue-on-error` or accept a log marker as a substitute for a live,
 responsive restarted process. Local validation runs only on macOS; GitHub Actions
 is responsible for its configured Linux jobs.
+
+## Linux artifacts
+
+Linux release jobs build Deb, RPM and AppImage for aarch64 and x86_64. Verify all
+three detached signatures against the configured updater public key with
+`scripts/verify-linux-signatures.mjs`. The release job uses the production key;
+pass the disposable build configuration as its second argument for local tests.
+
+`scripts/verify-linux-runtime.mjs <deb-or-rpm-directory> <reports>` extracts the
+finished package and validates main/tray startup, native event-loop/WebView/Agent
+responsiveness, package version, CLI operations and persistent helper hashes.
+`scripts/verify-linux-updater.mjs <AppImage> <version> <reports> [older-AppImage]`
+requires signed manual/cached install-and-restart, clean process exit, cleared
+cache and exact installed bytes. It also tests read-only installation/cache,
+tampered-cache recovery, a complete cached package in a read-only cache,
+bad signatures, a signed Deb supplied under an AppImage
+target and a failed feed.
+The matching signed Deb must be alongside the AppImage directory in `../deb`.
+All permission checks run as an ordinary user. Failure must preserve the original
+executable and the live Agent; never grant test writes permission merely to pass.
+
+These gates use isolated HOME/vault/runtime data and keep signature verification
+enabled. The container's extract-and-run transport does not establish FUSE or
+physical GPU behavior. Successful privileged Deb/RPM installation and graphical
+Polkit approval/cancellation require a full Linux login environment; cached distro
+packages intentionally wait for explicit installation rather than prompting on
+startup. See [Linux validation](linux-validation.md) for the task-specific local
+desktop authorization and actual coverage. The default local policy remains
+macOS validation with remote Linux jobs.

@@ -8,11 +8,267 @@ new permanent repository policy. The final requested environment uses Apple Cont
 served through VNC/noVNC. Record container results separately from native
 macOS and GitHub Actions results.
 
+## Native CLI discovery and credential audit, 2026-10-20
+
+`scripts/verify-linux-native-clis.mjs <binary-directory> [official-cli-bin-directory]`
+runs the production Agent and CLI with a disposable HOME/vault and a desktop PATH
+containing only `/usr/bin:/bin`. Synthetic credentials exercise import/dedup,
+Codex expired/malformed/unreadable/missing credentials, recovery, provider isolation,
+Unix execute permissions and plaintext leakage checks. It also checks custom
+XDG discovery for Cursor and Kimi Work. Devin TOML credentials, three distinct
+Kiro SQLite identities and OpenCode Go/Zen are imported from custom XDG data
+directories. No login service or real vendor account is used.
+The packaged-runtime CI invokes this verifier against extracted deb helpers.
+
+The native discovery implementation is shared by detection, login and renewal.
+It covers user/system PATH, bounded login-shell PATH, native/user installs,
+npm prefixes, pnpm, Cargo, Bun, Volta, asdf, mise, proto, nvm and fnm. It rejects
+relative search paths and files lacking Unix execute permission. Vendor child
+processes retain explicit custom PATH order and prefer discovered user runtimes
+over standard system bins, so an old distro Node cannot mask a user Node install.
+Custom absolute XDG and vendor homes are shared by discovery and credential reads.
+
+`dbus-run-session -- node scripts/verify-linux-keyring.mjs` starts a foreground,
+disposable GNOME keyring under a private HOME and bus. Build the Agent and
+config-writer library tests first. It checks actual Secret Service transport,
+Codex Rust-keyring attributes, keytar schema separation, account isolation,
+read/update/delete, bounded failure, locked-store behavior and Codex auto/file
+fallback. A separate Agent test checks Copilot keyring precedence, token rotation
+and file fallback. Reads never unlock a collection or request an authorization
+prompt. Explicit Codex keyring mode never silently downgrades to a file; native
+credential writes still require readable transaction preimages.
+
+The authorized Ubuntu 24.04 ARM64 environment passed both store tests and the
+production-process verifier using official Claude Code 2.1.303, Codex 0.163.0,
+Gemini CLI 0.64.0 and Copilot 1.0.100. Grok's executable/capabilities and credential
+format use a deterministic fixture. All grants are synthetic; official CLIs run
+only version/help and Claude local authentication-status commands. Official
+Cursor 2026.10.18-ea085cb also passed version/help; its shipped auth-path code
+confirms the Linux XDG config path. Official Kiro 2.32.0, under an empty private
+HOME, created its `auth_kv` SQLite database at the custom XDG data path and
+reported no logged-in account. Its three credential key names match the reader.
+These results
+do not establish real vendor login, refresh or inference, Linux x86_64 runtime,
+every historical installation layout, or protected credential modes beyond the
+tested stores. Gemini's opt-in `GEMINI_FORCE_ENCRYPTED_FILE_STORAGE=true` backend
+and Codex encrypted-secrets backend are explicitly unsupported, rather than
+importing a stale plaintext fallback as an active account.
+
+Evidence is retained under
+`/Volumes/BRData/containers/aipass-linux/share/native-cli-audit`: source manifest,
+Linux test/build/clippy logs, official CLI import report and keyring test output.
+Native macOS full Rust workspace tests passed serially (1045 passed, 4 ignored),
+with unchanged assertions, after parallel runs exposed intermittent sync deadlines
+and unsolicited local discovery traffic in HTTP fixtures. Those failure logs are
+retained. Full workspace Clippy, repository health and dependency-license checks
+also passed. Linux Agent/config-writer tests passed (473 passed, 5 ignored), with
+the two private-keyring tests run explicitly and passing separately.
+The local backend audit used current debug executables; it did not replace the
+installed desktop package or validate a newly finished release artifact.
+These working-tree changes have not been pushed or released;
+the new CI checks still require a remote run after a future push.
+
+## Window, UI and updater audit, 2026-10-20
+
+The authorized XFCE/X11 desktop was used again with fresh release-profile
+Deb/AppImage/RPM artifacts. Updater checks use an isolated signing key and loopback
+feed; the production key and signature verification remain unchanged. No real
+vendor credential or host vault is mounted. This is ARM64 software-rendered X11
+evidence, not a general certification of every Linux desktop/GPU/display server.
+
+The minimum-window walkthrough covers onboarding/create/recovery acknowledgment,
+unlock, provider creation and inline editing, dynamic fields, credential editing,
+pricing/subscription dialogs, account-provider selection, search, favorites,
+archive/trash empty states, Agent detection/credential selection/preview/apply,
+proxy group creation and listener editing, and all six Settings tabs. Both UI
+languages and light/dark themes were inspected. Actual official Codex, Claude Code
+and Gemini CLI installs appear in Agent management; a synthetic Claude credential
+was previewed and written under the disposable HOME. Vendor OAuth completion and
+live subscription use remain separate external-service tests.
+
+Confirmed window checks include native edge resize, minimum-size constraints,
+title dragging, a normal-interval double-click, maximize/restore, minimize/restore,
+close-to-tray, singleton reopen and native tray hide/reopen. A maximized window
+fits the 1280x773 work area above the XFCE panel. The WebView compositor dataset
+tracks real XFWM compositing toggles; the window uses transparent rounded corners
+when composited and square edges when maximized or uncomposited. Window-button
+and detail-action right edges share the same inset.
+
+Runtime fixes from this walkthrough:
+
+- Enable RGBA Linux windows, follow compositor state and align window buttons
+  and Agent headers without moving the app title out of the middle column.
+- Keep Chinese segmented labels on one line and bind native select colors and
+  `color-scheme` to the chosen theme. Empty selects show an explicit empty state.
+- Close the restart confirmation after a completed attempt and prevent repeated
+  confirmation while installation is busy. Keep update failures above the
+  available-update status so they remain visible at 960x640. Extract the downloaded-update notification into a compact opaque
+  surface whose text can wrap without colliding with its actions.
+- Require exact architecture/installer feed entries, verify bytes reread from
+  cache, and preflight AppImage write access. System packages use one pkexec
+  operation with no password collection or fallback after cancellation. Linux
+  runtime shutdown follows successful installation, preserving the existing
+  Agent/proxy on authorization failure. Cached system packages never request
+  authorization merely because the app started.
+
+Signed AppImage checks have demonstrated both same-version replacement and a
+real beta.1 to beta.2 process/version transition. A Deb authorization failure was
+also executed against the real pkexec/Polkit service: the app and Agent remained
+responsive with the original executable and one Agent process. The current
+container has no logind login session, so its graphical Polkit agent cannot
+register. Authorization cancellation exit codes are covered by Rust tests;
+normal graphical password approval/cancellation and privileged package update
+with automatic restart require a full Linux login environment. The final RPM
+also passed an actual installation into a disposable RPM root; that package
+format check does not substitute for graphical authorization.
+
+Linux release preparation now builds both architectures and all three installer
+formats, keeps their signatures distinct, merges their feed entries, and rejects
+missing or mismatched fragments before publication. These workflow changes are
+unpublished. At the time of this audit the public beta/nightly feeds still contain
+only macOS entries; local loopback success must not be described as a deployed
+Linux update service or a completed remote CI run.
+
+Evidence, screenshots, source manifests, failed-attempt diagnostics and finished
+artifact reports are retained under
+`/Volumes/BRData/containers/aipass-linux/share/ui-audit`. Native macOS checks and
+its finished DMG/updater runtime reports are recorded separately. Rebuilt artifacts
+are revalidated; a prior artifact's hash/result is never reused as the new one.
+
+## Implementation review, 2026-10-20
+
+The review covers every current tracked/untracked change in CLI discovery,
+credential stores/readers, desktop chrome/components, updater/runtime diagnostics,
+package gates, release manifests/workflows, dependencies and embedded UI output.
+Final vault/config authority remains in Rust; the interactive verifier only writes
+read-only snapshots inside its disposable runtime fixture. Production updater
+signature verification and the configured production key remain enabled.
+
+Three functional findings were repaired:
+
+1. Child PATH ordering put the discovered executable's system directory ahead of
+   user Node runtimes after sorting only the fallback directories. Partition the
+   complete child PATH after adding executable parents. A regression first failed
+   with `/usr/bin` before the fixture's Node 26 directory, then passed after repair.
+2. GUI detection accepted unrelated `agent`/`grok` executables while vendor login
+   applied stricter identity/path rules. Share vendor-aware candidates between
+   detection and login. Preserve Cursor's known legacy alias and explicit absolute
+   `GROK_BIN_DIR`, reject relative overrides and unrelated names, and test all of
+   these cases with executable files/symlinks.
+3. A complete signed package in a read-only cache bypassed download writes. The
+   old AppImage really installed/restarted and left a pending package, failing the
+   new regression. Remove the verified download cache before replacing the app or
+   stopping runtime processes; retain a final cleanup for background downloads
+   completed during authorization. Pre-install cleanup failure returns the localized permission
+   error with the current process/Agent intact. Failed later installation may
+   require a fresh download; the expended cache is not user vault data.
+
+A full native macOS Rust run also exposed a device-OAuth test fixture consuming
+an unexpected GET as a token POST. Route unrelated paths to 404 without advancing
+its pending/success response sequence. The regression now deliberately sends a
+root GET first; its POST, device code, verifier and rotated-token assertions stay
+in place. The initial failure and intermediate diagnostics are retained.
+A later no-replay proxy test failed on an unidentified fallback TCP connection;
+the old assertion did not capture its request, so that failure's exact cause is
+not established. Its fixtures now reuse the shared probe classifier on primary
+and fallback listeners. Only unauthenticated root GETs are ignored; a dedicated
+regression proves API POSTs, authenticated root GETs and other routes still fail
+the no-replay guard. No production retry policy is changed.
+
+Updater runtime coverage adds tampered-cache and populated read-only-cache cases: modified cached bytes
+must be discarded, the signed package downloaded again, and a new process must
+run with the exact verified artifact hash. Release-manifest failure tests also
+require a late missing/version/format failure to preserve both the original
+manifest and unconsumed fragments. The existing Wayland, full Polkit/login-session,
+physical GPU/FUSE and live vendor-account limits still apply.
+
+Final review validation:
+
+- Native macOS Rust workspace: 1048 passed, 4 ignored; full fmt, Clippy with
+  warnings denied and workspace build passed. After the final cache-ordering
+  change, full fmt/Clippy/workspace build and all 67 desktop Rust tests passed again.
+- Node tests passed all seven tasks, including the unchanged 379 desktop tests;
+  the expanded release-manifest failure tests passed. Previously passing
+  frontend lint/typecheck/build results retain matching source/dependency inputs;
+  both final desktop bundle builds also rebuilt the frontend. Embedded control
+  panel hashes and lockfiles remained unchanged during this review.
+- Linux: 404 Agent tests, 71 final config-writer tests and 241 final proxy tests
+  passed (5 ignored across Agent/writers); the device-route regression also
+  passed separately after its repair. Final desktop tests/Clippy passed. Official CLI
+  capability probes plus synthetic credential import/dedup/failure isolation
+  passed; these do not establish real vendor OAuth/renewal/inference.
+- Final Deb and RPM passed main/tray, CLI/native imports and persistent helper
+  checks. All three signatures passed. Both final system-package authorization
+  failures preserved their original desktop process and responsive Agent.
+- The final AppImage passed all nine cases: explicit install, cached install,
+  tampered-cache recovery, read-only image directory, empty read-only cache,
+  populated read-only cache, bad signature, signed wrong format and failed feed.
+  Final macOS DMG/updater passed all four startup/install/restart scenarios.
+
+The final Linux packages are in `/home/aipass/ui-review-v3-artifacts`; their hashes
+are in `share/ui-audit/review-v3-artifact-hashes.json`. Reports are in
+`review-v3-linux-runtime-reports.tar.gz` and `review-macos-v3-runtime/`. Source
+comparison matched all 615 runtime-source files. Durable review logs/source
+identities are in `review-macos-and-source-evidence/`; original failures and prior
+artifact hashes remain available. The readonly-cache test initially used an
+extra no-download assertion that also counted a separate background channel
+check; the final complete nine-case gate instead requires the permission error,
+unchanged executable/process/Agent and intact signed-artifact checks.
+
+The current source ref is `95f6f8ac8e838710f8ae55ea42cbfa2af0f18d49` plus this
+reviewed working tree. No commit, push, publication or new remote CI run is
+performed by this review. Prior v15 hashes below identify earlier audit artifacts.
+
+## Final artifact results, 2026-10-20
+
+The final ARM64 artifacts are frozen in `/home/aipass/ui-v15-artifacts` inside
+`aipass-linux-desktop`. Their SHA-256 values are:
+
+| Package | SHA-256 |
+| --- | --- |
+| Deb | `71d407f19e3ce29136c12a3a4561202cddea9a8acb03afc56b8e3a6bff239f25` |
+| RPM | `3385c2ccf6c027f2d77d9367715a0e49c2275ff4dc518ad2cf8d09e453a4f658` |
+| AppImage | `83f37e5faeb98c1fff672e1a30f4760d2c8090a198934fa4004b39d32642e27b` |
+
+All three detached updater signatures passed. Both Deb and RPM passed main/tray
+startup, packaged CLI operations, synthetic native-CLI credential imports and
+persistent helper byte/permission checks. The final AppImage passed all seven
+signed updater cases: explicit install, cached install, read-only installation,
+read-only cache, invalid signature, signed wrong format and unavailable feed.
+A separate earlier fixture demonstrated beta.1 to beta.2; the final seven-case
+gate reinstalls the same version to test its own exact bytes and new-process
+restart. AppImage validation also rejects truncated and wrong-architecture ELF
+images before installation.
+
+Normal AppImage startup without `--verify-runtime` or renderer environment
+overrides also passed. It fit the 1280x773 work area, resized to 1100x700,
+maximized/restored, persisted its dimensions on close-to-tray, and restored
+1100x700 on a fresh process. The Xvnc desktop still uses software rendering.
+Real Deb and RPM authorization failures preserved the current process and Agent;
+a separate visible Deb attempt preserved the unlocked vault and running proxy.
+
+The final runtime source manifest matches all 615 files in the Linux checkout.
+The 67 Linux desktop Rust tests and Clippy passed; native macOS full Rust results
+remain 1045 passed/4 ignored, and frontend validation passed all seven Node tasks,
+including 379 desktop tests. The final macOS UI build passed all four finished
+DMG/updater scenarios. Its subsequent source change is Linux-only architecture
+validation, which does not alter the macOS compiled input.
+
+Within `share/ui-audit`, see `final-linux-artifact-hashes.json`,
+`final-runtime-source-comparison.json`, `final-linux-runtime-reports.tar.gz`,
+`normal-resize-result.json`, `live-proxy-permission.json`,
+`rpm-permission-result.json`, and `macos-v14-runtime/`. Screenshots include
+`final-v15-detail.png`, `final-v15-agent.png`, `v14-notification.png` and
+`v14-permission-error.png`. Failed attempts and their diagnostics remain alongside
+the passing records. This audit has not pushed these changes or executed their
+new remote workflows. Workflow syntax passes actionlint with the existing
+SC2129 redirect-style finding excluded; no functional workflow error was found.
+
 ## Automated coverage
 
 `.github/workflows/ci.yml` runs the complete Rust and Node checks on Ubuntu.
-The additional `Linux packaged runtime` job builds a finished deb package and
-extracts it into an isolated fixture. Under DBus and Xvfb it starts the real Tauri
+The additional `Linux packaged runtime` job builds signed Deb and AppImage test
+packages with a disposable updater key. It extracts the Deb into an isolated fixture. Under DBus and Xvfb it starts the real Tauri
 WebKitGTK application in both main and tray modes at 960×640. The application
 requires rendered frontend completion, a responsive native event loop and typed
 authenticated Agent IPC for ten seconds, followed by successful process exit.
@@ -38,9 +294,14 @@ dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' \
 
 The desktop fixture accepts only its extracted executable beneath
 `/tmp/aipass-runtime-*/package/usr/bin/aipass-desktop`. It isolates user data,
-disables browser/login registration and uses normal Agent discovery. Linux
-install/cached-update modes are rejected explicitly; the existing macOS updater
-gate retains signature verification and its four runtime scenarios.
+disables browser/login registration and uses normal Agent discovery. AppImage fixtures additionally require a private HOME and a real AppImage path
+inside the fixture; extracted AppDirs remain temporary. Linux manual/cached update
+modes retain normal signature verification and require a new process, expected
+running version and cleared cache. `scripts/verify-linux-updater.mjs` exercises
+signed installation, cached installation, read-only installation/cache locations,
+bad signatures, a signed wrong-format package and an unavailable feed. It checks
+installed hashes and verifies failed installs do not restart the Agent.
+The macOS updater gate retains its four runtime scenarios.
 
 ## Local interactive desktop
 
@@ -66,7 +327,9 @@ The local X11 results below do not establish:
 - Wayland, GNOME/KDE-specific rendering, a physical GPU, or physical suspend/resume
 - systemd user-service startup after a real machine login
 - Browser extension store installation and browser-initiated Native Messaging
-- AppImage execution and signed updater install/restart
+- FUSE-mounted AppImage startup (the container uses standard extract-and-run)
+- Full desktop Polkit password dialogs and successful Deb/RPM privileged
+  install-and-restart under a real login session
 - Live vendor OAuth/subscription calls or authenticated remote WebDAV services
 
 iCloud Drive/CloudKit and macOS biometric APIs are platform capabilities, rather

@@ -754,6 +754,13 @@ Newest entries last within each section.
 - **Guardrail**: Keep surface CSS scoped to layout; let common controls own sizing, padding, icon strokes, hover and focus states. Verify pending button bounds, keyboard selection, modal portal hit testing, form-associated footer submission, failure retry and focus return at 960x640 in both languages and themes. Constrain Select grid tracks and triggers to min-width zero; keep popup width tied to its anchor and test long labels for viewport overflow. Preserve elevated confirmation layers above existing dialogs. Synthetic Select tests must dispatch pointerdown on triggers and pointerup on options.
 - **Watch points**: Shared UI controls, desktop ConfirmModal, panel ProxyLogsDialog and App.test.ts; embedded panel build/stamp and Agent source fingerprint.
 
+### Plain and rich selects must share their popup appearance
+- **Symptom**: Generic select options and credential options used different radii, spacing, selected and keyboard-highlight states.
+- **Root cause**: `SelectField.svelte` and desktop `CredentialPicker.svelte` each owned the complete popup skin and viewport sizing.
+- **Fix**: Share `packages/ui/src/styles/select-menu.scss` through the UI base stylesheet; retain only rich-content layout in CredentialPicker. Reserve an indicator column and distinguish the selected option from the currently highlighted option.
+- **Guardrail**: Use the shared select-menu classes for popup containers, viewports, options and indicators. Bound height to Bits UI's available space; verify keyboard navigation, long-label ellipsis, scrolling and modal hit testing at 960x640 in both themes.
+- **Watch points**: SelectField, CredentialPicker, shared base styles and embedded panel output.
+
 ### Shared group management must retain Agent authority and snapshot ordering
 - **Symptom**: The panel could only toggle existing groups; copying the desktop draft would expose private routing fields, and an older poll could leave a successful save showing stale groups.
 - **Root cause**: The panel maintained its own layout and received only a sanitized snapshot, while desktop route configuration includes tokens, endpoints and headers.
@@ -1026,3 +1033,44 @@ Newest entries last within each section.
 - **Fix**: retain the shared middle-column title/menu placement; constrain Linux custom window controls to the right column, share its first row with the detail identity and place metadata/actions in the next row. Use one shared 8-pixel inner top inset for the sidebar, middle title/menu, detail identity and window buttons; reclaim the old empty strip without placing content against the panel edge. Cover provider, edit, server and spanning Agent management views. Keep decorations disabled and opaque rendering. Tauri owns Linux drag-region double-click handling.
 - **Guardrail**: preserve the three-column layout and shared column variables. Do not move the app title to the navigation column or add a full-width header row. At 960×640 and maximized size, verify title/menu alignment, window controls, detail actions, drag and close/reopen. Match native-window configuration and frontend build target for packaged, dev and tray-first entry paths.
 - **Watch points**: `AppTitleBar`, `linux-window.scss`, provider/server detail and Agent management roots, platform build define, `window_geometry` and tray reveal.
+
+### Native CLI discovery and credentials must share the desktop environment rules
+- **Symptom**: Linux detected an installed tool but could not import/login/renew it; npm CLIs failed under a desktop PATH, custom XDG credentials disappeared, and Codex/Copilot OS credentials were unavailable.
+- **Root cause**: GUI detection and each vendor resolver maintained different search paths. Child processes lost user runtimes and the desktop DBus address. Credential-store access only handled macOS Keychain.
+- **Fix**: share executable discovery and child PATH construction, require Unix execute permissions, discover custom package-manager roots and sort Node versions semantically. Keep user runtimes ahead of system bins in vendor subprocesses, including when the discovered CLI itself lives in a system bin directory. Partition the complete child PATH after adding executable parents; partitioning only the fallback directories reintroduces the old system Node. Use the same vendor-aware Cursor/Grok candidate filter in GUI detection and login; unrelated programs with the same generic name must not appear installed. Share absolute XDG config/data resolution. Use bounded, encrypted Secret Service reads with the exact Rust-keyring or keytar attribute schema; never unlock or prompt during discovery. Codex auto may read its file fallback, while native writes still require every resource preimage. Copilot prefers fresh OS credentials over its plaintext fallback.
+- **Guardrail**: run `verify-linux-native-clis.mjs` against production binaries with isolated HOME, a minimal desktop PATH and synthetic grants; test wrong permissions, malformed/expired/missing stores and non-executable files. Run `verify-linux-keyring.mjs` only under a fresh private `dbus-run-session`. Include real vendor capability probes separately from fixture tests. When transferring source snapshots, preserve fresh modification times or extract with `tar -m`; matching bytes on disk do not prove Cargo rebuilt a file whose archived timestamp stayed unchanged.
+- **Watch points**: `cli_discovery`, native CLI command environment, `native_import`, XDG helpers, `native_auth/linux_keyring`, default versus independent vendor homes and Linux packaged-runtime CI.
+
+### Linux updates must preserve installation format and authorization boundaries
+- **Symptom**: Linux feeds contained only macOS entries, package authorization could fall through to password prompts, and installation failures disappeared while an update remained available.
+- **Root cause**: generic updater targets, the plugin's system-package fallback sequence, and an error banner nested inside the no-update branch. Plugin `install` also does not verify bytes reread from cache.
+- **Fix**: require Linux architecture and installer-format targets; verify the exact install bytes; preflight AppImage directory access and package-manager availability; use one pkexec operation for system packages and stop Linux runtime processes only after successful installation. Keep cached system packages for explicit installation and keep errors visible and localized.
+- **Guardrail**: exercise signed manual/cached AppImage restarts, cross-version executable hashes, denied directory/cache access and bad signatures as an ordinary user. Reject truncated or wrong-architecture AppImages before replacing the executable. Close the restart confirmation after clearing its busy guard, and test failure visibility with a release still available. Cancellation/denial must preserve the live Agent and proxy; never collect sudo passwords. Real desktop Polkit, RPM and Wayland evidence must be reported separately from fixture/unit checks.
+- **Watch points**: `updates/linux.rs`, cache reread, `runtime_lifecycle`, updater manifest merging, Settings update banner and Linux artifact gates.
+
+### Linux transparent chrome and native form controls need runtime review
+- **Symptom**: Linux forced opaque square windows; window buttons used a different right inset; forced dark mode left native selects with light backgrounds and unreadable text; Chinese segmented labels wrapped at the minimum viewport.
+- **Fix**: request RGBA windows, follow compositor changes and use square edges when uncomposited/maximized. Share detail/header insets, preserve the 8px top gap, keep segmented labels on one line, and bind native control colors and color-scheme to the selected theme. GTK native select popups can still use the OS theme despite these declarations; use the shared SelectField for desktop selectors and inspect the expanded menu, not only its closed trigger.
+- **Guardrail**: inspect actual GTK/WebKit windows at 960x640 in both languages and themes, with compositing on/off, real edge resizing, title dragging, double-click, maximize/restore, minimize and close/reopen. Synthetic X11 presses must include realistic down/up intervals; extremely short injected events can be dropped by the test desktop.
+- **Watch points**: `window_chrome`, `AppTitleBar`, `linux-window.scss`, shared theme tokens, segmented controls and Agent headers.
+
+### OAuth device fixtures must route requests before consuming a poll response
+- **Symptom**: the full macOS suite failed because a local GET reached the device-token listener before the expected POST; polling then expired.
+- **Root cause**: `subscriptions/device.rs` consumed one prepared OAuth response per accepted TCP connection, regardless of request route.
+- **Fix**: return 404 for routes other than `/token` without advancing the response sequence. Inject a root GET before polling in the regression; preserve the POST, device-code, verifier and rotated-token assertions.
+- **Guardrail**: route unrelated listener discovery traffic before consuming a prepared API response. Retain the original failure diagnostics and require the full unchanged assertions to pass after the fixture repair.
+- **Watch points**: OAuth device fixtures, `vault_sync/tests.rs` HTTP fixtures and proxy `tests/mock_upstream.rs`.
+
+### No-replay fixtures must distinguish local discovery from API requests
+- **Symptom**: a full macOS run failed because the fallback listener had an unexpected TCP connection; the old assertion discarded request diagnostics.
+- **Root cause**: the fixture asserted absence of every TCP connection instead of an API replay. The original connection's request was not retained, so its exact origin remains unproven.
+- **Fix**: share the existing unauthenticated-root-GET classifier for primary fixture accepts and no-replay fallback assertions. Explicitly reject API POSTs, authenticated root requests and other paths in a new guard regression.
+- **Guardrail**: never ignore real API requests or authenticated probes to make no-replay tests pass. Capture the unexpected request method/path, preserve the failed run, and require the complete proxy suite after hardening the fixture.
+- **Watch points**: `aipass-proxy/src/tests/mock_upstream.rs`, no-replay and truncated-stream fixtures.
+
+### Readable update bytes do not imply a removable update cache
+- **Symptom**: a signed cached AppImage in a read-only cache installed/restarted successfully but left the pending package behind; the real artifact gate failed.
+- **Root cause**: cache write permission was tested only when downloading, and post-install cleanup discarded removal errors.
+- **Fix**: after verifying/copying install bytes, clear the expendable cache under the update transaction before replacing the app or stopping the Agent. Return cache permission failures before installation. Cached system packages still wait for explicit installation.
+- **Guardrail**: test both an empty read-only cache and a complete valid signed package in a read-only cache as an ordinary user. Require unchanged executable/PID/Agent on denial and no cache after success; installation failures may need a fresh download.
+- **Watch points**: `updates::install_verified_update`, Linux `readonly-cached` artifact scenario, macOS manual/cached restart gates.
