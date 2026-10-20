@@ -8,6 +8,43 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::UpdaterExt;
 use url::Url;
+#[cfg(target_os = "linux")]
+mod linux;
+
+fn permission_error(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
+    )
+}
+
+fn cache_io_error(error: std::io::Error) -> String {
+    if permission_error(&error) {
+        "update_cache_permission_denied".into()
+    } else if error.kind() == std::io::ErrorKind::StorageFull {
+        "update_disk_full".into()
+    } else {
+        "update_cache_unavailable".into()
+    }
+}
+
+fn updater_error(error: tauri_plugin_updater::Error) -> String {
+    use tauri_plugin_updater::Error;
+    match error {
+        Error::Minisign(_) | Error::Base64(_) | Error::SignatureUtf8(_) => {
+            "update_signature_invalid".into()
+        }
+        Error::Reqwest(_) | Error::Network(_) | Error::ReleaseNotFound => {
+            "update_network_error".into()
+        }
+        Error::TargetsNotFound(_) | Error::TargetNotFound(_) => "update_release_unavailable".into(),
+        Error::Io(error) => cache_io_error(error),
+        Error::InvalidUpdaterFormat | Error::BinaryNotFoundInArchive => {
+            "update_package_invalid".into()
+        }
+        other => other.to_string(),
+    }
+}
 
 const OFFICIAL_ENDPOINT: &str =
     "https://github.com/backrunner/aipass/releases/latest/download/latest.json";
@@ -82,18 +119,22 @@ fn updater_for_channel(
     app: &AppHandle,
     channel: &str,
 ) -> Result<tauri_plugin_updater::Updater, String> {
+    let builder = app.updater_builder();
+    #[cfg(target_os = "linux")]
+    let builder = builder.target(linux::target()?);
     if let Some(endpoint) = crate::runtime_check::endpoint() {
         let reinstall = crate::runtime_check::reinstall_same_version();
-        return app
-            .updater_builder()
-            .version_comparator(move |current, release| reinstall && release.version == current)
+        return builder
+            .version_comparator(move |current, release| {
+                release.version > current || (reinstall && release.version == current)
+            })
             .no_proxy()
             .endpoints(vec![endpoint])
             .and_then(|builder| builder.build())
             .map_err(|err| err.to_string());
     }
     let endpoint = endpoint_for_channel(channel)?;
-    app.updater_builder()
+    builder
         .endpoints(vec![endpoint])
         .and_then(|builder| builder.build())
         .map_err(|err| err.to_string())
@@ -113,28 +154,37 @@ fn update_cache_paths(app: &AppHandle) -> Result<(PathBuf, PathBuf), String> {
 
 fn read_cached_update(app: &AppHandle) -> Result<Option<(CachedUpdate, Vec<u8>)>, String> {
     let (package_path, metadata_path) = update_cache_paths(app)?;
-    let package_exists = package_path.is_file();
-    let metadata_exists = metadata_path.is_file();
+    let exists = |path: &std::path::Path| -> Result<bool, String> {
+        match fs::metadata(path) {
+            Ok(meta) => Ok(meta.is_file()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(cache_io_error(error)),
+        }
+    };
+    let package_exists = exists(&package_path)?;
+    let metadata_exists = exists(&metadata_path)?;
     if !package_exists || !metadata_exists {
         if package_exists || metadata_exists {
-            clear_cached_update(app);
+            try_clear_cached_update(app)?;
         }
         return Ok(None);
     }
     let metadata: CachedUpdate = match fs::read(&metadata_path)
-        .map_err(|err| err.to_string())
+        .map_err(cache_io_error)
         .and_then(|bytes| serde_json::from_slice(&bytes).map_err(|err| err.to_string()))
     {
         Ok(metadata) => metadata,
+        Err(error) if error == "update_cache_permission_denied" => return Err(error),
         Err(_) => {
-            clear_cached_update(app);
+            try_clear_cached_update(app)?;
             return Ok(None);
         }
     };
     let package = match fs::read(&package_path) {
         Ok(package) if !package.is_empty() => package,
+        Err(error) if permission_error(&error) => return Err(cache_io_error(error)),
         _ => {
-            clear_cached_update(app);
+            try_clear_cached_update(app)?;
             return Ok(None);
         }
     };
@@ -148,7 +198,7 @@ fn clear_cached_update(app: &AppHandle) {
 fn try_clear_cached_update(app: &AppHandle) -> Result<(), String> {
     let operation = crate::logging::DesktopOperation::start("desktop.update.clear_cache");
     let result = update_cache_paths(app).and_then(|(package, metadata)| {
-        remove_cache_files(&[package, metadata]).map_err(|err| err.to_string())
+        remove_cache_files(&[package, metadata]).map_err(cache_io_error)
     });
     operation.finish(result.is_ok());
     result
@@ -230,9 +280,9 @@ async fn download_and_cache_update(
             || {},
         )
         .await
-        .map_err(|err| err.to_string())?;
+        .map_err(updater_error)?;
     let (package_path, metadata_path) = update_cache_paths(app)?;
-    atomic_write_bytes(&package_path, &package).map_err(|err| err.to_string())?;
+    atomic_write_bytes(&package_path, &package).map_err(cache_io_error)?;
     let metadata = CachedUpdate {
         channel: channel.to_string(),
         version: update.version.clone(),
@@ -241,7 +291,7 @@ async fn download_and_cache_update(
         &metadata_path,
         &serde_json::to_vec_pretty(&metadata).map_err(|err| err.to_string())?,
     )
-    .map_err(|err| err.to_string())?;
+    .map_err(cache_io_error)?;
     Ok(())
 }
 
@@ -331,7 +381,7 @@ async fn check_for_updates_inner(
         Ok(None) => Ok(UpdateCheckResult::unavailable(current_version, None)),
         Err(err) => Ok(UpdateCheckResult::unavailable(
             current_version,
-            Some(err.to_string()),
+            Some(updater_error(err)),
         )),
     }
 }
@@ -350,13 +400,19 @@ async fn download_update_inner(app: AppHandle, channel: String) -> Result<String
     let update = updater
         .check()
         .await
-        .map_err(|err| err.to_string())?
+        .map_err(updater_error)?
         .ok_or_else(|| "No update available".to_string())?;
     let _ = cached_or_downloaded_package(&app, &channel, &update).await?;
     Ok(update.version)
 }
 
 async fn install_cached_update(app: &AppHandle, cached: CachedUpdate) -> Result<bool, String> {
+    // Distro-package installs may request administrator authorization. Never
+    // produce an auth dialog merely because a background download was cached.
+    #[cfg(target_os = "linux")]
+    if linux::kind()? != linux::Kind::AppImage {
+        return Ok(false);
+    }
     let current_version = app.package_info().version.clone();
     if cached
         .version
@@ -371,7 +427,7 @@ async fn install_cached_update(app: &AppHandle, cached: CachedUpdate) -> Result<
         return Ok(false);
     }
     let updater = updater_for_channel(app, &cached.channel)?;
-    let update = updater.check().await.map_err(|err| err.to_string())?;
+    let update = updater.check().await.map_err(updater_error)?;
     let Some(update) = update else {
         clear_cached_update(app);
         return Ok(false);
@@ -389,19 +445,35 @@ fn install_verified_update(
     update: tauri_plugin_updater::Update,
     package: Vec<u8>,
 ) -> Result<bool, String> {
+    // Recheck the exact bytes read back from disk, including the initial
+    // download path. The plugin's install() does not verify signatures itself.
+    verify_cached_package(app, &update, &package).map_err(|_| "update_signature_invalid")?;
+    #[cfg(target_os = "linux")]
+    let plan = linux::prepare(app, &package)?;
     let downloaded_bytes = package.len() as u64;
     emit_update_progress(app, "installing", downloaded_bytes, None);
     let updating = crate::runtime_lifecycle::RUNTIME.update()?;
+    // The verified bytes are already in memory (and the Linux system package
+    // has its own private staging file). Remove the expendable download cache
+    // before replacing anything: a readable package in a read-only cache must
+    // not install successfully and leave a stale pending update behind.
+    try_clear_cached_update(app)?;
+    // Linux can replace running executables. Authorize and install first so
+    // denial/cancellation keeps the unlocked Agent and active proxy untouched.
+    #[cfg(target_os = "linux")]
+    linux::install(plan, &update, &package)?;
     if let Err(err) = stop_runtime_processes(app) {
         drop(updating);
         restore_agent_after_update_failure(app);
         return Err(err);
     }
-    if let Err(err) = update.install(package) {
+    #[cfg(not(target_os = "linux"))]
+    if let Err(err) = update.install(package).map_err(updater_error) {
         drop(updating);
         restore_agent_after_update_failure(app);
-        return Err(err.to_string());
+        return Err(err);
     }
+    // A background check may have finished downloading during authorization.
     clear_cached_update(app);
     // Clean up any remaining old artifacts after successful installation
     let _ = cleanup_old_update_artifacts(app);
@@ -475,7 +547,7 @@ async fn install_update_inner(app: AppHandle, channel: String) -> Result<(), Str
     let update = updater
         .check()
         .await
-        .map_err(|err| err.to_string())?
+        .map_err(updater_error)?
         .ok_or_else(|| "No update available".to_string())?;
     let package = cached_or_downloaded_package(&app, &channel, &update).await?;
     let _ = install_verified_update(&app, update, package)?;

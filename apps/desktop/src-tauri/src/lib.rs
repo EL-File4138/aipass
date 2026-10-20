@@ -2119,7 +2119,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             cloudkit::start(app.handle().clone());
             // Install CLI on first run
-            if !runtime_check::active() {
+            if !runtime_check::active() || runtime_check::isolated_linux_home() {
                 cli_install::ensure_cli_installed();
             }
             ensure_agent_resident_async(app.handle().clone());

@@ -2,12 +2,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  checkForUpdates,
+  installUpdate,
+  downloadUpdate,
   getStoredUpdateChannel,
   inferUpdateChannel,
   persistUpdateChannel,
   resolveUpdateChannel,
   UPDATE_CHANNEL_STORAGE_KEY,
 } from "./updates";
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+import { invoke } from "@tauri-apps/api/core";
+import { localizedMessage } from "../stores/i18n";
 
 // Node's built-in localStorage global shadows the happy-dom one and is
 // undefined without --localstorage-file, so tests stub an in-memory storage.
@@ -91,5 +98,34 @@ describe("resolveUpdateChannel", () => {
 
   it("falls back to official when neither version nor stored channel is known", () => {
     expect(resolveUpdateChannel("")).toBe("official");
+  });
+});
+
+describe("update failures", () => {
+  beforeEach(() => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { value: {}, configurable: true });
+    vi.mocked(invoke).mockReset();
+  });
+  afterEach(() => { Reflect.deleteProperty(window, "__TAURI_INTERNALS__"); });
+
+  it.each([
+    ["update_install_permission_denied", "error.updateInstallPermission"],
+    ["update_install_cancelled", "error.updateInstallCancelled"],
+    ["update_signature_invalid", "error.updateSignatureInvalid"],
+    ["update_authorization_unavailable", "error.updateAuthorizationUnavailable"],
+  ] as const)("localizes installer failure %s", async (code, key) => {
+    vi.mocked(invoke).mockRejectedValue(code);
+    await expect(installUpdate("beta")).rejects.toEqual(localizedMessage(key));
+  });
+
+  it("localizes errors returned by the update checker", async () => {
+    vi.mocked(invoke).mockResolvedValue({ currentVersion: "1.0.0", available: false, error: "update_release_unavailable" });
+    expect((await checkForUpdates("beta")).error).toEqual(localizedMessage("error.updateReleaseUnavailable"));
+  });
+
+  it("localizes download permission failures and preserves unexpected details", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce("update_cache_permission_denied").mockRejectedValueOnce("unexpected fixture error");
+    await expect(downloadUpdate("beta")).rejects.toEqual(localizedMessage("error.updateCachePermission"));
+    await expect(downloadUpdate("beta")).rejects.toBe("unexpected fixture error");
   });
 });

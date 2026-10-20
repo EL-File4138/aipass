@@ -19,13 +19,14 @@
   }
 
   async function confirmRestart() {
+    if (confirming) return;
     confirming = true;
     try {
       await onConfirm();
-      handleOpenChange(false);
     } finally {
       confirming = false;
     }
+    handleOpenChange(false);
   }
 </script>
 

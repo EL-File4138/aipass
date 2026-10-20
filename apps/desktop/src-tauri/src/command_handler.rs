@@ -10,6 +10,7 @@ pub(crate) fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + '
         control_panel_open,
         control_panel_export_certificate,
         window_target,
+        window_chrome::window_compositing,
         desktop_ready,
         desktop_startup_stage,
         vault_status,

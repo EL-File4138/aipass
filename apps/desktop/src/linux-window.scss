@@ -1,8 +1,8 @@
 // Linux keeps the app title in the list column and window buttons in the
 // detail column. Share the detail's first row instead of adding a blank row.
 :root[data-platform="linux"] {
-  --window-radius: 0px;
   --linux-header-inset: 8px;
+  --linux-detail-inset: 16px;
 
   .workspace > .list-pane .toolbar {
     padding-top: calc(var(--list-toolbar-top, var(--workspace-content-top)) + var(--linux-header-inset));
@@ -15,6 +15,10 @@
   // The Agent view spans both content columns and retains the app-title row.
   .workspace > .agent-management {
     padding-top: 34px;
+
+    > header {
+      padding-right: calc(var(--linux-detail-inset) + 1px);
+    }
   }
 
   .workspace > .detail > .detail-header {
@@ -23,7 +27,7 @@
     grid-template-rows: 34px auto;
     align-items: center;
     gap: 6px 10px;
-    padding: var(--linux-header-inset) 16px 12px;
+    padding: var(--linux-header-inset) var(--linux-detail-inset) 12px;
 
     > .identity {
       display: contents;
@@ -89,4 +93,11 @@
       grid-column: 3;
     }
   }
+}
+
+// An uncomposited X11 session cannot render alpha corners. Maximized windows
+// also meet the screen edges without a transparent notch.
+:root[data-platform="linux"][data-composited="false"],
+:root[data-platform="linux"][data-window-maximized="true"] {
+  --window-radius: 0px;
 }

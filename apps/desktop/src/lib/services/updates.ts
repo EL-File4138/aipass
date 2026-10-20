@@ -69,6 +69,34 @@ export function resolveUpdateChannel(version: string): UpdateChannel {
   return inferred;
 }
 
+const updateErrors = {
+  update_install_permission_denied: "error.updateInstallPermission",
+  update_install_cancelled: "error.updateInstallCancelled",
+  update_authorization_unavailable: "error.updateAuthorizationUnavailable",
+  update_installation_unsupported: "error.updateInstallationUnsupported",
+  update_install_failed: "error.updateInstallFailed",
+  update_cache_permission_denied: "error.updateCachePermission",
+  update_disk_full: "error.updateDiskFull",
+  update_cache_unavailable: "error.updateCacheUnavailable",
+  update_signature_invalid: "error.updateSignatureInvalid",
+  update_package_invalid: "error.updatePackageInvalid",
+  update_network_error: "error.updateNetwork",
+  update_release_unavailable: "error.updateReleaseUnavailable",
+} as const;
+
+function updateError(error: unknown): unknown {
+  const key = typeof error === "string" ? updateErrors[error as keyof typeof updateErrors] : undefined;
+  return key ? localizedMessage(key) : error;
+}
+
+async function updateCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  try {
+    return await invoke<T>(command, args);
+  } catch (error) {
+    throw updateError(error);
+  }
+}
+
 export async function checkForUpdates(channel: UpdateChannel): Promise<UpdateCheckResult> {
   if (!hasTauri()) {
     return {
@@ -77,25 +105,26 @@ export async function checkForUpdates(channel: UpdateChannel): Promise<UpdateChe
       error: localizedMessage("error.updatesUnavailable")
     };
   }
-  return invoke<UpdateCheckResult>("check_for_updates", { channel });
+  const result = await updateCommand<UpdateCheckResult>("check_for_updates", { channel });
+  return { ...result, error: updateError(result.error) as MessageValue | undefined };
 }
 
 export async function downloadUpdate(channel: UpdateChannel): Promise<string> {
   if (!hasTauri()) throw localizedMessage("error.updatesUnavailable");
-  return invoke<string>("download_update", { channel });
+  return updateCommand<string>("download_update", { channel });
 }
 
 export async function installPendingUpdate(channel: UpdateChannel): Promise<boolean> {
   if (!hasTauri()) return false;
-  return invoke<boolean>("install_pending_update", { channel });
+  return updateCommand<boolean>("install_pending_update", { channel });
 }
 
 export async function clearPendingUpdate(): Promise<void> {
   if (!hasTauri()) return;
-  await invoke("clear_pending_update");
+  await updateCommand("clear_pending_update");
 }
 
 export async function installUpdate(channel: UpdateChannel): Promise<void> {
   if (!hasTauri()) throw localizedMessage("error.updatesUnavailable");
-  await invoke("install_update", { channel });
+  await updateCommand("install_update", { channel });
 }

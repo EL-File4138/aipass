@@ -1,12 +1,20 @@
 //! Platform-owned window decoration, applied before native window creation.
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static COMPOSITED: AtomicBool = AtomicBool::new(true);
+
+#[tauri::command]
+pub(crate) fn window_compositing() -> bool {
+    COMPOSITED.load(Ordering::Relaxed)
+}
 
 pub(super) fn configure_context(context: &mut tauri::Context<tauri::Wry>) {
     if cfg!(target_os = "linux") {
         // Use the themed in-app header consistently in dev, packaged and tray-first
-        // windows. Opaque rendering avoids compositor-dependent corner artifacts.
+        // windows. GTK chooses an RGBA visual before mapping the window.
         for window in &mut context.config_mut().app.windows {
             window.decorations = false;
-            window.transparent = false;
+            window.transparent = true;
         }
     }
 }
@@ -38,7 +46,26 @@ pub(super) fn configure_window_chrome(window: &tauri::WebviewWindow) {
     });
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+pub(super) fn configure_window_chrome(window: &tauri::WebviewWindow) {
+    use tauri::Emitter;
+    let _ = window.set_background_color(Some(tauri::webview::Color(0, 0, 0, 0)));
+    if let Some(screen) = window
+        .gtk_window()
+        .ok()
+        .and_then(|w| gtk::prelude::WidgetExt::screen(&w))
+    {
+        COMPOSITED.store(screen.is_composited(), Ordering::Relaxed);
+        let window = window.clone();
+        screen.connect_composited_changed(move |screen| {
+            let value = screen.is_composited();
+            COMPOSITED.store(value, Ordering::Relaxed);
+            let _ = window.emit("window-compositing", value);
+        });
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub(super) fn configure_window_chrome(_: &tauri::WebviewWindow) {}
 
 #[cfg(target_os = "macos")]

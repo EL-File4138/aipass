@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
+mod ui;
 
 static CHECK: OnceLock<Check> = OnceLock::new();
 static FRONTEND_READY: AtomicBool = AtomicBool::new(false);
@@ -19,6 +20,8 @@ static FRONTEND_FAILED: AtomicBool = AtomicBool::new(false);
 struct Config {
     mode: Mode,
     endpoint: url::Url,
+    expected_version: Option<String>,
+    expected_error: Option<String>,
 }
 
 #[derive(Clone, Copy, Deserialize, PartialEq)]
@@ -39,6 +42,13 @@ struct Check {
 
 pub(crate) fn active() -> bool {
     CHECK.get().is_some()
+}
+
+pub(crate) fn isolated_linux_home() -> bool {
+    cfg!(target_os = "linux")
+        && CHECK.get().is_some_and(|check| {
+            std::env::var_os("HOME").is_some_and(|home| Path::new(&home) == check.root.join("home"))
+        })
 }
 
 pub(crate) fn path(name: &str) -> Option<PathBuf> {
@@ -79,8 +89,10 @@ pub(crate) fn initialize() -> Result<(), String> {
     )
     .map_err(|err| err.to_string())?;
     validate_endpoint(&config.endpoint)?;
-    if cfg!(target_os = "linux") && !matches!(config.mode, Mode::Startup | Mode::Interactive) {
-        return Err("Linux runtime verification currently supports startup only".into());
+    if cfg!(target_os = "linux")
+        && std::env::var_os("HOME").is_none_or(|home| Path::new(&home) != root.join("home"))
+    {
+        return Err("Linux runtime verification requires an isolated fixture HOME".into());
     }
     let restarted_from = match std::fs::read(root.join("installed.json")) {
         Ok(bytes) => Some(serde_json::from_slice(&bytes).map_err(|err| err.to_string())?),
@@ -130,18 +142,33 @@ fn validate_fixture_executable(root: &Path, exe: &Path) -> Result<(), String> {
         || !root
             .file_name()
             .is_some_and(|name| name.to_string_lossy().starts_with("aipass-runtime-"))
-        || exe
-            != root.join(if cfg!(target_os = "linux") {
-                "package/usr/bin/aipass-desktop"
-            } else {
-                "AIPass.app/Contents/MacOS/aipass-desktop"
-            })
+        || !fixture_executable(root, exe)
     {
         return Err(
             "runtime verification only accepts a disposable /tmp/aipass-runtime-* app copy".into(),
         );
     }
     Ok(())
+}
+
+fn fixture_executable(root: &Path, exe: &Path) -> bool {
+    if !cfg!(target_os = "linux") {
+        return exe == root.join("AIPass.app/Contents/MacOS/aipass-desktop");
+    }
+    if exe == root.join("package/usr/bin/aipass-desktop") {
+        return true;
+    }
+    // AppImage extract-and-run creates a fresh temporary AppDir after each restart.
+    let Some(image) = std::env::var_os("APPIMAGE").and_then(|p| std::fs::canonicalize(p).ok())
+    else {
+        return false;
+    };
+    let Some(dir) = std::env::var_os("APPDIR").and_then(|p| std::fs::canonicalize(p).ok()) else {
+        return false;
+    };
+    image == root.join("install/AIPass.AppImage")
+        && dir.starts_with(std::fs::canonicalize("/tmp").unwrap_or_default())
+        && exe == dir.join("usr/bin/aipass-desktop")
 }
 
 fn validate_endpoint(endpoint: &url::Url) -> Result<(), String> {
@@ -191,13 +218,23 @@ pub(crate) fn start(app: AppHandle) {
     let Some(check) = CHECK.get() else {
         return;
     };
+    if check.config.mode == Mode::Interactive {
+        ui::start(app.clone(), check.root.clone());
+    }
     std::thread::spawn(move || {
         let result = observe(&app).and_then(|()| {
             if check.config.mode == Mode::Install && check.restarted_from.is_none() {
-                tauri::async_runtime::block_on(crate::updates::install_update(
+                let installed = tauri::async_runtime::block_on(crate::updates::install_update(
                     app.clone(),
                     "official".into(),
-                ))?;
+                ));
+                if let Some(expected) = &check.config.expected_error {
+                    if installed.as_ref().err() != Some(expected) {
+                        return Err(format!("expected {expected}, got {installed:?}"));
+                    }
+                    return observe(&app);
+                }
+                installed?;
                 return Err("installer returned without restarting the application".into());
             }
             if !matches!(check.config.mode, Mode::Startup | Mode::Interactive) {
@@ -211,6 +248,11 @@ pub(crate) fn start(app: AppHandle) {
                     if check.root.join(name).exists() {
                         return Err("installed update left a pending package".into());
                     }
+                }
+            }
+            if let Some(version) = &check.config.expected_version {
+                if &app.package_info().version.to_string() != version {
+                    return Err("unexpected running version after update".into());
                 }
             }
             Ok(())

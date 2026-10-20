@@ -13,7 +13,7 @@
     type ProviderEntry,
     type QuotaInfo
   } from "@aipass/schemas";
-  import { Banner, billingFromDraft, billingPatchFromDraft, Brand, Button, encodeListValues, encodePairValues, groupFromDraft, parseHttpEndpoint, ProgressButton } from "@aipass/ui";
+  import { Banner, billingFromDraft, billingPatchFromDraft, Brand, Button, encodeListValues, encodePairValues, groupFromDraft, parseHttpEndpoint } from "@aipass/ui";
   import { onDestroy, onMount, tick } from "svelte";
 
   import AuthScreen from "./lib/components/auth/AuthScreen.svelte";
@@ -34,6 +34,7 @@
   import AppTitleBar from "./lib/components/shared/AppTitleBar.svelte";
   import ErrorToast from "./lib/components/shared/ErrorToast.svelte";
   import ConfirmModal from "./lib/components/shared/ConfirmModal.svelte";
+  import UpdateNotification from "./lib/components/shared/UpdateNotification.svelte";
   import UpdateRestartConfirmModal from "./lib/components/shared/UpdateRestartConfirmModal.svelte";
   import type {
     AppPreferences,
@@ -474,9 +475,7 @@
   $: errorText = errorDetail ? $t("auth.agentStartFailed") : rawErrorText;
   $: noticeText = resolveMessage($t, notice);
   $: updateInstallErrorText = resolveMessage($t, updateInstallError);
-  $: updateProgressPercent = updateProgress?.totalBytes && updateProgress.totalBytes > 0
-    ? Math.min(100, Math.round((updateProgress.downloadedBytes / updateProgress.totalBytes) * 100))
-    : undefined;
+
 
   const UPDATE_CHECK_DELAY_MS = 3000;
   const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -3423,37 +3422,9 @@
   {/if}
 
   {#if canShowUpdatePrompt && updateAvailableVersion}
-    <div class="update-banner">
-      <Banner tone="info">
-        <span class="update-banner-text">{$t("updates.bannerTitle", { version: updateAvailableVersion })}</span>
-        <ProgressButton
-          variant="primary"
-          size="sm"
-          on:click={requestInstallAvailableUpdate}
-          disabled={updateInstalling || updateInstallConfirmChecking}
-          progress={updateProgressPercent}
-          indeterminate={updateInstalling && (updateProgress?.phase === "installing" || updateProgressPercent === undefined)}
-        >
-          {#if updateInstalling}
-            {#if updateProgress?.phase === "installing"}
-              {$t("updates.installing")}
-            {:else if updateProgressPercent !== undefined}
-              {$t("updates.downloadProgress", { percent: updateProgressPercent })}
-            {:else}
-              {$t("updates.downloading")}
-            {/if}
-          {:else}
-            {$t("updates.installRestart")}
-          {/if}
-        </ProgressButton>
-        <Button variant="ghost" size="sm" on:click={dismissUpdatePrompt} disabled={updateInstalling}>
-          {$t("updates.later")}
-        </Button>
-      </Banner>
-      {#if updateInstallErrorText}
-        <Banner tone="danger">{updateInstallErrorText}</Banner>
-      {/if}
-    </div>
+    <UpdateNotification version={updateAvailableVersion} installing={updateInstalling}
+      confirmChecking={updateInstallConfirmChecking} progress={updateProgress}
+      error={updateInstallErrorText} onInstall={requestInstallAvailableUpdate} onDismiss={dismissUpdatePrompt} />
   {/if}
 </div>
 
@@ -3622,7 +3593,7 @@
     z-index: 0;
   }
 
-  .app-shell > :global(:not(.titlebar)) {
+  .app-shell > :global(:not(.titlebar, .update-banner)) {
     position: relative;
     z-index: 1;
   }
@@ -3713,22 +3684,6 @@
 
   .workspace > :global(.detail-header) {
     padding-top: 56px;
-  }
-
-  .app-shell > .update-banner {
-    position: absolute;
-    right: 16px;
-    bottom: 16px;
-    z-index: 60;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    max-width: min(420px, calc(100vw - 32px));
-  }
-
-  .update-banner-text {
-    flex: 1;
-    min-width: 0;
   }
 
   @media (max-width: 1100px) {

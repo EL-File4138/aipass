@@ -3,6 +3,8 @@
   import type { MacOsControls } from "@vinlemon/window-controls";
   import { Logo } from "@aipass/ui";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
   import { DropdownMenu } from "bits-ui";
   import { Copy, Lock, Menu, Minus, Settings, Square, X, RotateCcw } from "lucide-svelte";
   import { onDestroy, onMount, tick } from "svelte";
@@ -25,6 +27,7 @@
   let unlistenResize: (() => void) | undefined;
   let unlistenFocus: (() => void) | undefined;
   let unlistenBlur: (() => void) | undefined;
+  let unlistenCompositing: (() => void) | undefined;
   let macControls: MacOsControls | undefined;
 
   const hasTauri =
@@ -37,11 +40,17 @@
   }
 
   onMount(async () => {
-    isMac = detectMac();
+    isMac = ["darwin", "macos"].includes(targetPlatform) || (targetPlatform === "unknown" && detectMac());
     if (!hasTauri) return;
 
     try {
       const win = getCurrentWindow();
+      if (isLinux) {
+        document.documentElement.dataset.composited = String(await invoke<boolean>("window_compositing"));
+        unlistenCompositing = await listen<boolean>("window-compositing", ({ payload }) => {
+          document.documentElement.dataset.composited = String(payload);
+        });
+      }
       isMaximized = await win.isMaximized();
       isFocused = await win.isFocused();
       unlistenResize = await win.onResized(async () => {
@@ -59,7 +68,12 @@
     unlistenResize?.();
     unlistenFocus?.();
     unlistenBlur?.();
+    unlistenCompositing?.();
   });
+
+  $: if (typeof document !== "undefined") {
+    document.documentElement.dataset.windowMaximized = String(isMaximized);
+  }
 
   async function minimize() {
     if (!hasTauri) return;
@@ -213,19 +227,19 @@
   }
 
   .titlebar.linux .items-list-slot {
-    top: calc(var(--workspace-top) + var(--linux-header-inset));
+    top: calc(var(--workspace-top) + var(--linux-header-inset) + 1px);
     pointer-events: auto;
   }
 
   .titlebar.linux .win-controls {
     position: absolute;
-    top: calc(var(--workspace-top) + var(--linux-header-inset));
+    top: calc(var(--workspace-top) + var(--linux-header-inset) + 1px);
     left: calc(var(--workspace-padding) + var(--sidebar-width) + var(--items-list-width) + 2 * var(--workspace-gap));
     right: var(--workspace-padding);
     height: 34px;
     align-items: center;
     justify-content: flex-end;
-    padding: 0 var(--pane-content-inset);
+    padding: 0 calc(var(--linux-detail-inset) + 1px);
     gap: 6px;
     pointer-events: auto;
   }
