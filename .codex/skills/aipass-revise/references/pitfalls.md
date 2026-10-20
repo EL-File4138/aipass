@@ -251,7 +251,7 @@ Newest entries last within each section.
 ### WebSocket completion is not a usage persistence barrier
 - **Symptom**: a conversion test received both completed responses but immediately counted only one successful attempt in SQLite under a full workspace load.
 - **Root cause**: forwarding a terminal frame and persisting its final usage are separate async steps; client close does not await the server-side database write.
-- **Fix**: both conversion-context fixtures wait within a bounded deadline for successful usage records, then retain the exact request/attempt assertions.
+- **Fix**: conversion-context, parallel-lane recovery and mixed-route fallback fixtures wait within a bounded deadline for successful usage records, then retain the exact request/attempt assertions.
 - **Guardrail**: await the observed persistence state before asserting asynchronous usage counts; never replace exact-count assertions with arbitrary sleeps.
 - **Watch points**: `websocket/tests.rs`, `websocket/tests/persistence.rs`, terminal event forwarding and usage persistence.
 

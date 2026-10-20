@@ -1053,6 +1053,7 @@ async fn websocket_conversion_orders_lanes_and_recovers_after_upstream_failure()
     assert_eq!(parallel.last().unwrap()["stream_id"], "parallel");
     assert_eq!(parallel.last().unwrap()["type"], "response.completed");
     ws.close(None).await.unwrap();
+    persistence::wait_for_successful_attempts(&store, 2).await;
     let summary = store.summary(|_| 0).unwrap();
     assert_eq!(summary.request_count, 3);
     assert_eq!(summary.attempt_count, 3);
@@ -1178,6 +1179,7 @@ async fn websocket_conversion_mixed_route_falls_back_from_responses_http_to_anth
         "response.completed"
     );
     ws.close(None).await.unwrap();
+    persistence::wait_for_successful_attempts(&store, 2).await;
     let summary = store.summary(|_| 0).unwrap();
     assert_eq!(summary.request_count, 2);
     assert_eq!(summary.attempt_count, 3);
