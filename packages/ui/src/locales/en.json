@@ -480,6 +480,7 @@
   "notice.syncSummary": "{uploaded} up · {downloaded} down · {conflicts} conflicts",
   "confirm.deleteProvider": "Permanently delete {title}?",
   "confirm.emptyTrash": "Permanently delete everything in the trash?",
+  "confirm.cannotUndo": "This action cannot be undone.",
   "confirm.resetProvider": "Reset credentials for {title}? All keys will be removed.",
   "providerList.allItems": "All Items",
   "providerList.lowQuota": "Low quota",

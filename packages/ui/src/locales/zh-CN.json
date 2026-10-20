@@ -480,6 +480,7 @@
   "notice.syncSummary": "上传 {uploaded} · 下载 {downloaded} · 冲突 {conflicts}",
   "confirm.deleteProvider": "永久删除 {title}？",
   "confirm.emptyTrash": "永久删除回收站中的所有内容？",
+  "confirm.cannotUndo": "此操作无法撤销。",
   "confirm.resetProvider": "重置 {title} 的凭据？所有密钥将被移除。",
   "providerList.allItems": "全部项目",
   "providerList.lowQuota": "额度低",

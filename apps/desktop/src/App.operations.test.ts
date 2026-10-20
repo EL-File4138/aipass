@@ -57,6 +57,63 @@ async function render(overrides: Record<string, (args: any) => unknown> = {}) {
   await vi.waitFor(() => { flushSync(); expect(button("Edit")).toBeTruthy(); });
 }
 
+test.each(["delete", "empty"] as const)("trash %s requires confirmation, supports cancellation and retries a failed write", async (action) => {
+  const nativeConfirm = vi.fn();
+  vi.stubGlobal("confirm", nativeConfirm);
+  let fail = true;
+  let finish!: () => void;
+  const command = action === "delete" ? "provider_delete" : "trash_empty";
+  const label = action === "delete" ? "Delete forever" : "Empty trash";
+  await render({
+    entries_trash_list: () => [{ ...structuredClone(fixtureEntry), deletedAt: new Date().toISOString() }],
+    [command]: () => {
+      if (fail) throw new Error("fixture deletion failed");
+      return new Promise<void>(resolve => { finish = resolve; });
+    }
+  });
+  document.querySelector<HTMLButtonElement>('button[aria-label^="Trash,"]')!.click();
+  await vi.waitFor(() => { flushSync(); expect(button(label)).toBeTruthy(); });
+  const trigger = button(label);
+  const calls = () => invoke.mock.calls.filter(([cmd]) => cmd === command);
+  trigger.click(); flushSync();
+  expect(document.querySelector('.modal-content[data-state="open"]')?.textContent).toContain("This action cannot be undone.");
+  expect(document.querySelector('.modal-content[data-state="open"]')?.textContent).toContain(action === "delete" ? fixtureEntry.title : "everything in the trash");
+  expect(calls()).toHaveLength(0);
+  button("Cancel").click(); flushSync();
+  expect(document.querySelector('.modal-content[data-state="open"]')).toBeNull();
+  expect(calls()).toHaveLength(0);
+  trigger.click(); flushSync();
+  const confirm = () => document.querySelector<HTMLButtonElement>('.modal-content[data-state="open"] .btn-danger')!;
+  confirm().click();
+  await vi.waitFor(() => { flushSync(); expect(document.querySelector('.error-toast')?.textContent).toContain("fixture deletion failed"); });
+  expect(document.querySelector('.modal-content[data-state="open"]')).toBeTruthy();
+  fail = false;
+  confirm().click(); confirm().click(); flushSync();
+  expect(calls()).toHaveLength(2);
+  expect(confirm().disabled).toBe(true);
+  if (action === "delete") expect(calls()[1][1]).toEqual({ id: fixtureEntry.id });
+  finish();
+  await vi.waitFor(() => { flushSync(); expect(document.querySelector('.modal-content[data-state="open"]')).toBeNull(); });
+  expect(nativeConfirm).not.toHaveBeenCalled();
+});
+
+test.each(["Delete forever", "Empty trash"])("locking dismisses pending trash confirmation for %s", async (label) => {
+  let locked = false;
+  await render({
+    vault_status: () => ({ exists: true, locked }),
+    entries_trash_list: () => [{ ...structuredClone(fixtureEntry), deletedAt: new Date().toISOString() }]
+  });
+  document.querySelector<HTMLButtonElement>('button[aria-label^="Trash,"]')!.click();
+  await vi.waitFor(() => { flushSync(); expect(button(label)).toBeTruthy(); });
+  button(label).click(); flushSync();
+  locked = true; listeners.get("vault-status-changed")!();
+  await vi.waitFor(() => { flushSync(); expect(document.querySelector('.modal-content[data-state="open"]')).toBeNull(); });
+  locked = false; listeners.get("vault-status-changed")!();
+  await vi.waitFor(() => { flushSync(); expect(button("Delete forever")).toBeTruthy(); });
+  expect(document.querySelector('.modal-content[data-state="open"]')).toBeNull();
+  expect(invoke.mock.calls.filter(([cmd]) => cmd === "provider_delete" || cmd === "trash_empty")).toHaveLength(0);
+});
+
 test.each(["add", "edit", "clear"] as const)("credential %s persists endpoint and model overrides through the desktop bridge", async (action) => {
   const entry = structuredClone(fixtureEntry);
   entry.defaultModel = "site-model";

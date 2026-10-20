@@ -25,6 +25,7 @@
   import ProviderDetailPane from "./lib/components/providers/ProviderDetailPane.svelte";
   import { ProviderListPane } from "@aipass/ui";
   import ProviderModal from "./lib/components/providers/ProviderModal.svelte";
+  import TrashConfirmModal from "./lib/components/providers/TrashConfirmModal.svelte";
   import CommunityConnectDialog from "./lib/components/providers/CommunityConnectDialog.svelte";
   import SubscriptionImportDialog from "./lib/components/providers/SubscriptionImportDialog.svelte";
   import OAuthConnectDialog from "./lib/components/providers/OAuthConnectDialog.svelte";
@@ -1826,15 +1827,14 @@
     void loadArchivedEntries();
   }
 
-  async function deleteSelected() {
-    if (!selected || !confirm($t("confirm.deleteProvider", { title: selected.title }))) return;
-    await invokeTauri("provider_delete", { id: selected.id });
+  let trashConfirmation: TrashConfirmModal | undefined;
+  async function deleteSelected(id: string) {
+    await invokeTauri("provider_delete", { id });
     await loadEntries();
     void loadServer();
   }
 
   async function emptyTrash() {
-    if (!confirm($t("confirm.emptyTrash"))) return;
     await invokeTauri("trash_empty");
     await loadEntries();
     void loadServer();
@@ -3331,7 +3331,7 @@
         refreshAccountsBusy={officialAccountsBusy}
         officialAccountsImport={true}
         onFilterChange={setProviderFilter}
-        onEmptyTrash={emptyTrash}
+        onEmptyTrash={() => trashConfirmation?.requestEmpty()}
         onSelect={selectProvider}
         onAddAsRoute={(entry) => addEntryAsRoute(entry)}
         onAddToGroup={(entry, groupId) => addEntryAsRoute(entry, groupId)}
@@ -3364,7 +3364,7 @@
         onEditSave={saveDetailEdit}
         onFavorite={toggleFavoriteSelected}
         onRestore={restoreSelected}
-        onDelete={deleteSelected}
+        onDelete={() => trashConfirmation?.requestDelete(selected)}
         onArchive={archiveSelected}
         onTrash={trashSelected}
         onRevealSecret={revealSecretById}
@@ -3536,6 +3536,7 @@
 {/if}
 
 {#if showWorkspace && !showAuthScreen && !lockTransitioning}
+  <TrashConfirmModal bind:this={trashConfirmation} onDelete={deleteSelected} onEmpty={emptyTrash} onError={reportError} />
   <SubscriptionImportDialog {invokeTauri} bind:open={showSubscriptionImport} launch={subscriptionImportLaunch} bind:busy={officialAccountsBusy} onChanged={loadEntries} onLogin={(provider) => {
     subscriptionLoginProvider = provider;
     if (["anthropic", "codex", "grok", "copilot", "gemini-cli"].includes(provider)) showOAuthConnect = true;

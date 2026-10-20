@@ -22,6 +22,7 @@
   }
 
   async function confirm() {
+    if (confirming) return;
     confirming = true;
     let shouldClose = false;
     try {
