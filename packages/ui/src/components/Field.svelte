@@ -46,9 +46,13 @@
   }
 
   :global(.field textarea) {
-    min-height: 72px;
-    padding: 8px 10px;
-    line-height: 1.4;
+    min-height: 88px;
+    padding: 10px 12px;
+    line-height: 1.5;
+  }
+
+  :global(.field textarea:hover:not(:disabled):not(:focus)) {
+    border-color: var(--border-strong);
   }
 
   :global(.field input:focus),
@@ -62,5 +66,12 @@
   :global(.field input::placeholder),
   :global(.field textarea::placeholder) {
     color: var(--text-tertiary);
+  }
+
+  :global(.field input:disabled),
+  :global(.field select:disabled),
+  :global(.field textarea:disabled) {
+    cursor: not-allowed;
+    opacity: 0.55;
   }
 </style>

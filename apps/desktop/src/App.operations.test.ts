@@ -13,6 +13,16 @@ vi.mock("./lib/build", () => ({ buildTimeIso: "2026-09-07T00:00:00Z", buildTimeL
 vi.mock("@vinlemon/window-controls/window-controls.js", () => ({}));
 import App from "./App.svelte";
 
+
+async function selectOption(selector: string, text: string) {
+  document.querySelector<HTMLButtonElement>(selector)!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerType: "mouse" }));
+  const option = () => [...document.querySelectorAll<HTMLElement>('.select-content[data-state="open"] [role="option"]')].find(node => node.textContent?.trim() === text);
+  await vi.waitFor(() => { flushSync(); expect(option()).toBeTruthy(); });
+  option()!.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0, pointerType: "mouse" }));
+  flushSync();
+  await new Promise(resolve => setTimeout(resolve, 30));
+}
+
 let app: ReturnType<typeof mount>;
 afterEach(async () => { if (app) await unmount(app); document.body.innerHTML = ""; vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllGlobals(); delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__; });
 
@@ -82,9 +92,7 @@ test.each(["add", "edit", "clear"] as const)("credential %s persists endpoint an
     document.querySelectorAll<HTMLButtonElement>(".kv-actions button[aria-label='Edit credential']")[1].click();
     await vi.waitFor(() => { flushSync(); expect(document.querySelector<HTMLInputElement>(`${selector} input[type=password]`)?.value).toBe("fixture-existing-key"); });
   }
-  const format = document.querySelector<HTMLSelectElement>(`${selector} select`)!;
-  format.value = "anthropic_messages";
-  format.dispatchEvent(new Event("change", { bubbles: true })); flushSync();
+  await selectOption(`${selector} .select-trigger`, "Anthropic Messages");
   input(`${selector} input[type=url]`, endpoint ? ` ${endpoint} ` : "");
   input(`${selector} input[placeholder='site-model']`, defaultModel ? ` ${defaultModel} ` : "");
   document.querySelector<HTMLButtonElement>(`${selector} .btn-secondary`)!.click();

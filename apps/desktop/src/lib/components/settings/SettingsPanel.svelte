@@ -28,7 +28,7 @@
   } from "../../types";
   import { checkForUpdates, clearPendingUpdate, installUpdate, persistUpdateChannel, resolveUpdateChannel, UPDATE_PROGRESS_EVENT, type UpdateChannel, type UpdateCheckResult, type UpdateProgress } from "../../services/updates";
   import { buildTimeLabel } from "../../build";
-  import { scrollMask, Badge, Banner, Button, Field, ProgressButton, SwitchField } from "@aipass/ui";
+  import { scrollMask, Badge, Banner, Button, Field, ProgressButton, SelectField, SwitchField } from "@aipass/ui";
   import { Card } from "@aipass/ui";
   import ConfirmModal from "../shared/ConfirmModal.svelte";
   import UpdateRestartConfirmModal from "../shared/UpdateRestartConfirmModal.svelte";
@@ -572,16 +572,11 @@
                     <span class="row-label">{$t("settings.autoLock")}</span>
                     <span class="row-desc">{$t("settings.autoLockDesc")}</span>
                   </div>
-                  <select
-                    class="select-input"
-                    bind:value={autoLockMinutes}
-                    on:change={() => onSavePreferences()}
-                    aria-label={$t("settings.autoLock")}
-                  >
-                    {#each autoLockOptions as option}
-                      <option value={option.value}>{option.label}</option>
-                    {/each}
-                  </select>
+                  <div class="select-input">
+                    <SelectField ariaLabel={$t("settings.autoLock")} value={String(autoLockMinutes)}
+                      options={autoLockOptions.map(option => ({ ...option, value: String(option.value) }))}
+                      onValueChange={(value) => { autoLockMinutes = Number(value); onSavePreferences(); }} />
+                  </div>
                 </div>
                 <div class="row">
                   <div class="row-text">
@@ -902,6 +897,9 @@
                     onChange={onUpdateChannelChange}
                   />
                 </div>
+                {#if updateErrorText}
+                  <Banner tone="danger">{updateErrorText}</Banner>
+                {/if}
                 {#if updateCheck?.available}
                   <div class="update-summary">
                     <div class="update-summary-text">
@@ -951,9 +949,6 @@
                       <RefreshCw size={14} /> {updateChecking ? $t("settings.checking") : $t("settings.checkNow")}
                     </Button>
                   </div>
-                  {#if updateErrorText}
-                    <Banner tone="danger">{updateErrorText}</Banner>
-                  {/if}
                 {/if}
               </div>
             </Card>
@@ -1224,22 +1219,7 @@
     }
   }
 
-  .select-input {
-    width: 132px;
-    height: 32px;
-    padding: 0 10px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface);
-    color: var(--text);
-    font-size: 13px;
-
-    &:focus {
-      outline: 0;
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px var(--accent-ring);
-    }
-  }
+  .select-input { width: 132px; flex-shrink: 0; }
 
   .row-actions {
     display: flex;

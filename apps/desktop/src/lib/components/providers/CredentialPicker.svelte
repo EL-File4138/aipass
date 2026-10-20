@@ -11,7 +11,7 @@
   export let onValueChange: (value: string) => void;
   $: selected = entry.secretRefs.find(secret => secret.id === value);
   const optionLabel = (secret: SecretRef) => [secret.label, secret.masked,
-    interfaceLabel[secretInterfaceType(secret, entry.interfaceType)], secret.group ?? entry.gateway?.group].filter(Boolean).join(" · ");
+    interfaceLabel[secretInterfaceType(secret, entry.interfaceType)], secret.group ?? entry.gateway?.group].filter(Boolean).join(" ");
 </script>
 
 <div class="credential-picker">
@@ -33,21 +33,21 @@
       <ChevronDown size={14} />
     </Select.Trigger>
     <Select.Portal>
-      <Select.Content class="credential-picker-content" sideOffset={6}>
+      <Select.Content class="credential-picker-content select-menu" align="start" sideOffset={4} collisionPadding={8}>
         {#snippet child({ props, wrapperProps })}
           <div {...wrapperProps} style:z-index="220">
             <div {...props}>
-              <Select.Viewport class="credential-picker-options">
+              <Select.Viewport class="credential-picker-options select-menu-viewport">
                 {#snippet child({ props })}
                   <div {...props} use:scrollMask>
                     {#each entry.secretRefs as secret (secret.id)}
-                      <Select.Item class="credential-picker-option" value={secret.id} label={optionLabel(secret)} title={optionLabel(secret)}>
+                      <Select.Item class="credential-picker-option select-menu-item" value={secret.id} label={optionLabel(secret)} title={optionLabel(secret)}>
                         {#snippet children({ selected: active })}
                           <span class="option-copy">
                             <span class="option-heading"><span class="credential-name">{secret.label}</span><code>{secret.masked}</code></span>
                             <CredentialTags format={secretInterfaceType(secret, entry.interfaceType)} group={secret.group ?? entry.gateway?.group} />
                           </span>
-                          <span class="option-check">{#if active}<Check size={14} />{/if}</span>
+                          <span class="select-menu-indicator" aria-hidden="true">{#if active}<Check size={14} />{/if}</span>
                         {/snippet}
                       </Select.Item>
                     {/each}
@@ -79,12 +79,7 @@
   .selected-meta { display: flex; align-items: center; gap: 8px; min-width: 0; }
   code { min-width: 0; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-tertiary); font-size: 10px; }
   .placeholder { font-size: 12px; color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  :global(.credential-picker-content) { width: var(--bits-select-anchor-width); max-height: min(320px, var(--bits-select-content-available-height)); padding: 5px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow-pop); overflow: hidden; }
-  :global(.credential-picker-options) { max-height: min(310px, calc(var(--bits-select-content-available-height) - 10px)); overflow-y: auto; }
-  :global(.credential-picker-option) { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 6px; outline: 0; cursor: pointer; color: var(--text); }
-  :global(.credential-picker-option[data-highlighted]) { background: var(--surface-2); }
-  :global(.credential-picker-option[data-selected]) { background: var(--accent-soft); }
+  :global(.credential-picker-option) { padding: 8px; }
   .option-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
   .option-heading code { flex-shrink: 0; }
-  .option-check { display: grid; place-items: center; width: 14px; flex-shrink: 0; color: var(--accent); }
 </style>

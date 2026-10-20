@@ -12,6 +12,16 @@ const selected: ProviderEntry = {
   domains: [], endpoints: [], interfaceType: "custom_http", authScheme: "bearer",
   secretRefs: [{ id: "key", label: "Production", masked: "••••", fingerprint: "test" }], tags: []
 };
+
+async function selectOption(selector: string, text: string) {
+  document.querySelector<HTMLButtonElement>(selector)!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerType: "mouse" }));
+  const option = () => [...document.querySelectorAll<HTMLElement>('.select-content[data-state="open"] [role="option"]')].find(node => node.textContent?.trim() === text);
+  await vi.waitFor(() => { flushSync(); expect(option()).toBeTruthy(); });
+  option()!.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0, pointerType: "mouse" }));
+  flushSync();
+  await new Promise(resolve => setTimeout(resolve, 30));
+}
+
 let app: ReturnType<typeof mount>;
 afterEach(async () => {
   if (app) await unmount(app);
@@ -291,8 +301,7 @@ test("key editing carries the key's own interface and group", async () => {
     expect(document.querySelector<HTMLInputElement>(".secret-edit-input input")?.value).toBe("fixture-existing-key");
   });
   // The editor prefills the key's own attributes rather than the provider's.
-  const format = document.querySelector<HTMLSelectElement>(".credential-inline-editor select")!;
-  expect(format.value).toBe("anthropic_messages");
+  expect(document.querySelector(".credential-inline-editor .select-trigger")?.textContent).toContain("Anthropic Messages");
   const group = document.querySelector<HTMLInputElement>('.credential-inline-editor .secret-edit-meta input')!;
   expect(group.value).toBe("vip");
   document.querySelector<HTMLButtonElement>(".credential-inline-editor .btn")!.click();
@@ -314,9 +323,7 @@ test("adding a key sends its interface and group metadata", async () => {
   inputs[0].dispatchEvent(new Event("input", { bubbles: true }));
   (inputs[1] as HTMLInputElement).value = "sk-new-key";
   inputs[1].dispatchEvent(new Event("input", { bubbles: true }));
-  const format = document.querySelector<HTMLSelectElement>(".add-secret-row select")!;
-  format.value = "anthropic_messages";
-  format.dispatchEvent(new Event("change", { bubbles: true }));
+  await selectOption(".add-secret-row .select-trigger", "Anthropic Messages");
   const group = document.querySelector<HTMLInputElement>(".add-secret-row .secret-edit-meta input")!;
   group.value = "vip";
   group.dispatchEvent(new Event("input", { bubbles: true }));

@@ -4,6 +4,7 @@
   "common.copy": "Copy",
   "common.loading": "Loading...",
   "common.save": "Save",
+  "common.noOptions": "No available options",
   "common.select": "Select...",
   "common.selected": "Selected",
   "common.remove": "Remove",

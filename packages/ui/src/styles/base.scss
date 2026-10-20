@@ -2,8 +2,10 @@
 // Window-shell specifics (#app chrome, html/body background, body min-width)
 // stay in each app's own stylesheet.
 
+@use "./select-menu";
+
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
 
   --bg: #f5f6fa;
   --surface: #ffffff;
@@ -19,6 +21,7 @@
   --divider: #edeff5;
 
   --accent: #2563eb;
+  --accent-contrast: #ffffff;
   --accent-hover: #1f4fd0;
   --accent-soft: rgba(37, 99, 235, 0.1);
   --accent-ring: rgba(37, 99, 235, 0.28);
@@ -38,6 +41,15 @@
   --success-soft: rgba(24, 121, 78, 0.1);
   --warning: #b25e09;
   --warning-soft: rgba(178, 94, 9, 0.1);
+
+  // Semantic aliases used by the advanced provider and routing forms.
+  --surface-raised: var(--surface);
+  --surface-strong: var(--surface-2);
+  --error: var(--danger);
+  --error-soft: var(--danger-soft);
+  --info: var(--accent);
+
+  accent-color: var(--accent);
 
   --radius-sm: 6px;
   --radius: 8px;
@@ -94,6 +106,12 @@ input,
 select,
 textarea {
   font-family: inherit;
+}
+
+select,
+option {
+  color: var(--text);
+  background-color: var(--surface);
 }
 
 button {
@@ -209,6 +227,7 @@ a:hover {
 }
 
 @mixin dark-theme {
+  color-scheme: dark;
   --bg: #0a0e1a;
   --surface: #131826;
   --surface-2: #1a2032;
@@ -223,6 +242,7 @@ a:hover {
   --divider: #1c2336;
 
   --accent: #6092ff;
+  --accent-contrast: #08101f;
   --accent-hover: #76a2ff;
   --accent-soft: rgba(96, 146, 255, 0.16);
   --accent-ring: rgba(96, 146, 255, 0.36);
@@ -276,7 +296,7 @@ a:hover {
 .filter-menu,
 .dropdown-content,
 .titlebar-menu,
-.select-content {
+.select-menu {
   transform-origin: var(--bits-floating-transform-origin, top center);
   animation: pop-in 160ms cubic-bezier(0.22, 1, 0.36, 1);
 
@@ -289,7 +309,7 @@ a:hover {
   .filter-menu,
   .dropdown-content,
   .titlebar-menu,
-  .select-content {
+  .select-menu {
     animation: none !important;
   }
 }

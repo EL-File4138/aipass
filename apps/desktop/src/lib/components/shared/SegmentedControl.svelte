@@ -38,6 +38,7 @@
 
   button {
     min-height: 26px;
+    white-space: nowrap;
     padding: 0 12px;
     border-radius: 4px;
     color: var(--text-secondary);
@@ -47,6 +48,11 @@
 
     &:hover:not(.active) {
       color: var(--text);
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
     }
 
     &.active {

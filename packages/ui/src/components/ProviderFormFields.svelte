@@ -593,7 +593,7 @@
     color: var(--text-tertiary);
     font-size: 11px;
   }
-  .item-layout :global(.field input), .item-layout :global(.field textarea), .item-layout :global(.select-trigger) {
+  .item-layout :global(.field input), .item-layout :global(.select-trigger) {
     min-width: 0;
     background: transparent;
     border-color: transparent;
@@ -604,17 +604,17 @@
     box-shadow: inset 0 -1px 0 color-mix(in oklab, var(--border) 58%, transparent);
     transition: background-color 120ms ease, box-shadow 120ms ease, color 120ms ease;
   }
-  .item-layout :global(.field input:hover), .item-layout :global(.field textarea:hover), .item-layout :global(.select-trigger:hover:not([data-disabled])) {
+  .item-layout :global(.field input:hover), .item-layout :global(.select-trigger:hover:not([data-disabled])) {
     background: color-mix(in oklab, var(--surface-2) 56%, transparent);
     box-shadow: inset 0 -1px 0 var(--border-strong);
   }
-  .item-layout :global(.field input:focus), .item-layout :global(.field textarea:focus), .item-layout :global(.select-trigger[data-state="open"]) {
+  .item-layout :global(.field input:focus), .item-layout :global(.select-trigger[data-state="open"]) {
     background: color-mix(in oklab, var(--accent-soft) 44%, transparent);
     border-color: transparent;
     box-shadow: inset 0 -2px 0 var(--accent);
     outline: 0;
   }
-  .item-layout :global(.field input:focus-visible), .item-layout :global(.field textarea:focus-visible), .item-layout :global(.select-trigger:focus-visible) {
+  .item-layout :global(.field input:focus-visible), .item-layout :global(.select-trigger:focus-visible) {
     outline: 1px solid color-mix(in oklab, var(--accent) 58%, transparent);
     outline-offset: 1px;
   }

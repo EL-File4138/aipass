@@ -44,6 +44,7 @@
     color: var(--text);
     font-size: 13px;
     &::placeholder { color: var(--text-tertiary); }
+    &:disabled { cursor: not-allowed; opacity: 0.55; }
     &::-webkit-search-cancel-button { appearance: none; }
   }
 </style>

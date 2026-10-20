@@ -78,6 +78,11 @@
     cursor: not-allowed;
   }
 
+  :global(.switch-root:focus-visible) {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+  }
+
   :global(.switch-thumb) {
     display: block;
     width: 16px;

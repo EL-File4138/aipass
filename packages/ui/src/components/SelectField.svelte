@@ -37,27 +37,30 @@
       <ChevronDown size={14} />
     </Select.Trigger>
     <Select.Portal>
-      <Select.Content class="select-content" sideOffset={6}>
+      <Select.Content class="select-content select-menu" align="start" sideOffset={4} collisionPadding={8}>
         {#snippet child({ props, wrapperProps })}
           <!-- The positioned wrapper creates the stacking context, so its layer
                must sit above dialog content (z-index 201). -->
           <div {...wrapperProps} style:z-index="220">
             <div {...props}>
-              <Select.Viewport class="select-viewport">
+              <Select.Viewport class="select-viewport select-menu-viewport">
                 {#snippet child({ props })}
                   <div {...props} use:scrollMask>
+                    {#if options.length === 0}
+                      <div class="select-empty" role="status">{$t("common.noOptions")}</div>
+                    {/if}
                     {#each options as option}
                       <Select.Item
-                        class="select-item"
+                        class="select-item select-menu-item"
                         value={option.value}
                         label={option.label}
                         disabled={option.disabled}
                       >
                         {#snippet children({ selected })}
                           <span class="select-item-text" title={option.label}>{option.label}</span>
-                          {#if selected}
-                            <Check size={14} />
-                          {/if}
+                          <span class="select-menu-indicator" aria-hidden="true">
+                            {#if selected}<Check size={14} />{/if}
+                          </span>
                         {/snippet}
                       </Select.Item>
                     {/each}
@@ -108,7 +111,9 @@
     border-color: var(--border-strong);
   }
 
-  :global(.select-trigger[data-state="open"]) {
+  :global(.select-trigger[data-state="open"]),
+  :global(.select-trigger:focus-visible) {
+    outline: 0;
     border-color: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-ring);
   }
@@ -131,44 +136,7 @@
     color: var(--text-tertiary);
   }
 
-  :global(.select-content) {
-    width: var(--bits-select-anchor-width, 180px);
-    max-width: calc(100vw - 32px);
-    max-height: 280px;
-    padding: 4px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow-pop);
-    overflow: hidden;
-  }
-
-  :global(.select-viewport) {
-    overflow-y: auto;
-    max-height: 272px;
-  }
-
-  :global(.select-item) {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 7px 10px;
-    border-radius: var(--radius-sm);
-    color: var(--text);
-    font-size: 13px;
-    cursor: pointer;
-    outline: 0;
-  }
-
-  :global(.select-item[data-highlighted]) {
-    background: var(--accent-soft);
-  }
-
-  :global(.select-item[data-disabled]) {
-    color: var(--text-tertiary);
-    cursor: not-allowed;
-  }
+  .select-empty { padding: 10px; color: var(--text-tertiary); font-size: 12px; }
 
   .select-item-text {
     flex: 1;
