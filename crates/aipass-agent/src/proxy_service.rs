@@ -810,6 +810,7 @@ mod config;
 mod pricing;
 mod routing;
 mod runtime;
+mod search;
 use config::*;
 #[cfg(test)]
 use routing::account_quota;

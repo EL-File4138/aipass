@@ -37,7 +37,11 @@ mod images;
 mod model_routes;
 mod routing;
 mod runtime;
+mod search;
 mod selection;
+pub use search::{
+    ResolvedSearchApi, SearchApiConfig, SearchConfig, SearchModelConfig, SearchVendor,
+};
 mod shell_env;
 mod sse;
 mod state;

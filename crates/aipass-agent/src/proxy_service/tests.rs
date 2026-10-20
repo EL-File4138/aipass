@@ -104,3 +104,5 @@ fn provider_input(api_key: &str, endpoint: String, header: &str) -> ProviderEntr
 mod credentials;
 mod lifecycle;
 mod routing;
+
+mod search;

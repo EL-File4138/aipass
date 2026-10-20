@@ -1,5 +1,5 @@
 //! Genuine Claude Code process runtime. Caller tools cross authenticated Agent
-//! IPC with an additional per-run capability; the child has no built-in tools.
+//! IPC with an additional per-run capability; the child only enables native web search when explicitly offered.
 use aipass_agent_protocol::{AgentRequest, ClaudeBridgeRequest, SensitiveString};
 use aipass_proxy::{
     ResolvedTarget, SubscriptionBackend, SubscriptionFuture, SubscriptionResponse,
@@ -191,6 +191,7 @@ impl ClaudeBridge {
         {
             return Err("Claude Code subscription requires automatic tool choice".into());
         }
+        let web_search = native_tools::search_requested(payload)?;
         let cache = cache::Plan::read(payload)?;
         let mut normalized = payload.clone();
         if !cache.client {
@@ -351,7 +352,7 @@ impl ClaudeBridge {
                 .and_then(|home| checkpoint::restore(saved, home, &workspace))
         });
         let native_session = resumed.unwrap_or_else(Uuid::new_v4);
-        let tools = payload["tools"].as_array().map(|tools|tools.iter().map(|tool|json!({"name":tool["name"],"description":tool["description"],"inputSchema":tool["input_schema"]})).collect::<Vec<_>>()).unwrap_or_default();
+        let tools = payload["tools"].as_array().map(|tools|tools.iter().filter(|tool| !tool["type"].as_str().is_some_and(|t|t.starts_with("web_search_"))).map(|tool|json!({"name":tool["name"],"description":tool["description"],"inputSchema":tool["input_schema"]})).collect::<Vec<_>>()).unwrap_or_default();
         if tools.iter().any(|t| {
             t["name"].as_str().is_none_or(|n| {
                 n.is_empty()
@@ -386,8 +387,6 @@ impl ClaudeBridge {
                 "stream-json",
                 "--include-partial-messages",
                 "--verbose",
-                "--tools",
-                "",
                 "--strict-mcp-config",
                 "--setting-sources",
                 "",
@@ -400,12 +399,11 @@ impl ClaudeBridge {
             )
             .arg("--mcp-config")
             .arg(mcp.to_string())
-            .arg("--allowedTools")
-            .arg("mcp__aipass__*")
             .current_dir(&workspace)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
+        native_tools::configure(&mut command, web_search);
         if cli_home.is_none() {
             command.arg("--no-session-persistence");
         } else if let Some(session) = resumed {
@@ -751,3 +749,5 @@ use stream::{read_events, Collector, SegmentStream};
 
 #[cfg(all(test, unix))]
 mod tests;
+
+mod native_tools;

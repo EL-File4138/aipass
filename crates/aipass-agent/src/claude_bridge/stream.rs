@@ -126,6 +126,7 @@ pub(super) fn read_events(stdout: std::process::ChildStdout, inner: Weak<Inner>,
     use std::io::Read;
     let mut reader = BufReader::new(stdout);
     let mut collector = Collector::default();
+    let mut native = super::native_tools::Events::default();
     loop {
         let mut line = Vec::new();
         let Ok(n) = reader
@@ -176,7 +177,11 @@ pub(super) fn read_events(stdout: std::process::ChildStdout, inner: Weak<Inner>,
         if value["type"] != "stream_event" {
             continue;
         }
-        let mut event = value["event"].clone();
+        let mut event = match native.adapt(value["event"].clone()) {
+            Ok(Some(event)) => event,
+            Ok(None) => continue,
+            Err(_) => break,
+        };
         if let Some(name) = event
             .pointer("/content_block/name")
             .and_then(Value::as_str)

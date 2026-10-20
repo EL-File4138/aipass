@@ -1088,3 +1088,10 @@ Newest entries last within each section.
 - **Fix**: install `xdg-utils` explicitly in CI and release desktop jobs and check `xdg-mime` before building.
 - **Guardrail**: declare Linux packager dependencies in both workflows; verify every shipped architecture rather than inferring ARM64 readiness from x86_64.
 - **Watch points**: `.github/workflows/ci.yml` Linux desktop dependencies, `.github/workflows/release.yml` Linux matrix.
+
+### Hidden Claude tools must preserve the outer client's execution boundary
+- **Symptom**: All native tools disabled also removed subscription web search; simply enabling all tools would execute local actions inside the hidden bridge workspace.
+- **Root cause**: `claude_bridge.rs` used an empty `--tools` list without an explicitly requested search exception; stream completion assumed one assistant message per public reply.
+- **Fix**: Whitelist only `WebSearch` for native search declarations, exclude it from caller MCP tools, merge internal search messages and accumulate usage. Gateway search reuses Rust routing and an account-scoped memory ledger.
+- **Guardrail**: Keep Bash/Read/Write off. A caller function named WebSearch grants no native capability. Honor disabled/forced caller tools, preserve account identity, bound hidden search rounds, and reject unsupported search constraints. Run `cargo test -p aipass-agent claude_bridge` and `cargo test -p aipass-proxy search`.
+- **Watch points**: `claude_bridge/{native_tools,stream}`, proxy `search/{wire,gateway,history,mcp}`, HTTP and adapted WebSocket forwarding, configuration refresh and vault lock.

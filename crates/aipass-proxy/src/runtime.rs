@@ -14,6 +14,10 @@ impl ProxyHandle {
         }
     }
     pub fn start(config: RuntimeConfig, usage: Arc<UsageStore>) -> Result<Self, ProxyError> {
+        config
+            .search
+            .validate()
+            .map_err(ProxyError::InvalidConfig)?;
         for route in &config.routes {
             for target in route.targets.iter().filter(|target| target.config.enabled) {
                 let target_protocol = target
@@ -40,6 +44,7 @@ impl ProxyHandle {
             .map_err(|_| ProxyError::InvalidConfig("bind address must be host:port".into()))?;
         let ws_health = websocket::capability::initial_health(&config);
         let state = RuntimeState {
+            search_history: Arc::new(Mutex::new(crate::search::History::default())),
             subscription_backend: Arc::new(RwLock::new(None)),
             copilot_sessions: Arc::new(tokio::sync::Mutex::new(copilot::Sessions::default())),
             gemini_signatures: Arc::new(Mutex::new(gemini::SignatureLedger::default())),
@@ -285,6 +290,10 @@ impl ProxyHandle {
     }
 
     pub fn update_config(&self, config: RuntimeConfig) -> Result<(), ProxyError> {
+        config
+            .search
+            .validate()
+            .map_err(ProxyError::InvalidConfig)?;
         let mut current = self
             .state
             .config
@@ -356,6 +365,9 @@ impl ProxyHandle {
         if let Ok(mut ledger) = self.state.gemini_signatures.lock() {
             ledger.retain_targets(&preserved.iter().map(|(_, id)| *id).collect());
         }
+        if let Ok(mut history) = self.state.search_history.lock() {
+            history.retain(&preserved);
+        }
         health.retain(|id, _| preserved.iter().any(|(_, target)| target == id));
         session_affinity
             .retain(|(route, _), affinity| preserved.contains(&(*route, affinity.target_id)));
@@ -396,7 +408,9 @@ impl ProxyHandle {
         let mut generations = (**self.state.config_changed.borrow()).clone();
         *generations.entry(Uuid::nil()).or_default() += 1;
         for route in &current.routes {
-            let revoked = current.enabled != config.enabled
+            let revoked = current.search != config.search
+                || current.search_apis != config.search_apis
+                || current.enabled != config.enabled
                 || current.bind_addr != config.bind_addr
                 || route
                     .targets

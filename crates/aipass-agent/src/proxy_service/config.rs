@@ -67,6 +67,24 @@ pub(super) fn resolve_model_bindings(vault: &Vault, config: &mut ProxyConfig) ->
 }
 
 pub(super) fn validate_config(config: &ProxyConfig) -> ServiceResult<()> {
+    config.search.validate().map_err(|message| {
+        ServiceError::new(
+            aipass_agent_protocol::AgentErrorCode::ValidationFailed,
+            message,
+        )
+    })?;
+    if config.search.model.as_ref().is_some_and(|m| {
+        !config
+            .routes
+            .iter()
+            .any(|r| r.id == m.route_id && r.enabled)
+    }) {
+        return Err(ServiceError::new(
+            aipass_agent_protocol::AgentErrorCode::ValidationFailed,
+            "search model must reference an enabled route",
+        ));
+    }
+
     let bind_addr = config
         .bind_addr
         .parse::<std::net::SocketAddr>()
