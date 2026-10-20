@@ -23,12 +23,13 @@ assert.equal(
 const directory = resolve(process.argv[2] ?? "target/release/bundle/deb");
 const reports = resolve(process.argv[3] ?? "linux-runtime-check-reports");
 mkdirSync(reports, { recursive: true });
-const packages = readdirSync(directory).filter((name) => name.endsWith(".deb"));
-assert.equal(packages.length, 1, "Expected one finished deb package");
+const packages = readdirSync(directory).filter((name) => /\.(deb|rpm)$/.test(name));
+assert.equal(packages.length, 1, "Expected one finished Deb or RPM package");
 const artifact = join(directory, packages[0]);
-const version = execFileSync("dpkg-deb", ["--field", artifact, "Version"], {
-  encoding: "utf8",
-}).trim();
+const rpm = artifact.endsWith(".rpm");
+const version = execFileSync(rpm ? "rpm" : "dpkg-deb", rpm
+  ? ["-qp", "--queryformat", "%{VERSION}", artifact]
+  : ["--field", artifact, "Version"], { encoding: "utf8" }).trim();
 const sha256 = createHash("sha256")
   .update(readFileSync(artifact))
   .digest("hex");
@@ -44,7 +45,17 @@ for (const target of ["main", "tray"]) {
   let finished = false;
   let succeeded = false;
   try {
-    execFileSync("dpkg-deb", ["--extract", artifact, join(root, "package")]);
+    if (rpm) {
+      const packageDir = join(root, "package");
+      mkdirSync(packageDir);
+      execFileSync("rpm", ["--checksig", artifact]);
+      // rpm2cpio 4.18 requires a legacy archive-size tag even for valid
+      // modern packages. rpm2archive validates/extracts their file iterator.
+      const archive = execFileSync("rpm2archive", ["--nocompression", artifact], { maxBuffer: 256 * 1024 * 1024 });
+      execFileSync("tar", ["-xf", "-", "-C", packageDir], { input: archive });
+    } else {
+      execFileSync("dpkg-deb", ["--extract", artifact, join(root, "package")]);
+    }
     const resources = join(root, "package/usr/lib/AIPass");
     for (const name of ["aipass", "aipass-agent", "aipass-native-host"]) {
       execFileSync("test", ["-x", join(resources, name)]);
@@ -54,6 +65,15 @@ for (const target of ["main", "tray"]) {
       ["scripts/verify-cli-runtime.mjs", resources],
       { stdio: "inherit", timeout: 180_000 },
     );
+    if (target === "main") {
+      const output = execFileSync(
+        process.execPath,
+        ["scripts/verify-linux-native-clis.mjs", resources],
+        { encoding: "utf8", timeout: 240_000 },
+      );
+      writeFileSync(join(reports, "native-clis.json"), output);
+      console.log("Linux native CLI discovery and credential import passed");
+    }
     const home = join(root, "home");
     mkdirSync(home);
     writeFileSync(
@@ -66,6 +86,7 @@ for (const target of ["main", "tray"]) {
     const env = {
       ...process.env,
       HOME: home,
+      XAUTHORITY: process.env.XAUTHORITY ?? join(process.env.HOME, ".Xauthority"),
       XDG_CONFIG_HOME: join(home, ".config"),
       XDG_DATA_HOME: join(home, ".local/share"),
       XDG_CACHE_HOME: join(home, ".cache"),
@@ -111,6 +132,14 @@ for (const target of ["main", "tray"]) {
     writeFileSync(join(report, "result.json"), JSON.stringify(result, null, 2));
     assert.equal(result.ok, true, result.error);
     assert.equal(result.version, version, "Unexpected running package version");
+    for (const [name, installed] of [
+      ["aipass", join(home, ".local/bin/aipass")],
+      ["aipass-agent", join(home, ".local/lib/AIPass/aipass-agent")],
+      ["aipass-native-host", join(home, ".local/lib/AIPass/aipass-native-host")],
+    ]) {
+      assert.deepEqual(readFileSync(installed), readFileSync(join(resources, name)), `${name} installed helper is stale`);
+      execFileSync("test", ["-x", installed]);
+    }
     const log = readFileSync(join(root, "logs/desktop.log"), "utf8");
     assert.match(log, /event=desktop\.startup\.stage stage=complete/);
     assert.match(log, /event=desktop\.runtime_check\.ready/);

@@ -392,6 +392,89 @@ jobs:
           find "${RUNNER_TEMP}" -maxdepth 1 -type f -name 'AuthKey_*.p8' -delete
           rm -rf apps/desktop/src-tauri/.cloudkit-build
 
+  linux-desktop:
+    name: Linux desktop ${{ matrix.arch }}
+    needs: resolve-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-release.outputs.tag }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux build and runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dbus-daemon libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf xvfb dbus-x11 rpm minisign libfuse2t64
+      - run: pnpm install --frozen-lockfile
+      - name: Set release version
+        env:
+          VERSION: ${{ needs.resolve-release.outputs.version }}
+        run: |
+          node scripts/set-release-version.mjs "$VERSION"
+          if [[ "${{ needs.resolve-release.outputs.channel }}" != "official" ]]; then
+            node scripts/set-extension-release-version.mjs "$VERSION" "${VERSION%%-*}.${GITHUB_RUN_NUMBER}"
+          else
+            node scripts/set-extension-release-version.mjs "$VERSION"
+          fi
+      - name: Build signed Linux desktop packages
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          test -n "$TAURI_SIGNING_PRIVATE_KEY"
+          pnpm --dir apps/desktop tauri build --ci --bundles deb,rpm,appimage --config src-tauri/tauri.linux-release.json
+      - name: Verify every Linux package signature
+        run: node scripts/verify-linux-signatures.mjs target/release/bundle
+      - name: Verify packaged desktop and CLI
+        run: |
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' node scripts/verify-linux-runtime.mjs
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' node scripts/verify-linux-runtime.mjs target/release/bundle/rpm linux-rpm-runtime-reports
+      - name: Verify signed AppImage installation and restart
+        env:
+          VERSION: ${{ needs.resolve-release.outputs.version }}
+        run: |
+          mapfile -t images < <(find target/release/bundle/appimage -maxdepth 1 -name '*.AppImage')
+          test "${#images[@]}" -eq 1
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' node scripts/verify-linux-updater.mjs "${images[0]}" "$VERSION"
+      - name: Prepare Linux release artifacts
+        env:
+          AIPASS_RELEASE_TAG: ${{ needs.resolve-release.outputs.tag }}
+          AIPASS_RELEASE_VERSION: ${{ needs.resolve-release.outputs.version }}
+          AIPASS_RELEASE_ARCH: ${{ matrix.arch }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/prepare-linux-release-artifacts.mjs target/release/bundle release-artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aipass-desktop-linux-${{ matrix.arch }}-${{ needs.resolve-release.outputs.tag }}
+          path: release-artifacts/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload Linux diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-runtime-${{ matrix.arch }}-${{ needs.resolve-release.outputs.tag }}
+          path: |
+            linux-runtime-check-reports/
+            linux-updater-check-reports/
+            linux-rpm-runtime-reports/
+          if-no-files-found: ignore
+          retention-days: 30
+
   cli:
     name: CLI ${{ matrix.name }}
     needs: resolve-release
@@ -528,6 +611,7 @@ jobs:
     needs:
       - resolve-release
       - macos-desktop
+      - linux-desktop
       - cli
       - extension
     runs-on: ubuntu-22.04
@@ -553,6 +637,7 @@ jobs:
           RELEASE_VERSION: ${{ needs.resolve-release.outputs.version }}
         run: |
           node scripts/set-release-version.mjs "${RELEASE_VERSION}"
+          node scripts/merge-linux-update-manifests.mjs release-artifacts
           node scripts/release-metadata.mjs release-artifacts
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
@@ -663,6 +748,8 @@ jobs:
             const requiredPlatforms = [
               'darwin-aarch64',
               'darwin-x86_64',
+              ...['aarch64', 'x86_64'].flatMap(arch =>
+                ['appimage', 'deb', 'rpm'].map(format => `linux-${arch}-${format}`)),
             ];
             const missing = requiredPlatforms.filter((platform) => {
               const entry = manifest.platforms?.[platform];
