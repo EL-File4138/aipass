@@ -862,6 +862,9 @@
                     onChange={onUpdateChannelChange}
                   />
                 </div>
+                {#if updateErrorText}
+                  <Banner tone="danger">{updateErrorText}</Banner>
+                {/if}
                 {#if updateCheck?.available}
                   <div class="update-summary">
                     <div class="update-summary-text">
@@ -911,9 +914,6 @@
                       <RefreshCw size={14} /> {updateChecking ? $t("settings.checking") : $t("settings.checkNow")}
                     </Button>
                   </div>
-                  {#if updateErrorText}
-                    <Banner tone="danger">{updateErrorText}</Banner>
-                  {/if}
                 {/if}
               </div>
             </Card>
