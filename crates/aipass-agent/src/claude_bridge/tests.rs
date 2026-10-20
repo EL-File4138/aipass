@@ -237,3 +237,43 @@ fn history_only_ignores_nonportable_assistant_thinking() {
         history_hash(c.as_array().unwrap())
     );
 }
+
+#[tokio::test]
+async fn native_search_executes_in_the_cli_without_exposing_its_tool_call() {
+    let script = r#"case " $* " in
+  *" --tools WebSearch "*) ;;
+  *) exit 7;;
+esac
+read -r input
+cat <<'EVENTS'
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"search","role":"assistant","usage":{"input_tokens":10}}}}
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"native_search","name":"WebSearch","input":{"query":"news"}}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":0}}
+{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":2}}}
+{"type":"stream_event","event":{"type":"message_stop"}}
+{"type":"stream_event","event":{"type":"message_start","message":{"id":"answer","role":"assistant","usage":{"input_tokens":30}}}}
+{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Found https://example.com/news"}}}
+{"type":"stream_event","event":{"type":"content_block_stop","index":0}}
+{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}}
+{"type":"stream_event","event":{"type":"message_stop"}}
+{"type":"result","is_error":false}
+EVENTS
+while read -r input; do :; done
+"#;
+    let (_temp, bridge, target) = fixture(script);
+    let payload = json!({"model":"claude-test","stream":true,"tools":[{"type":"web_search_20250305","name":"web_search"}],"messages":[{"role":"user","content":"news"}]});
+    let result = collect(bridge.open(&target, &payload, None).unwrap()).await;
+    assert_eq!(result["stop_reason"], "end_turn");
+    assert_eq!(result["usage"]["input_tokens"], 40);
+    assert_eq!(result["usage"]["output_tokens"], 6);
+    assert_eq!(result["content"].as_array().unwrap().len(), 1);
+    assert!(result["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("https://example.com/news"));
+    let runs = bridge.inner.runs.lock().unwrap();
+    let run = runs.values().next().unwrap();
+    assert!(!run.parked);
+    assert!(run.calls.is_empty());
+    assert!(run.tools.is_empty());
+}

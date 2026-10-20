@@ -259,6 +259,8 @@ impl ProxyService {
             });
         }
         let mut runtime = RuntimeConfig::from_routes(self.config.bind_addr.clone(), routes);
+        runtime.search = self.config.search.clone();
+        runtime.search_apis = self.search_apis(vault, skip_unavailable)?;
         runtime.pricing = self.config.pricing.clone();
         runtime.upstream_proxy = self.config.upstream_proxy.clone();
         Ok(runtime)

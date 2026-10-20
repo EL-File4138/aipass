@@ -157,6 +157,8 @@ pub struct UpstreamProxyConfig {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProxyConfig {
+    #[serde(default)]
+    pub search: crate::SearchConfig,
     pub enabled: bool,
     pub bind_addr: String,
     pub routes: Vec<ProxyRouteConfig>,
@@ -169,6 +171,7 @@ pub struct ProxyConfig {
 impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
+            search: crate::SearchConfig::default(),
             enabled: false,
             bind_addr: "127.0.0.1:8787".into(),
             routes: Vec::new(),

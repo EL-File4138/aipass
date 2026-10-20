@@ -13,6 +13,7 @@
   import IntegrationCard from "../integration/IntegrationCard.svelte";
   import UsageBreakdown from "./UsageBreakdown.svelte";
   import UsageChart from "./UsageChart.svelte";
+  import SearchSettingsDialog from "./SearchSettingsDialog.svelte";
   import UsageRangeMenu from "./UsageRangeMenu.svelte";
 
   export let config: ProxyConfig;
@@ -53,6 +54,7 @@
     input.select();
   }
   let clearUsageConfirmOpen = false;
+  let searchOpen = false;
   let logsOpen = false;
   let logsOpening = false;
   let ProxyLogsDialog: typeof import("./ProxyLogsDialog.svelte").default | undefined;
@@ -169,6 +171,7 @@
       </div>
     </div>
     <div class="actions">
+      <Button size="sm" variant="secondary" on:click={() => searchOpen = true}>{$t("search.title")}</Button>
       <IconButton size="sm" label={$t(logsOpening ? "common.loading" : "server.viewLogs")} disabled={logsOpening} on:click={openProxyLogs}>
         {#if logsOpening}<LoaderCircle size={15} class="logs-opening" aria-hidden="true" />{:else}<FileText size={15} />{/if}
       </IconButton>
@@ -551,3 +554,5 @@
     font-family: var(--font-mono);
   }
 </style>
+
+<SearchSettingsDialog open={searchOpen} {config} {entries} onSave={onSaveConfig} onCopy={onCopyEndpoint} onOpenChange={open => searchOpen = open} />

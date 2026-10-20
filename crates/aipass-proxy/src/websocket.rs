@@ -74,6 +74,7 @@ pub(super) async fn handle_request(
     // Limited routes must select/admit each generation, not pin an idle socket
     // to a provider that may be full when the next response.create arrives.
     if model_routes::model_id(&route).is_some()
+        || search::needs_websocket_bridge(&state, &route)
         || route
             .targets
             .iter()

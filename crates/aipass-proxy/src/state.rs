@@ -159,6 +159,8 @@ impl Drop for ResolvedRoute {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeConfig {
+    pub search: crate::SearchConfig,
+    pub search_apis: Vec<crate::ResolvedSearchApi>,
     pub enabled: bool,
     pub bind_addr: String,
     pub routes: Vec<ResolvedRoute>,
@@ -169,6 +171,8 @@ pub struct RuntimeConfig {
 impl RuntimeConfig {
     pub fn from_routes(bind_addr: impl Into<String>, routes: Vec<ResolvedRoute>) -> Self {
         Self {
+            search: crate::SearchConfig::default(),
+            search_apis: Vec::new(),
             enabled: true,
             bind_addr: bind_addr.into(),
             routes,
@@ -223,6 +227,7 @@ pub(crate) type UpstreamClientCache = HashMap<(u64, UpstreamProxyConfig, bool), 
 
 #[derive(Clone)]
 pub(crate) struct RuntimeState {
+    pub(crate) search_history: Arc<Mutex<crate::search::History>>,
     pub(crate) subscription_backend: Arc<RwLock<Option<Arc<dyn SubscriptionBackend>>>>,
     pub(crate) copilot_sessions: Arc<tokio::sync::Mutex<copilot::Sessions>>,
     pub(crate) gemini_signatures: Arc<Mutex<gemini::SignatureLedger>>,
