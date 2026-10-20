@@ -91,8 +91,8 @@ fn failed_copy_retains_the_previous_cleanup() {
     state.clipboard.fail_write = true;
     assert!(state.copy(0, "new-key".into(), 60).is_err());
     assert_eq!(
-        state.pending.as_ref().unwrap().value.expose(),
-        "synthetic-key"
+        state.pending.as_ref().unwrap().digest,
+        <[u8; 32]>::from(Sha256::digest(b"synthetic-key"))
     );
     state.clear_matching().unwrap();
     assert_eq!(state.clipboard.clears, 1);
@@ -105,4 +105,36 @@ fn lock_cancels_copies_waiting_for_confirmation_or_agent() {
     assert!(state.clipboard.text.is_empty());
     assert!(state.pending.is_none());
     assert!(state.copy(state.epoch, "fresh-key".into(), 45).unwrap());
+}
+
+#[test]
+fn prolonged_clipboard_failure_does_not_abandon_cleanup() {
+    let mut state = copied();
+    state.clipboard.fail_read = true;
+    for _ in 0..300 {
+        state.clear_or_retry();
+        let pending = state.pending.as_ref().expect("keep cleanup ownership");
+        assert!(
+            pending.deadline.saturating_duration_since(Instant::now()) <= Duration::from_secs(30)
+        );
+    }
+    state.clipboard.fail_read = false;
+    state.clear_or_retry();
+    assert!(state.clipboard.text.is_empty());
+    assert!(state.pending.is_none());
+}
+
+#[test]
+fn user_content_is_preserved_when_clipboard_recovers_after_many_failures() {
+    let mut state = copied();
+    state.clipboard.fail_clear = true;
+    for _ in 0..5 {
+        state.clear_or_retry();
+    }
+    state.clipboard.text = "new user content".into();
+    state.clipboard.fail_clear = false;
+    state.clear_or_retry();
+    assert_eq!(state.clipboard.text, "new user content");
+    assert_eq!(state.clipboard.clears, 0);
+    assert!(state.pending.is_none());
 }

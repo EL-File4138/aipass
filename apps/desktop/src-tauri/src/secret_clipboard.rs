@@ -1,5 +1,6 @@
 //! Native secret clipboard lifetime, independent of WebView focus and timers.
 use aipass_agent_protocol::{AgentRequest, SecretValue, SensitiveString};
+use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -56,7 +57,7 @@ impl Clipboard for NativeClipboard {
 }
 
 struct Pending {
-    value: SensitiveString,
+    digest: [u8; 32],
     deadline: Instant,
     retries: u8,
 }
@@ -74,7 +75,7 @@ impl<C: Clipboard> ClipboardState<C> {
         }
         self.clipboard.write(value.expose())?;
         self.pending = Some(Pending {
-            value,
+            digest: Sha256::digest(value.expose().as_bytes()).into(),
             deadline: Instant::now() + Duration::from_secs(u64::from(seconds)),
             retries: 0,
         });
@@ -86,11 +87,26 @@ impl<C: Clipboard> ClipboardState<C> {
         };
         // Never clear on a failed read: it could now contain unrelated content.
         let current = self.clipboard.read()?;
-        if current == pending.value {
+        if <[u8; 32]>::from(Sha256::digest(current.expose().as_bytes())) == pending.digest {
             self.clipboard.clear()?;
         }
         self.pending = None;
         Ok(())
+    }
+    fn clear_or_retry(&mut self) {
+        if self.clear_matching().is_err() {
+            if let Some(pending) = &mut self.pending {
+                // Log once per failed cleanup, then bound work without abandoning ownership.
+                if pending.retries == 0 {
+                    log::warn!(
+                        "Secret clipboard cleanup delayed; clipboard contents were preserved."
+                    );
+                }
+                pending.retries = pending.retries.saturating_add(1);
+                let seconds = 1_u64 << pending.retries.saturating_sub(1).min(5);
+                pending.deadline = Instant::now() + Duration::from_secs(seconds.min(30));
+            }
+        }
     }
     fn invalidate(&mut self) -> Result<(), String> {
         self.epoch = self.epoch.wrapping_add(1);
@@ -114,24 +130,25 @@ fn start_worker() {
     WORKER.get_or_init(|| {
         std::thread::spawn(|| {
             let (mutex, changed) = shared();
-            let Ok(mut state) = mutex.lock() else { return; };
+            let Ok(mut state) = mutex.lock() else {
+                return;
+            };
             loop {
-                let delay = state.pending.as_ref().map(|p| p.deadline.saturating_duration_since(Instant::now()));
+                let delay = state
+                    .pending
+                    .as_ref()
+                    .map(|p| p.deadline.saturating_duration_since(Instant::now()));
                 state = match delay {
-                    None => match changed.wait(state) { Ok(state) => state, Err(_) => return },
+                    None => match changed.wait(state) {
+                        Ok(state) => state,
+                        Err(_) => return,
+                    },
                     Some(delay) if !delay.is_zero() => match changed.wait_timeout(state, delay) {
-                        Ok((state, _)) => state, Err(_) => return,
+                        Ok((state, _)) => state,
+                        Err(_) => return,
                     },
                     Some(_) => {
-                        if state.clear_matching().is_err() {
-                            log::warn!("Secret clipboard cleanup failed; clipboard contents were preserved.");
-                            if let Some(pending) = &mut state.pending {
-                                pending.retries += 1;
-                                pending.deadline = Instant::now() + Duration::from_secs(1);
-                                // Bound secret retention when the OS clipboard stays unavailable.
-                                if pending.retries >= 3 { state.pending = None; }
-                            }
-                        }
+                        state.clear_or_retry();
                         state
                     }
                 };

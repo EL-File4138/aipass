@@ -41,6 +41,7 @@ reqwest.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tauri = { version = "2.11.2", features = ["image-png", "macos-private-api", "tray-icon"] }
 tauri-plugin-deep-link = "2.4.9"
 tauri-plugin-dialog = "2"

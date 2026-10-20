@@ -1032,6 +1032,6 @@ Newest entries last within each section.
 ### Frontend timers and blind clears left credentials exposed or deleted user content
 - **Symptom**: secret cleanup depended on WebView timers; a failed clipboard read fell back to clearing unrelated user content.
 - **Root cause**: `apps/desktop/src/App.svelte::scheduleClipboardClear` retained plaintext in a frontend closure and `clearCopiedSecretFromClipboard` wrote an empty value after read failures.
-- **Fix**: native `secret_clipboard` owns clipboard lifetime, bounded retries, zeroizing pending values, confirmation before API-key reads, and lock/exit invalidation. All desktop sensitive-copy entry points reuse it.
-- **Guardrail**: clear only after a successful matching read; preserve newer clipboard content, keep previous cleanup after a failed copy, and invalidate pending confirmation/Agent responses on lock. Cover these paths in `secret_clipboard/tests.rs`.
+- **Fix**: native `secret_clipboard` owns clipboard lifetime, bounded retry backoff, SHA-256 ownership digests instead of retained plaintext, confirmation before API-key reads, and lock/exit invalidation. All desktop sensitive-copy entry points reuse it.
+- **Guardrail**: clear only after a successful matching read; preserve newer clipboard content, keep previous cleanup after a failed copy, and invalidate pending confirmation/Agent responses on lock. Never abandon cleanup after transient OS failures; retain only a digest and retry with bounded backoff until content changes or clearing succeeds. Cover these paths in `secret_clipboard/tests.rs`.
 - **Watch points**: provider API keys, recovery kit, server tokens and panel access codes; UI preferences defaults/migration; native clipboard-history exclusion hints are best effort.
