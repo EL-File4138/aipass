@@ -1813,8 +1813,8 @@ fn assert_silent_retry_does_not_replay_output(tail: &'static str) {
     let primary = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let primary_addr = primary.local_addr().unwrap();
     let primary_thread = std::thread::spawn(move || {
-        let (mut stream, _) = primary.accept().unwrap();
-        let _ = read_http_request(&mut stream);
+        let (mut stream, request) = mock_upstream::accept_api_request(&primary);
+        assert!(request.0.starts_with("POST /v1/responses "));
         let partial = format!(
             "data: {{\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}}\n\n{tail}"
         );
@@ -1860,11 +1860,7 @@ fn assert_silent_retry_does_not_replay_output(tail: &'static str) {
     assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
     let _ = response.text().unwrap();
     primary_thread.join().unwrap();
-    fallback.set_nonblocking(true).unwrap();
-    assert_eq!(
-        fallback.accept().unwrap_err().kind(),
-        std::io::ErrorKind::WouldBlock
-    );
+    mock_upstream::assert_no_api_request(&fallback);
 }
 
 #[test]
@@ -2216,8 +2212,8 @@ fn lost_response_headers_do_not_replay_a_submitted_request() {
     let primary = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let primary_addr = primary.local_addr().unwrap();
     let primary_thread = std::thread::spawn(move || {
-        let (mut stream, _) = primary.accept().unwrap();
-        let _ = read_http_request(&mut stream);
+        let (_stream, request) = mock_upstream::accept_api_request(&primary);
+        assert!(request.0.starts_with("POST /v1/responses "));
         std::thread::sleep(Duration::from_millis(200));
     });
     let fallback = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -2251,11 +2247,7 @@ fn lost_response_headers_do_not_replay_a_submitted_request() {
     assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
     let _ = response.text().unwrap();
     primary_thread.join().unwrap();
-    fallback.set_nonblocking(true).unwrap();
-    assert_eq!(
-        fallback.accept().unwrap_err().kind(),
-        std::io::ErrorKind::WouldBlock
-    );
+    mock_upstream::assert_no_api_request(&fallback);
 }
 
 #[test]
@@ -2263,9 +2255,8 @@ fn truncated_non_stream_body_does_not_replay_a_submitted_request() {
     let primary = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let primary_addr = primary.local_addr().unwrap();
     let primary_thread = std::thread::spawn(move || {
-        let (mut stream, _) = primary.accept().unwrap();
-        let mut request = [0_u8; 4096];
-        let _ = stream.read(&mut request).unwrap();
+        let (mut stream, request) = mock_upstream::accept_api_request(&primary);
+        assert!(request.0.starts_with("POST /v1/responses "));
         write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 64\r\nConnection: close\r\n\r\npartial"
@@ -2302,11 +2293,7 @@ fn truncated_non_stream_body_does_not_replay_a_submitted_request() {
     assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
     let _ = response.text().unwrap();
     primary_thread.join().unwrap();
-    fallback.set_nonblocking(true).unwrap();
-    assert_eq!(
-        fallback.accept().unwrap_err().kind(),
-        std::io::ErrorKind::WouldBlock
-    );
+    mock_upstream::assert_no_api_request(&fallback);
 }
 
 #[test]
@@ -2314,9 +2301,8 @@ fn stream_request_with_truncated_json_does_not_replay() {
     let primary = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let primary_addr = primary.local_addr().unwrap();
     let primary_thread = std::thread::spawn(move || {
-        let (mut stream, _) = primary.accept().unwrap();
-        let mut request = [0_u8; 4096];
-        let _ = stream.read(&mut request).unwrap();
+        let (mut stream, request) = mock_upstream::accept_api_request(&primary);
+        assert!(request.0.starts_with("POST /v1/responses "));
         write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 64\r\nConnection: close\r\n\r\npartial"
@@ -2353,11 +2339,7 @@ fn stream_request_with_truncated_json_does_not_replay() {
     assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
     let _ = response.text().unwrap();
     primary_thread.join().unwrap();
-    fallback.set_nonblocking(true).unwrap();
-    assert_eq!(
-        fallback.accept().unwrap_err().kind(),
-        std::io::ErrorKind::WouldBlock
-    );
+    mock_upstream::assert_no_api_request(&fallback);
 }
 
 #[test]
@@ -2365,9 +2347,8 @@ fn incomplete_first_sse_event_does_not_replay_a_submitted_request() {
     let primary = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let primary_addr = primary.local_addr().unwrap();
     let primary_thread = std::thread::spawn(move || {
-        let (mut stream, _) = primary.accept().unwrap();
-        let mut request = [0_u8; 4096];
-        let _ = stream.read(&mut request).unwrap();
+        let (mut stream, request) = mock_upstream::accept_api_request(&primary);
+        assert!(request.0.starts_with("POST /v1/responses "));
         let partial = r#"data: {"partial":true}"#;
         write!(
                 stream,
@@ -2410,11 +2391,7 @@ fn incomplete_first_sse_event_does_not_replay_a_submitted_request() {
     assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
     let _ = response.text().unwrap();
     primary_thread.join().unwrap();
-    fallback.set_nonblocking(true).unwrap();
-    assert_eq!(
-        fallback.accept().unwrap_err().kind(),
-        std::io::ErrorKind::WouldBlock
-    );
+    mock_upstream::assert_no_api_request(&fallback);
 }
 
 #[test]

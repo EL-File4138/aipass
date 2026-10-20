@@ -12,28 +12,7 @@ pub(super) fn mock_upstream(
     let status = status.to_string();
     let content_type = content_type.to_string();
     let handle = std::thread::spawn(move || {
-        let (mut stream, captured) = loop {
-            let (mut stream, _) = listener.accept().unwrap();
-            let captured = read_http_request(&mut stream);
-            let root_probe = captured
-                .0
-                .lines()
-                .next()
-                .is_some_and(|line| line.starts_with("GET / HTTP/"))
-                && !captured.0.lines().any(|line| {
-                    line.split_once(':').is_some_and(|(name, _)| {
-                        name.eq_ignore_ascii_case("authorization")
-                            || name.eq_ignore_ascii_case("x-api-key")
-                    })
-                });
-            if root_probe {
-                let _ = stream.write_all(
-                    b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                );
-                continue;
-            }
-            break (stream, captured);
-        };
+        let (mut stream, captured) = accept_api_request(&listener);
         write!(
                 stream,
                 "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -90,4 +69,76 @@ fn authenticated_root_requests_are_not_ignored() {
         .0
         .to_ascii_lowercase()
         .contains("authorization: bearer test-only"));
+}
+
+fn discovery_probe(headers: &str) -> bool {
+    headers
+        .lines()
+        .next()
+        .is_some_and(|line| line.starts_with("GET / HTTP/"))
+        && !headers.lines().any(|line| {
+            line.split_once(':').is_some_and(|(name, _)| {
+                name.eq_ignore_ascii_case("authorization") || name.eq_ignore_ascii_case("x-api-key")
+            })
+        })
+}
+fn answer_probe(stream: &mut std::net::TcpStream) {
+    let _ = stream
+        .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+}
+pub(super) fn accept_api_request(
+    listener: &std::net::TcpListener,
+) -> (std::net::TcpStream, (String, Vec<u8>)) {
+    loop {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let request = read_http_request(&mut stream);
+        if discovery_probe(&request.0) {
+            answer_probe(&mut stream);
+            continue;
+        }
+        return (stream, request);
+    }
+}
+pub(super) fn assert_no_api_request(listener: &std::net::TcpListener) {
+    listener.set_nonblocking(true).unwrap();
+    loop {
+        let mut stream = match listener.accept() {
+            Ok((stream, _)) => stream,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return,
+            Err(error) => panic!("unexpected listener failure: {error}"),
+        };
+        stream.set_nonblocking(false).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let request = read_http_request(&mut stream);
+        assert!(
+            discovery_probe(&request.0),
+            "unexpected upstream request: {}",
+            request.0.lines().next().unwrap_or("")
+        );
+        answer_probe(&mut stream);
+    }
+}
+#[test]
+fn no_replay_guard_ignores_only_discovery_and_rejects_real_requests() {
+    for (line, auth, allowed) in [
+        ("GET / HTTP/1.1", "", true),
+        ("POST /v1/responses HTTP/1.1", "", false),
+        ("GET / HTTP/1.1", "Authorization: Bearer fixture\r\n", false),
+        ("GET /token HTTP/1.1", "", false),
+    ] {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        write!(
+            client,
+            "{line}\r\nHost: localhost\r\n{auth}Content-Length: 0\r\n\r\n"
+        )
+        .unwrap();
+        let result = std::panic::catch_unwind(|| assert_no_api_request(&listener));
+        assert_eq!(result.is_ok(), allowed, "{line}");
+    }
 }

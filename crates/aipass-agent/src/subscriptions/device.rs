@@ -129,41 +129,68 @@ mod tests {
                 json!({"error":"authorization_pending"}),
                 json!({"access_token":"fake-access","refresh_token":"fake-rotation","expires_in":3600}),
             ] {
-                let (socket, _) = listener.accept().await.unwrap();
-                let service = hyper::service::service_fn(
-                    move |request: hyper::Request<hyper::body::Incoming>| {
-                        let reply = body.to_string();
-                        async move {
-                            assert_eq!(request.method(), hyper::Method::POST);
-                            let text = String::from_utf8(
-                                request
-                                    .into_body()
-                                    .collect()
-                                    .await
-                                    .unwrap()
-                                    .to_bytes()
-                                    .to_vec(),
-                            )
-                            .unwrap();
-                            assert!(text.contains("device_code=account-bound-code"));
-                            assert!(text.contains("code_verifier=bound-verifier"));
-                            Ok::<_, std::convert::Infallible>(
-                                hyper::Response::builder()
-                                    .header("Content-Type", "application/json")
-                                    .body(Full::new(bytes::Bytes::from(reply)))
-                                    .unwrap(),
-                            )
-                        }
-                    },
-                );
-                hyper::server::conn::http1::Builder::new()
-                    .keep_alive(false)
-                    .serve_connection(TokioIo::new(socket), service)
-                    .await
-                    .unwrap();
+                loop {
+                    let (socket, _) = listener.accept().await.unwrap();
+                    let consumed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let called = consumed.clone();
+                    let reply = body.to_string();
+                    let service = hyper::service::service_fn(
+                        move |request: hyper::Request<hyper::body::Incoming>| {
+                            let reply = reply.clone();
+                            let called = called.clone();
+                            async move {
+                                // Discovery traffic to another route must not consume a token reply.
+                                if request.uri().path() != "/token" {
+                                    return Ok::<_, std::convert::Infallible>(
+                                        hyper::Response::builder()
+                                            .status(404)
+                                            .body(Full::new(bytes::Bytes::new()))
+                                            .unwrap(),
+                                    );
+                                }
+                                assert_eq!(request.method(), hyper::Method::POST);
+                                let text = String::from_utf8(
+                                    request
+                                        .into_body()
+                                        .collect()
+                                        .await
+                                        .unwrap()
+                                        .to_bytes()
+                                        .to_vec(),
+                                )
+                                .unwrap();
+                                assert!(text.contains("device_code=account-bound-code"));
+                                assert!(text.contains("code_verifier=bound-verifier"));
+                                called.store(true, std::sync::atomic::Ordering::SeqCst);
+                                Ok::<_, std::convert::Infallible>(
+                                    hyper::Response::builder()
+                                        .header("Content-Type", "application/json")
+                                        .body(Full::new(bytes::Bytes::from(reply)))
+                                        .unwrap(),
+                                )
+                            }
+                        },
+                    );
+                    hyper::server::conn::http1::Builder::new()
+                        .keep_alive(false)
+                        .serve_connection(TokioIo::new(socket), service)
+                        .await
+                        .unwrap();
+                    if consumed.load(std::sync::atomic::Ordering::SeqCst) {
+                        break;
+                    }
+                }
             }
         });
         let (c, _, _) = super::super::tests::context(Client::builder().no_proxy().build().unwrap());
+        // Exercise the same unrelated request that can reach local test listeners.
+        let probe = c
+            .client
+            .get(endpoint.replace("/token", "/"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(probe.status(), reqwest::StatusCode::NOT_FOUND);
         let value = poll(
             &c,
             &endpoint,
