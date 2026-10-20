@@ -30,63 +30,8 @@ const LOGIN_TTL: Duration = Duration::from_secs(900);
 const OPENED_URL: &str = "AIPASS_CLAUDE_OPENED_URL";
 const INSTALL_ERROR: &str = "Install or update Claude Code, then check again in AIPass";
 
-fn executable(path: &Path) -> bool {
-    let Ok(meta) = path.metadata() else {
-        return false;
-    };
-    if !meta.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if meta.permissions().mode() & 0o111 == 0 {
-            return false;
-        }
-    }
-    true
-}
-
 fn candidates() -> Vec<PathBuf> {
-    let mut dirs = std::env::var_os("PATH")
-        .map(|v| std::env::split_paths(&v).collect::<Vec<_>>())
-        .unwrap_or_default();
-    dirs.extend([
-        PathBuf::from("/opt/homebrew/bin"),
-        PathBuf::from("/usr/local/bin"),
-    ]);
-    if let Some(home) = std::env::var_os("HOME") {
-        dirs.push(PathBuf::from(home).join(".local/bin"));
-    }
-    if let Some(base) = directories::BaseDirs::new() {
-        dirs.push(base.home_dir().join(".local/bin"));
-        if let Ok(entries) = std::fs::read_dir(base.home_dir().join(".nvm/versions/node")) {
-            let mut nodes = entries
-                .flatten()
-                .map(|e| e.path().join("bin"))
-                .collect::<Vec<_>>();
-            nodes.sort();
-            dirs.extend(nodes.into_iter().rev());
-        }
-    }
-    #[cfg(windows)]
-    if let Some(appdata) = std::env::var_os("APPDATA") {
-        dirs.push(PathBuf::from(appdata).join("npm"));
-    }
-    let mut paths = Vec::new();
-    for dir in dirs {
-        #[cfg(windows)]
-        let names = ["claude.exe", "claude.cmd"];
-        #[cfg(not(windows))]
-        let names = ["claude"];
-        for name in names {
-            let path = dir.join(name);
-            if executable(&path) && !paths.contains(&path) {
-                paths.push(path);
-            }
-        }
-    }
-    paths
+    aipass_config_writers::cli_discovery::executable_candidates(&["claude"])
 }
 
 /// Shared with the generation bridge; a non-executable file is not a CLI.
@@ -95,18 +40,10 @@ pub(crate) fn binary() -> Option<PathBuf> {
 }
 
 pub(crate) fn configure(command: &mut Command, dir: &Path) {
-    // Finder-launched desktop processes may not inherit npm's Node bin path.
-    if let Some(bin) = Path::new(command.get_program())
-        .parent()
-        .filter(|p| p.is_absolute())
+    if let Some(path) =
+        aipass_config_writers::cli_discovery::command_path(Path::new(command.get_program()))
     {
-        let mut paths = vec![bin.to_owned()];
-        paths.extend(std::env::split_paths(
-            &std::env::var_os("PATH").unwrap_or_default(),
-        ));
-        if let Ok(path) = std::env::join_paths(paths) {
-            command.env("PATH", path);
-        }
+        command.env("PATH", path);
     }
     for (key, _) in std::env::vars_os() {
         let name = key.to_string_lossy();

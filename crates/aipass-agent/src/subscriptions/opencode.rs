@@ -44,10 +44,7 @@ pub(super) async fn login(c: &mut Context, _method: usize) -> Result<Value> {
     Ok(json!({"type":"api","key":key,"accountId":key_identity(key)}))
 }
 pub(super) fn directory() -> Result<std::path::PathBuf> {
-    Ok(std::env::var_os("XDG_DATA_HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or(home()?.join(".local/share"))
-        .join("opencode"))
+    Ok(aipass_config_writers::xdg_data_home(&home()?).join("opencode"))
 }
 pub(super) async fn fresh(c: &mut Context) -> Result<()> {
     if c.token()? == "public" {

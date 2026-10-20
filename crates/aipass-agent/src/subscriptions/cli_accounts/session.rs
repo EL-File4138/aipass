@@ -4,14 +4,6 @@ use super::*;
 pub(super) fn command(c: &Context, provider: &str, root: &Path) -> Result<tokio::process::Command> {
     let exe = executable(provider)?;
     let mut cmd = native_cli::command(&exe, c);
-    let mut paths = vec![exe.parent().ok_or("invalid CLI path")?.to_owned()];
-    paths.extend(std::env::split_paths(
-        &std::env::var_os("PATH").unwrap_or_default(),
-    ));
-    cmd.env(
-        "PATH",
-        std::env::join_paths(paths).map_err(|_| "invalid CLI PATH")?,
-    );
     let env = match provider {
         "codex" => "CODEX_HOME",
         "grok" => "GROK_HOME",

@@ -7,6 +7,7 @@ authors.workspace = true
 
 [dependencies]
 regex = "1"
+semver.workspace = true
 aipass-crypto = { path = "../aipass-crypto" }
 aipass-provider-registry = { path = "../aipass-provider-registry" }
 aipass-storage = { path = "../aipass-storage" }
@@ -29,3 +30,11 @@ tempfile.workspace = true
 security-framework = "3.7"
 security-framework-sys = "2.17"
 core-foundation = "0.10"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["process"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+secret-service = { version = "4", features = ["rt-async-io-crypto-rust"] }
+async-io = "2"
+futures-lite = "2"

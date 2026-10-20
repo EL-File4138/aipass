@@ -6,60 +6,13 @@ pub(crate) fn executable(provider: &str) -> Result<PathBuf> {
         "gemini-cli" => "gemini",
         v => v,
     };
-    let mut directories =
-        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect::<Vec<_>>();
-    directories.extend([
-        home()?.join(".local/bin"),
-        home()?.join(".grok/bin"),
-        PathBuf::from("/opt/homebrew/bin"),
-        PathBuf::from("/usr/local/bin"),
-    ]);
-    if let Some(dir) = std::env::var_os("GROK_BIN_DIR").filter(|_| provider == "grok") {
-        directories.insert(0, dir.into());
-    }
-    if let Ok(entries) = std::fs::read_dir(home()?.join(".nvm/versions/node")) {
-        let mut nodes = entries
-            .flatten()
-            .map(|e| e.path().join("bin"))
-            .collect::<Vec<_>>();
-        nodes.sort();
-        nodes.reverse();
-        directories.extend(nodes);
-    }
-    #[cfg(windows)]
-    if let Some(dir) = std::env::var_os("APPDATA") {
-        directories.push(PathBuf::from(dir).join("npm"));
-    }
-    for dir in directories {
-        #[cfg(windows)]
-        let names = [format!("{name}.exe"), format!("{name}.cmd")];
-        #[cfg(not(windows))]
-        let names = [name.to_owned()];
-        for name in names {
-            let path = dir.join(name);
-            if !path.is_file() {
-                continue;
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if path
-                    .metadata()
-                    .map_or(true, |m| m.permissions().mode() & 0o111 == 0)
-                {
-                    continue;
-                }
-            }
-            // The community npm package named grok is a different product.
-            if provider == "grok"
-                && std::env::var_os("GROK_BIN_DIR").is_none()
-                && !std::fs::canonicalize(&path)
-                    .is_ok_and(|p| p.to_string_lossy().replace('\\', "/").contains("/.grok/"))
-            {
-                continue;
-            }
-            return Ok(path);
-        }
+    let candidates = if provider == "grok" {
+        aipass_config_writers::cli_discovery::tool_executables(&aipass_config_writers::ToolId::Grok)
+    } else {
+        aipass_config_writers::cli_discovery::executable_candidates(&[name])
+    };
+    if let Some(path) = candidates.into_iter().next() {
+        return Ok(path);
     }
     Err(format!(
         "Install or update the official {name} CLI, then retry in AIPass"
@@ -81,15 +34,14 @@ pub(crate) fn status(provider: &str) -> aipass_agent_protocol::ClaudeCliStatus {
     let probe = |args: &[&str]| -> Option<String> {
         let file = tempfile::tempfile().ok()?;
         let mut cmd = std::process::Command::new(&exe);
-        let mut paths = vec![exe.parent()?.to_owned()];
-        paths.extend(std::env::split_paths(
-            &std::env::var_os("PATH").unwrap_or_default(),
-        ));
-        cmd.env("PATH", std::env::join_paths(paths).ok()?)
-            .args(args)
-            .stdin(std::process::Stdio::null())
-            .stdout(file.try_clone().ok()?)
-            .stderr(std::process::Stdio::null());
+        cmd.env(
+            "PATH",
+            aipass_config_writers::cli_discovery::command_path(&exe)?,
+        )
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(file.try_clone().ok()?)
+        .stderr(std::process::Stdio::null());
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;

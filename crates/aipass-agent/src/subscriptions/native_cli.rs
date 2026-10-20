@@ -43,10 +43,22 @@ pub(super) fn command(exe: &std::path::Path, c: &Context) -> Command {
         "SystemRoot",
         "LANG",
         "SSL_CERT_FILE",
+        "DBUS_SESSION_BUS_ADDRESS",
+        "XDG_RUNTIME_DIR",
+        "ASDF_DATA_DIR",
+        "MISE_DATA_DIR",
+        "VOLTA_HOME",
+        "NVM_DIR",
+        "FNM_DIR",
+        "PNPM_HOME",
+        "BUN_INSTALL",
     ] {
         if let Some(v) = std::env::var_os(key) {
             command.env(key, v);
         }
+    }
+    if let Some(path) = aipass_config_writers::cli_discovery::command_path(exe) {
+        command.env("PATH", path);
     }
     if let Some(env) = c
         .outbound

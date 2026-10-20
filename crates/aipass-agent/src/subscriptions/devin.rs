@@ -16,9 +16,7 @@ fn native(source: &Value) -> Result<Value> {
             .map(std::path::PathBuf::from)
             .unwrap_or(home()?.join("AppData/Roaming"))
     } else {
-        std::env::var_os("XDG_DATA_HOME")
-            .map(std::path::PathBuf::from)
-            .unwrap_or(home()?.join(".local/share"))
+        aipass_config_writers::xdg_data_home(&home()?)
     };
     let path = native_import::root(source)
         .unwrap_or_else(|| root.join("devin"))
@@ -103,14 +101,9 @@ pub(super) async fn fresh(c: &mut Context) -> Result<()> {
     Ok(())
 }
 fn executable() -> Result<std::path::PathBuf> {
-    let exe = if cfg!(windows) { "devin.exe" } else { "devin" };
-    let mut dirs =
-        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect::<Vec<_>>();
-    dirs.push(home()?.join(".local/bin"));
-    dirs.extend(["/opt/homebrew/bin".into(), "/usr/local/bin".into()]);
-    dirs.into_iter()
-        .map(|p| p.join(exe))
-        .find(|p| p.is_absolute() && p.is_file())
+    aipass_config_writers::cli_discovery::executable_candidates(&["devin"])
+        .into_iter()
+        .next()
         .ok_or_else(|| "Devin CLI is not installed".into())
 }
 async fn families(c: &Context) -> Result<Value> {

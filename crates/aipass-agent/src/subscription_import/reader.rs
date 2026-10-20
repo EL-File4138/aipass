@@ -143,7 +143,7 @@ fn classify(error: &str) -> (SubscriptionImportStatus, &'static str, &'static st
             "secure_store_unavailable",
             "retry",
         )
-    } else if e.contains("not found") {
+    } else if e.contains("not found") || e.contains("sign-in missing") {
         (SubscriptionImportStatus::NotFound, "not_found", "login")
     } else if e.contains("expired")
         || e.contains("not signed in")

@@ -6,31 +6,10 @@ const AGENT: &str = "https://agentn.global.api5.cursor.sh";
 const VERSION: &str = "2026.09.23-86fc751";
 
 fn executable() -> Result<std::path::PathBuf> {
-    let mut dirs =
-        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect::<Vec<_>>();
-    dirs.extend([
-        home()?.join(".local/bin"),
-        "/opt/homebrew/bin".into(),
-        "/usr/local/bin".into(),
-    ]);
-    for name in ["cursor-agent", "agent"] {
-        for dir in &dirs {
-            let p = dir.join(if cfg!(windows) {
-                format!("{name}.exe")
-            } else {
-                name.into()
-            });
-            if p.is_absolute()
-                && p.is_file()
-                && (name == "cursor-agent"
-                    || p.canonicalize()
-                        .is_ok_and(|p| p.to_string_lossy().contains("cursor-agent")))
-            {
-                return Ok(p);
-            }
-        }
-    }
-    Err("Cursor CLI is not installed".into())
+    aipass_config_writers::cli_discovery::tool_executables(&aipass_config_writers::ToolId::Cursor)
+        .into_iter()
+        .next()
+        .ok_or_else(|| "Cursor CLI is not installed".into())
 }
 fn version() -> String {
     let re = regex::Regex::new(r"^\d{4}\.\d{2}\.\d{2}-[0-9a-f]+$").unwrap();
@@ -115,10 +94,7 @@ async fn native_token(_c: &Context) -> Result<String> {
             .unwrap_or(home()?.join("AppData/Roaming"))
             .join("Cursor/auth.json")
     } else {
-        std::env::var_os("XDG_CONFIG_HOME")
-            .map(std::path::PathBuf::from)
-            .unwrap_or(home()?.join(".config"))
-            .join("cursor/auth.json")
+        aipass_config_writers::xdg_config_home(&home()?).join("cursor/auth.json")
     };
     let p = native_import::root(&_c.auth)
         .map(|r| r.join("auth.json"))

@@ -47,35 +47,28 @@ async fn management(
     json_request(signed(c, r)?).await
 }
 fn cli_db() -> Result<std::path::PathBuf> {
-    Ok(home()?.join(if cfg!(target_os = "macos") {
-        "Library/Application Support/kiro-cli/data.sqlite3"
+    let home = home()?;
+    let root = if cfg!(target_os = "macos") {
+        home.join("Library/Application Support")
     } else if cfg!(windows) {
-        "AppData/Roaming/kiro-cli/data.sqlite3"
+        home.join("AppData/Roaming")
     } else {
-        ".local/share/kiro-cli/data.sqlite3"
-    }))
+        aipass_config_writers::xdg_data_home(&home)
+    };
+    Ok(root.join("kiro-cli/data.sqlite3"))
 }
+
 fn native_db(source: &Value) -> Result<std::path::PathBuf> {
     Ok(native_import::root(source)
         .map(|p| p.join("data.sqlite3"))
         .unwrap_or(cli_db()?))
 }
 fn cli_executable() -> Option<std::path::PathBuf> {
-    let name = if cfg!(windows) {
-        "kiro-cli.exe"
-    } else {
-        "kiro-cli"
-    };
-    let mut dirs: Vec<_> =
-        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
-    if let Ok(home) = home() {
-        dirs.extend([home.join(".local/bin"), home.join(".kiro/bin")]);
-    }
-    dirs.extend(["/opt/homebrew/bin".into(), "/usr/local/bin".into()]);
-    dirs.into_iter()
-        .map(|d| d.join(name))
-        .find(|p| p.is_absolute() && p.is_file())
+    aipass_config_writers::cli_discovery::executable_candidates(&["kiro-cli"])
+        .into_iter()
+        .next()
 }
+
 fn expiry(v: &Value) -> u64 {
     v.as_str()
         .and_then(|s| {

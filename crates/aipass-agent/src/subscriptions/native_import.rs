@@ -30,10 +30,7 @@ pub(crate) fn defaults(provider: &str) -> Result<Vec<SubscriptionImportSource>> 
                     .unwrap_or(h.join("AppData/Roaming"))
                     .join("devin")
             } else {
-                std::env::var_os("XDG_DATA_HOME")
-                    .map(PathBuf::from)
-                    .unwrap_or(h.join(".local/share"))
-                    .join("devin")
+                aipass_config_writers::xdg_data_home(&h).join("devin")
             }
         }
         "commandcode-plan" => h.join(".commandcode"),
@@ -48,19 +45,18 @@ pub(crate) fn defaults(provider: &str) -> Result<Vec<SubscriptionImportSource>> 
                     .unwrap_or(h.join("AppData/Roaming"))
                     .join("Cursor")
             } else {
-                std::env::var_os("XDG_CONFIG_HOME")
-                    .map(PathBuf::from)
-                    .unwrap_or(h.join(".config"))
-                    .join("cursor")
+                aipass_config_writers::xdg_config_home(&h).join("cursor")
             }
         }
-        "kiro" => h.join(if cfg!(target_os = "macos") {
-            "Library/Application Support/kiro-cli"
-        } else if cfg!(windows) {
-            "AppData/Roaming/kiro-cli"
-        } else {
-            ".local/share/kiro-cli"
-        }),
+        "kiro" => {
+            if cfg!(target_os = "macos") {
+                h.join("Library/Application Support/kiro-cli")
+            } else if cfg!(windows) {
+                h.join("AppData/Roaming/kiro-cli")
+            } else {
+                aipass_config_writers::xdg_data_home(&h).join("kiro-cli")
+            }
+        }
         "workbuddy" | "workbuddy-ai" => h
             .join(if cfg!(target_os = "macos") {
                 "Library/Application Support/CodeBuddyExtension"

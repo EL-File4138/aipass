@@ -94,6 +94,7 @@ pub(crate) fn persist_claude_login(
 pub(crate) fn claude_home() -> PathBuf {
     std::env::var_os("CLAUDE_CONFIG_DIR")
         .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
         .unwrap_or_else(|| home().join(".claude"))
 }
 pub(crate) fn claude_reference(vault: &Vault, id: Uuid) -> ServiceResult<Option<Value>> {

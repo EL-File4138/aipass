@@ -14,9 +14,7 @@ pub(super) fn directory() -> Result<PathBuf> {
             .map(PathBuf::from)
             .unwrap_or(h.join("AppData/Roaming"))
     } else {
-        std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .unwrap_or(h.join(".config"))
+        aipass_config_writers::xdg_config_home(&h)
     };
     Ok(parent.join("kimi-desktop/daimon-share/daimon"))
 }

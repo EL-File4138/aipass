@@ -10,12 +10,19 @@ pub(crate) fn default_home(provider: &str) -> Result<PathBuf> {
         _ => return Err("unknown CLI account".into()),
     };
     let path = if provider == "gemini-cli" {
-        std::env::var_os(env).map(PathBuf::from).unwrap_or(home()?)
+        std::env::var_os(env)
+            .filter(|p| !p.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or(home()?)
     } else {
         std::env::var_os(env)
+            .filter(|p| !p.is_empty())
             .map(PathBuf::from)
             .unwrap_or(home()?.join(folder))
     };
+    if !path.is_absolute() {
+        return Err("CLI home must be an absolute path".into());
+    }
     Ok(path)
 }
 
@@ -223,6 +230,11 @@ fn read_inner(provider: &str, root: &Path, cached: bool) -> Result<PrivateJson> 
             Ok(json!({"access":item["key"],"accountId":item["email"],"expires":expiry}))
         }
         "gemini-cli" => {
+            // This opt-in backend migrates/deletes oauth_creds.json and may leave
+            // an obsolete file behind. Never import it as the active sign-in.
+            if std::env::var("GEMINI_FORCE_ENCRYPTED_FILE_STORAGE").as_deref() == Ok("true") {
+                return Err("Gemini CLI encrypted credential store is unsupported; use its OAuth file store for import".into());
+            }
             let raw = PrivateJson(read_json(&dir.join("oauth_creds.json"))?);
             let users = read_json(&dir.join("google_accounts.json"))?;
             if s(&raw, "access_token").is_empty() || s(&users, "active").is_empty() {
@@ -254,6 +266,19 @@ fn read_inner(provider: &str, root: &Path, cached: bool) -> Result<PrivateJson> 
                 .as_str()
                 .filter(|v| !v.is_empty())
                 .map(str::to_owned);
+            #[cfg(target_os = "linux")]
+            let token = {
+                let stored = aipass_config_writers::native_auth::linux_keyring::read_keytar(
+                    "copilot-cli",
+                    &key,
+                );
+                match stored {
+                    Ok(Some(bytes)) => Some(std::str::from_utf8(&bytes).map_err(|_| "invalid Copilot CLI credential data")?.trim().to_owned()),
+                    Ok(None) => token,
+                    Err(_) if token.is_some() => token,
+                    Err(_) => return Err("Copilot CLI credential store is unavailable; unlock the Linux keyring and retry".into()),
+                }
+            };
             #[cfg(target_os = "macos")]
             let token = token.or_else(|| {
                 crate::official_accounts::read_keychain_bytes("copilot-cli", Some(&key))

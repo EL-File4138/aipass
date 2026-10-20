@@ -1,4 +1,5 @@
 mod backup;
+pub mod cli_discovery;
 mod detect;
 mod models;
 pub mod native_auth;
@@ -30,7 +31,7 @@ pub use plan::{
 };
 pub use utils::{
     config_backup_path, diff_preview_for_path, diff_preview_from, endpoint_url, opencode_auth_path,
-    opencode_config_path, redacted_diff_preview,
+    opencode_config_path, redacted_diff_preview, xdg_config_home, xdg_data_home,
 };
 
 #[cfg(test)]

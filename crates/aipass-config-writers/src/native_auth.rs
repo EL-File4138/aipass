@@ -2,6 +2,8 @@
 pub mod claude_identity;
 #[cfg(any(target_os = "macos", test))]
 mod keychain_cache;
+#[cfg(target_os = "linux")]
+pub mod linux_keyring;
 #[cfg(any(target_os = "macos", test))]
 pub use keychain_cache::invalidate_reads;
 #[cfg(not(any(target_os = "macos", test)))]
@@ -55,10 +57,17 @@ impl Resource {
                 Ok(meta) if !meta.is_file() || meta.len() > 4 * 1024 * 1024 => {
                     bail!("invalid credential file")
                 }
-                Ok(_) => fs::read(path)
-                    .map(|v| Some(Zeroizing::new(v)))
-                    .context("credential file unavailable"),
+                Ok(_) => match fs::read(path) {
+                    Ok(v) => Ok(Some(Zeroizing::new(v))),
+                    Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                        bail!("native sign-in permission denied")
+                    }
+                    Err(_) => bail!("credential file unavailable"),
+                },
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                    bail!("native sign-in permission denied")
+                }
                 Err(_) => bail!("credential file unavailable"),
             },
             Self::Keychain { service, account } => keychain_read(service, account),
@@ -122,11 +131,19 @@ fn keychain_write(service: &str, account: &str, bytes: Option<&[u8]>) -> Result<
     keychain_cache::invalidate_item(service, account, result.is_ok());
     result
 }
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+fn keychain_read(service: &str, account: &str) -> Result<Option<Zeroizing<Vec<u8>>>> {
+    linux_keyring::read(service, account)
+}
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn keychain_read(_: &str, _: &str) -> Result<Option<Zeroizing<Vec<u8>>>> {
     bail!("system credential store unsupported on this platform")
 }
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+fn keychain_write(service: &str, account: &str, bytes: Option<&[u8]>) -> Result<()> {
+    linux_keyring::write(service, account, bytes)
+}
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn keychain_write(_: &str, _: &str, _: Option<&[u8]>) -> Result<()> {
     bail!("system credential store unsupported on this platform")
 }
@@ -205,10 +222,14 @@ impl NativeStore {
             "keyring" => (keychain, Some(file)),
             // Select the actual backing store. An inaccessible keychain must not be treated as absence.
             "auto" => {
-                if keychain.exists()? {
-                    (keychain, Some(file))
-                } else {
-                    (file, Some(keychain))
+                match keychain.exists() {
+                    Ok(true) => (keychain, Some(file)),
+                    Ok(false) => (file, Some(keychain)),
+                    // Codex auto loads its file fallback when Linux Secret Service is unavailable.
+                    // Keep the other resource in the transaction: native writes still require its preimage.
+                    #[cfg(target_os = "linux")]
+                    Err(_) if file.read()?.is_some() => (file, Some(keychain)),
+                    Err(error) => return Err(error),
                 }
             }
             _ => bail!("unsupported Codex credential storage mode"),

@@ -26,6 +26,13 @@ pub fn opencode_auth_path(home: &Path) -> PathBuf {
     xdg_directory(home, "XDG_DATA_HOME", ".local/share").join("opencode/auth.json")
 }
 
+pub fn xdg_config_home(home: &Path) -> PathBuf {
+    xdg_directory(home, "XDG_CONFIG_HOME", ".config")
+}
+pub fn xdg_data_home(home: &Path) -> PathBuf {
+    xdg_directory(home, "XDG_DATA_HOME", ".local/share")
+}
+
 fn xdg_directory(home: &Path, variable: &str, fallback: &str) -> PathBuf {
     resolve_xdg_directory(
         home,
@@ -44,7 +51,7 @@ fn resolve_xdg_directory(
     // A default inherited XDG path belongs to the process home. Rebase it
     // when operating on an independent home; retain explicit custom paths.
     configured
-        .filter(|path| !path.as_os_str().is_empty())
+        .filter(|path| path.is_absolute())
         .filter(|path| {
             !process_home.is_some_and(|current| current != home && *path == current.join(fallback))
         })
@@ -55,10 +62,7 @@ fn resolve_xdg_directory(
 pub(crate) fn resolve_codex_dir(home: &Path) -> PathBuf {
     if let Some(dir) = std::env::var_os("CODEX_HOME") {
         let path = PathBuf::from(dir);
-        if !path.as_os_str().is_empty()
-            && !path.to_string_lossy().trim().is_empty()
-            && path.is_dir()
-        {
+        if path.is_absolute() {
             return path;
         }
     }
@@ -311,6 +315,22 @@ pub(crate) fn dotenv_quote(value: &str) -> String {
 
 #[cfg(test)]
 mod diff_tests {
+    #[test]
+    fn xdg_empty_and_relative_directories_use_the_vendor_home() {
+        for fallback in [".config", ".local/share"] {
+            for configured in ["", "relative", "../another-home"] {
+                assert_eq!(
+                    super::resolve_xdg_directory(
+                        std::path::Path::new("/vendor-home"),
+                        Some(std::path::Path::new(configured)),
+                        Some(std::path::Path::new("/process-home")),
+                        fallback,
+                    ),
+                    std::path::Path::new("/vendor-home").join(fallback)
+                );
+            }
+        }
+    }
     use super::*;
 
     #[test]
