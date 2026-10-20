@@ -255,6 +255,13 @@ Newest entries last within each section.
 - **Guardrail**: await the observed persistence state before asserting asynchronous usage counts; never replace exact-count assertions with arbitrary sleeps.
 - **Watch points**: `websocket/tests.rs`, `websocket/tests/persistence.rs`, terminal event forwarding and usage persistence.
 
+### Overlay teardown can outlive the test document
+- **Symptom**: all desktop assertions passed but CI failed with `document is not defined` from Bits UI's deferred body scroll-lock cleanup.
+- **Root cause**: `SettingsPanel.test.ts` unmounted a Select menu without waiting for its deferred cleanup; the callback could run after Vitest destroyed the browser environment.
+- **Fix**: control timers from mount through unmount, drain deferred callbacks and assert the body scroll lock is released before restoring real timers.
+- **Guardrail**: drain overlay cleanup before destroying its test document; do not suppress uncaught errors or substitute arbitrary sleeps.
+- **Watch points**: settings auto-lock selection fixtures, Bits UI overlay teardown and test browser lifetime.
+
 ### Unified key editors must not resubmit a first-key snapshot
 - **Symptom**: the first key had a separate editor and could not be deleted; provider saves could overwrite an independently edited key or relabel its successor after deletion.
 - **Root cause**: `apps/desktop/src/App.svelte::openEdit` copied the first credential into the provider draft; `saveProvider` resubmitted it, while `summaryToEntry` treated an empty key list as missing legacy data.

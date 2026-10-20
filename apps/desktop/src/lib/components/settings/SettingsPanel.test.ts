@@ -1,5 +1,5 @@
 import { flushSync, mount, unmount } from "svelte";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { localizedMessage, setLocale } from "../../stores/i18n";
 const { check, install } = vi.hoisted(() => ({ check: vi.fn(), install: vi.fn() }));
 vi.mock("../../build", () => ({ buildTimeLabel: () => "2026-10-20 12:00" }));
@@ -12,9 +12,17 @@ import SettingsPanel from "./SettingsPanel.svelte";
 let app: ReturnType<typeof mount>;
 const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>("button")]
   .find(node => node.textContent?.trim() === text)!;
+beforeEach(() => { vi.useFakeTimers(); });
 afterEach(async () => {
-  if (app) await unmount(app);
-  document.body.innerHTML = "";
+  try {
+    if (app) await unmount(app);
+    // Bits UI restores the body scroll lock after a deferred teardown.
+    await vi.runAllTimersAsync();
+    expect(document.body.style.overflow).not.toBe("hidden");
+  } finally {
+    vi.useRealTimers();
+    document.body.innerHTML = "";
+  }
 });
 
 test("an available update keeps installation errors visible and allows retry", async () => {
