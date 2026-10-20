@@ -1081,3 +1081,10 @@ Newest entries last within each section.
 - **Fix**: after verifying/copying install bytes, clear the expendable cache under the update transaction before replacing the app or stopping the Agent. Return cache permission failures before installation. Cached system packages still wait for explicit installation.
 - **Guardrail**: test both an empty read-only cache and a complete valid signed package in a read-only cache as an ordinary user. Require unchanged executable/PID/Agent on denial and no cache after success; installation failures may need a fresh download.
 - **Watch points**: `updates::install_verified_update`, Linux `readonly-cached` artifact scenario, macOS manual/cached restart gates.
+
+### Linux packaging dependencies must be explicit on every architecture
+- **Symptom**: aarch64 nightly AppImage packaging failed because `/usr/bin/xdg-mime` was missing while x86_64 CI passed.
+- **Root cause**: desktop jobs relied on `xdg-utils` preinstalled on the x86_64 runner; the ARM64 image did not include it.
+- **Fix**: install `xdg-utils` explicitly in CI and release desktop jobs and check `xdg-mime` before building.
+- **Guardrail**: declare Linux packager dependencies in both workflows; verify every shipped architecture rather than inferring ARM64 readiness from x86_64.
+- **Watch points**: `.github/workflows/ci.yml` Linux desktop dependencies, `.github/workflows/release.yml` Linux matrix.

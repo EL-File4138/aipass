@@ -55,7 +55,8 @@ jobs:
       - name: Install Linux desktop and validation dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y dbus-daemon libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf xvfb dbus-x11
+          sudo apt-get install -y dbus-daemon libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf xvfb dbus-x11 xdg-utils
+          command -v xdg-mime
       - run: pnpm install --frozen-lockfile
       - name: Prepare disposable updater signing key
         run: node scripts/prepare-runtime-check-build.mjs "${RUNNER_TEMP}/aipass-linux-runtime-signing"
