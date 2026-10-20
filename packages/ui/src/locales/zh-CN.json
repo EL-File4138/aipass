@@ -372,8 +372,8 @@
   "settings.autoLock24h": "24 小时",
   "settings.autoLockNever": "永不",
   "settings.autoLockCustom": "{minutes} 分钟",
-  "settings.clipboardClear": "清空剪贴板",
-  "settings.clipboardClearDesc": "复制密钥后多少秒自动清除。",
+  "settings.clipboardClear": "清除剪贴板（秒）",
+  "settings.clipboardClearDesc": "复制凭据后 1–600 秒自动清除。",
   "settings.lockOnSleep": "睡眠时锁定",
   "settings.lockOnSleepDesc": "系统进入睡眠时锁定保险库。",
   "settings.lockOnScreenLock": "屏幕锁定时锁定",
@@ -1310,5 +1310,10 @@
   "search.mcpAuth": "使用已启用分组的令牌作为 Bearer token。",
   "search.incomplete": "请选择凭据、填写 SearXNG 地址或搜索模型。",
   "search.saveFailed": "保存失败，请检查配置。",
-  "search.add": "添加"
+  "search.add": "添加",
+  "confirm.cannotUndo": "此操作无法撤销。",
+  "settings.credentialClickAction": "点击凭据",
+  "settings.credentialClickReveal": "显示",
+  "settings.credentialClickCopy": "复制",
+  "settings.confirmSecretCopy": "复制凭据前确认"
 }

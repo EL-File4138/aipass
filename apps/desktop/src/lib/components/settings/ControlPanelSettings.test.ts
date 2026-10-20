@@ -241,3 +241,15 @@ test("rapid listener edits retain the latest values while an earlier save is pen
   expect(port.value).toBe('9876');
   expect(https.getAttribute('aria-checked')).toBe('true');
 });
+
+test("cancelled credential copying does not show a copied notice", async () => {
+  invoke.mockImplementation(async (command: string) => command === "control_panel_rotate_access_code"
+    ? { accessCode: "synthetic-cancelled-code" } : structuredClone(status));
+  app = mount(ControlPanelSettings, { target: document.body, props: { onCopyAccessCode: async () => false } });
+  await vi.waitFor(() => { flushSync(); expect(button("Generate access code").disabled).toBe(false); });
+  button("Generate access code").click();
+  await vi.waitFor(() => { flushSync(); expect(document.querySelector(".access-code")).toBeTruthy(); });
+  button("Copy").click();
+  await vi.waitFor(() => { flushSync(); expect(button("Copy").disabled).toBe(false); });
+  expect(document.body.textContent).not.toContain("Copied");
+});

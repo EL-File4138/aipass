@@ -32,6 +32,10 @@ pub(crate) struct VaultStatus {
 pub(crate) struct AppPreferences {
     pub(crate) auto_lock_minutes: u16,
     pub(crate) clipboard_clear_seconds: u16,
+    #[serde(default)]
+    pub(crate) credential_click_action: CredentialClickAction,
+    #[serde(default = "default_confirm_secret_copy")]
+    pub(crate) confirm_secret_copy: bool,
     pub(crate) lock_on_sleep: bool,
     pub(crate) lock_on_screen_lock: bool,
     #[serde(default)]
@@ -42,6 +46,18 @@ pub(crate) struct AppPreferences {
     pub(crate) resolved_locale: Option<aipass_agent_protocol::UiLocale>,
     #[serde(default)]
     pub(crate) official_accounts_import: bool,
+}
+
+fn default_confirm_secret_copy() -> bool {
+    true
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum CredentialClickAction {
+    #[default]
+    Reveal,
+    Copy,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -60,6 +76,8 @@ impl Default for AppPreferences {
         Self {
             auto_lock_minutes: 60,
             clipboard_clear_seconds: 45,
+            credential_click_action: CredentialClickAction::Reveal,
+            confirm_secret_copy: true,
             lock_on_sleep: true,
             lock_on_screen_lock: true,
             theme: ThemePreference::System,
@@ -100,6 +118,8 @@ pub(crate) struct SyncSettings {
 pub(crate) struct SavePreferencesRequest {
     pub(crate) auto_lock_minutes: u16,
     pub(crate) clipboard_clear_seconds: u16,
+    pub(crate) credential_click_action: Option<CredentialClickAction>,
+    pub(crate) confirm_secret_copy: Option<bool>,
     pub(crate) lock_on_sleep: Option<bool>,
     pub(crate) lock_on_screen_lock: Option<bool>,
     pub(crate) theme: Option<ThemePreference>,

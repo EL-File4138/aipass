@@ -6,7 +6,7 @@
   import { t } from "../../stores/i18n";
   import { Card } from "@aipass/ui";
 
-  export let onCopyAccessCode: ((code: string) => Promise<void>) | undefined = undefined;
+  export let onCopyAccessCode: ((code: string) => Promise<boolean | void>) | undefined = undefined;
 
   interface Settings { enabled: boolean; address: string; port: number; https: boolean }
   interface Status { settings: Settings; running: boolean; url?: string; addresses: string[]; fingerprint?: string; certificatePem?: string; importedCertificate: boolean; hasAccessCode: boolean; remoteUnlockEnabled: boolean; error?: string }
@@ -198,7 +198,7 @@
       {#if accessCode}
         <div class="access-code">
           <input aria-label={$t("panel.accessCode")} readonly value={accessCode} />
-          <Button size="sm" disabled={busy || !onCopyAccessCode} on:click={() => operation(async () => { await onCopyAccessCode?.(accessCode); notice = $t("panel.copied"); })}>{$t("panel.copy")}</Button>
+          <Button size="sm" disabled={busy || !onCopyAccessCode} on:click={() => operation(async () => { if (await onCopyAccessCode?.(accessCode) !== false) notice = $t("panel.copied"); })}>{$t("panel.copy")}</Button>
           <Button size="sm" variant="ghost" on:click={() => accessCode = ""}>{$t("panel.hide")}</Button>
         </div>
         <p class="hint">{$t("panel.codeOnce")}</p>

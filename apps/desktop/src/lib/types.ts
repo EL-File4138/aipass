@@ -236,11 +236,15 @@ export type ServerUsageSummary = {
 
 export type RecoveryKit = { recoveryKey: string };
 
+export type SecurityPreferences = Pick<AppPreferences, "autoLockMinutes" | "clipboardClearSeconds" | "credentialClickAction" | "confirmSecretCopy" | "lockOnSleep" | "lockOnScreenLock">;
+
 export type ThemePreference = "system" | "light" | "dark";
 
 export type AppPreferences = {
   autoLockMinutes: number;
   clipboardClearSeconds: number;
+  credentialClickAction: "reveal" | "copy";
+  confirmSecretCopy: boolean;
   lockOnSleep: boolean;
   lockOnScreenLock: boolean;
   theme: ThemePreference;

@@ -1095,3 +1095,12 @@ Newest entries last within each section.
 - **Fix**: Whitelist only `WebSearch` for native search declarations, exclude it from caller MCP tools, merge internal search messages and accumulate usage. Gateway search reuses Rust routing and an account-scoped memory ledger.
 - **Guardrail**: Keep Bash/Read/Write off. A caller function named WebSearch grants no native capability. Honor disabled/forced caller tools, preserve account identity, bound hidden search rounds, and reject unsupported search constraints. Run `cargo test -p aipass-agent claude_bridge` and `cargo test -p aipass-proxy search`.
 - **Watch points**: `claude_bridge/{native_tools,stream}`, proxy `search/{wire,gateway,history,mcp}`, HTTP and adapted WebSocket forwarding, configuration refresh and vault lock.
+
+## Credential clipboard
+
+### Frontend timers and blind clears left credentials exposed or deleted user content
+- **Symptom**: secret cleanup depended on WebView timers; a failed clipboard read fell back to clearing unrelated user content.
+- **Root cause**: `apps/desktop/src/App.svelte::scheduleClipboardClear` retained plaintext in a frontend closure and `clearCopiedSecretFromClipboard` wrote an empty value after read failures.
+- **Fix**: native `secret_clipboard` owns clipboard lifetime, bounded retry backoff, SHA-256 ownership digests instead of retained plaintext, confirmation before API-key reads, and lock/exit invalidation. All desktop sensitive-copy entry points reuse it.
+- **Guardrail**: clear only after a successful matching read; preserve newer clipboard content, keep previous cleanup after a failed copy, and invalidate pending confirmation/Agent responses on lock. Never abandon cleanup after transient OS failures; retain only a digest and retry with bounded backoff until content changes or clearing succeeds. Cover these paths in `secret_clipboard/tests.rs`.
+- **Watch points**: provider API keys, recovery kit, server tokens and panel access codes; UI preferences defaults/migration; native clipboard-history exclusion hints are best effort.

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SecurityPolicySettings from "./SecurityPolicySettings.svelte";
   import SyncTargetSettings from "./SyncTargetSettings.svelte";
   import ModelPricingFields from "./ModelPricingFields.svelte";
   import CcSwitchImportPanel from "./CcSwitchImportPanel.svelte";
@@ -17,6 +18,7 @@
     BrowserExtensionStatus,
     LocalePreference,
     MaybePromise,
+    SecurityPreferences,
     MessageValue,
     ModelPricing,
     ProxyConfig,
@@ -36,6 +38,8 @@
 
   export let autoLockMinutes = 60;
   export let clipboardClearSeconds = 45;
+  export let credentialClickAction: "reveal" | "copy" = "reveal";
+  export let confirmSecretCopy = true;
   export let lockOnSleep = true;
   export let lockOnScreenLock = true;
   export let newPassword = "";
@@ -67,12 +71,12 @@
   export let notice = "";
   export let serverConfig: ProxyConfig = { enabled: false, bindAddr: "127.0.0.1:8787", routes: [], pricing: [], upstreamProxy: { mode: "system" } };
   export let serverBusy = "";
-  export let onCopyAccessCode: ((code: string) => Promise<void>) | undefined = undefined;
+  export let onCopyAccessCode: ((code: string) => Promise<boolean | void>) | undefined = undefined;
   export let onClose: () => MaybePromise<boolean | void> = () => {};
   export let proxyRunning = false;
   export let onCheckProxyRunning: () => MaybePromise<boolean> = () => proxyRunning;
   export let onUpdateChannelChanged: (channel: UpdateChannel) => MaybePromise = () => {};
-  export let onSavePreferences: () => MaybePromise = () => {};
+  export let onSavePreferences: (preferences?: SecurityPreferences) => MaybePromise = () => {};
   export let onChangeMasterPassword: () => MaybePromise = () => {};
   export let onRotateVault: () => MaybePromise = () => {};
   export let onExportVault: () => MaybePromise = () => {};
@@ -565,47 +569,8 @@
           </Tabs.Content>
 
           <Tabs.Content value="security" class="tab-panel">
-            <Card title={$t("settings.lockPolicy")}>
-              <div class="rows">
-                <div class="row">
-                  <div class="row-text">
-                    <span class="row-label">{$t("settings.autoLock")}</span>
-                    <span class="row-desc">{$t("settings.autoLockDesc")}</span>
-                  </div>
-                  <div class="select-input">
-                    <SelectField ariaLabel={$t("settings.autoLock")} value={String(autoLockMinutes)}
-                      options={autoLockOptions.map(option => ({ ...option, value: String(option.value) }))}
-                      onValueChange={(value) => { autoLockMinutes = Number(value); onSavePreferences(); }} />
-                  </div>
-                </div>
-                <div class="row">
-                  <div class="row-text">
-                    <span class="row-label">{$t("settings.clipboardClear")}</span>
-                    <span class="row-desc">{$t("settings.clipboardClearDesc")}</span>
-                  </div>
-                  <input
-                    class="num-input"
-                    type="number"
-                    min="0"
-                    max="600"
-                    bind:value={clipboardClearSeconds}
-                    on:change={() => onSavePreferences()}
-                  />
-                </div>
-                <SwitchField
-                  label={$t("settings.lockOnSleep")}
-                  description={$t("settings.lockOnSleepDesc")}
-                  bind:checked={lockOnSleep}
-                  onCheckedChange={() => onSavePreferences()}
-                />
-                <SwitchField
-                  label={$t("settings.lockOnScreenLock")}
-                  description={$t("settings.lockOnScreenLockDesc")}
-                  bind:checked={lockOnScreenLock}
-                  onCheckedChange={() => onSavePreferences()}
-                />
-              </div>
-            </Card>
+            <SecurityPolicySettings {autoLockMinutes} {clipboardClearSeconds} {credentialClickAction} {confirmSecretCopy}
+              {lockOnSleep} {lockOnScreenLock} {autoLockOptions} {onSavePreferences} />
 
             <Card title={$t("settings.masterPassword")}>
               <div class="rows">
@@ -1198,25 +1163,6 @@
     font-size: 12px;
     color: var(--text-tertiary);
     line-height: 1.3;
-  }
-
-  .num-input {
-    width: 80px;
-    height: 32px;
-    padding: 0 10px;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--surface);
-    color: var(--text);
-    font-size: 13px;
-    text-align: right;
-    transition: border-color 120ms ease, box-shadow 120ms ease;
-
-    &:focus {
-      outline: 0;
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px var(--accent-ring);
-    }
   }
 
   .select-input { width: 132px; flex-shrink: 0; }

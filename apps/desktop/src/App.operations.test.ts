@@ -67,6 +67,63 @@ async function render(overrides: Record<string, (args: any) => unknown> = {}) {
   await vi.waitFor(() => { flushSync(); expect(button("Edit")).toBeTruthy(); });
 }
 
+test.each(["delete", "empty"] as const)("trash %s requires confirmation, supports cancellation and retries a failed write", async (action) => {
+  const nativeConfirm = vi.fn();
+  vi.stubGlobal("confirm", nativeConfirm);
+  let fail = true;
+  let finish!: () => void;
+  const command = action === "delete" ? "provider_delete" : "trash_empty";
+  const label = action === "delete" ? "Delete forever" : "Empty trash";
+  await render({
+    entries_trash_list: () => [{ ...structuredClone(fixtureEntry), deletedAt: new Date().toISOString() }],
+    [command]: () => {
+      if (fail) throw new Error("fixture deletion failed");
+      return new Promise<void>(resolve => { finish = resolve; });
+    }
+  });
+  document.querySelector<HTMLButtonElement>('button[aria-label^="Trash,"]')!.click();
+  await vi.waitFor(() => { flushSync(); expect(button(label)).toBeTruthy(); });
+  const trigger = button(label);
+  const calls = () => invoke.mock.calls.filter(([cmd]) => cmd === command);
+  trigger.click(); flushSync();
+  expect(document.querySelector('.modal-content[data-state="open"]')?.textContent).toContain("This action cannot be undone.");
+  expect(document.querySelector('.modal-content[data-state="open"]')?.textContent).toContain(action === "delete" ? fixtureEntry.title : "everything in the trash");
+  expect(calls()).toHaveLength(0);
+  button("Cancel").click(); flushSync();
+  expect(document.querySelector('.modal-content[data-state="open"]')).toBeNull();
+  expect(calls()).toHaveLength(0);
+  trigger.click(); flushSync();
+  const confirm = () => document.querySelector<HTMLButtonElement>('.modal-content[data-state="open"] .btn-danger')!;
+  confirm().click();
+  await vi.waitFor(() => { flushSync(); expect(document.querySelector('.error-toast')?.textContent).toContain("fixture deletion failed"); });
+  expect(document.querySelector('.modal-content[data-state="open"]')).toBeTruthy();
+  fail = false;
+  confirm().click(); confirm().click(); flushSync();
+  expect(calls()).toHaveLength(2);
+  expect(confirm().disabled).toBe(true);
+  if (action === "delete") expect(calls()[1][1]).toEqual({ id: fixtureEntry.id });
+  finish();
+  await vi.waitFor(() => { flushSync(); expect(document.querySelector('.modal-content[data-state="open"]')).toBeNull(); });
+  expect(nativeConfirm).not.toHaveBeenCalled();
+});
+
+test.each(["Delete forever", "Empty trash"])("locking dismisses pending trash confirmation for %s", async (label) => {
+  let locked = false;
+  await render({
+    vault_status: () => ({ exists: true, locked }),
+    entries_trash_list: () => [{ ...structuredClone(fixtureEntry), deletedAt: new Date().toISOString() }]
+  });
+  document.querySelector<HTMLButtonElement>('button[aria-label^="Trash,"]')!.click();
+  await vi.waitFor(() => { flushSync(); expect(button(label)).toBeTruthy(); });
+  button(label).click(); flushSync();
+  locked = true; listeners.get("vault-status-changed")!();
+  await vi.waitFor(() => { flushSync(); expect(document.querySelector('.modal-content[data-state="open"]')).toBeNull(); });
+  locked = false; listeners.get("vault-status-changed")!();
+  await vi.waitFor(() => { flushSync(); expect(button("Delete forever")).toBeTruthy(); });
+  expect(document.querySelector('.modal-content[data-state="open"]')).toBeNull();
+  expect(invoke.mock.calls.filter(([cmd]) => cmd === "provider_delete" || cmd === "trash_empty")).toHaveLength(0);
+});
+
 test.each(["add", "edit", "clear"] as const)("credential %s persists endpoint and model overrides through the desktop bridge", async (action) => {
   const entry = structuredClone(fixtureEntry);
   entry.defaultModel = "site-model";
@@ -442,4 +499,68 @@ test("a status refresh failure after autosave does not repeat a committed write"
   document.querySelector<HTMLButtonElement>('.settings-drawer .close-btn')!.click();
   await vi.waitFor(() => { flushSync(); expect(document.querySelector('.settings-drawer')).toBeNull(); });
   expect(invoke.mock.calls.filter(([cmd]) => cmd === 'server_config_set')).toHaveLength(1);
+});
+
+test("default credential click reveals while copying stays in native Rust", async () => {
+  await render({ secret_copy: () => true });
+  document.querySelector<HTMLButtonElement>("button.secret-copy")!.click();
+  await vi.waitFor(() => { flushSync(); expect(document.querySelector(".kv-value.revealed")?.textContent).toBe("fixture-existing-key"); });
+  expect(invoke.mock.calls.filter(([cmd]) => cmd === "secret_copy")).toHaveLength(0);
+  invoke.mockClear();
+  document.querySelector<HTMLButtonElement>(".kv-actions .copy-hint")!.click();
+  await vi.waitFor(() => { flushSync(); expect(document.querySelector(".kv-hint.copied")).toBeTruthy(); });
+  expect(invoke).toHaveBeenCalledWith("secret_copy", { id: "provider", field: "key" });
+  expect(invoke.mock.calls.filter(([cmd]) => cmd === "secret_reveal_field")).toHaveLength(0);
+});
+
+test("cancelled native confirmation leaves the copy action available", async () => {
+  await render({
+    preferences_load: () => ({ locale: "en", credentialClickAction: "copy", confirmSecretCopy: true }),
+    secret_copy: () => false
+  });
+  document.querySelector<HTMLButtonElement>("button.secret-copy")!.click();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("secret_copy", { id: "provider", field: "key" }));
+  flushSync();
+  expect(document.querySelector(".kv-hint.copied")).toBeNull();
+  expect(document.querySelector(".kv-actions .copy-hint")).toBeTruthy();
+  expect(invoke.mock.calls.filter(([cmd]) => cmd === "secret_reveal_field")).toHaveLength(0);
+});
+
+test("security preferences persist credential click and confirmation choices", async () => {
+  await render();
+  document.querySelector<HTMLButtonElement>(".menu-trigger")!.click(); flushSync();
+  const settings = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent?.trim() === "Settings")!;
+  settings.click();
+  await vi.waitFor(() => { flushSync(); expect(button("Security")).toBeTruthy(); });
+  button("Security").click(); flushSync();
+  const click = document.querySelector<HTMLButtonElement>('button[aria-label="Credential click"]')!;
+  expect(click.textContent).toContain("Reveal");
+  const confirmation = document.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Confirm before copying credentials"]')!;
+  expect(confirmation.getAttribute("aria-checked")).toBe("true");
+  await selectOption('button[aria-label="Credential click"]', "Copy");
+  await vi.waitFor(() => expect(invoke.mock.calls.some(([cmd, args]) => cmd === "preferences_save" && args.request.credentialClickAction === "copy")).toBe(true));
+  confirmation.click();
+  await vi.waitFor(() => expect(invoke.mock.calls.some(([cmd, args]) => cmd === "preferences_save" && args.request.confirmSecretCopy === false)).toBe(true));
+  input('input[aria-label="Clear clipboard (seconds)"]', "12");
+  document.querySelector<HTMLInputElement>('input[aria-label="Clear clipboard (seconds)"]')!.dispatchEvent(new Event("change", { bubbles: true }));
+  await vi.waitFor(() => expect(invoke.mock.calls.some(([cmd, args]) => cmd === "preferences_save" && args.request.clipboardClearSeconds === 12 && args.request.credentialClickAction === "copy" && args.request.confirmSecretCopy === false)).toBe(true));
+});
+
+test("a reveal completing after lock cannot reappear after unlocking", async () => {
+  let locked = false;
+  let finish!: (value: string) => void;
+  await render({
+    vault_status: () => ({ exists: true, locked }),
+    secret_reveal_field: () => new Promise<string>(resolve => { finish = resolve; })
+  });
+  document.querySelector<HTMLButtonElement>("button.secret-copy")!.click();
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+  locked = true; listeners.get("vault-status-changed")!();
+  await vi.waitFor(() => { flushSync(); expect(button("Edit")).toBeUndefined(); });
+  finish("synthetic-late-key"); await Promise.resolve(); flushSync();
+  expect(invoke).toHaveBeenCalledWith("clipboard_clear_sensitive");
+  locked = false; listeners.get("vault-status-changed")!();
+  await vi.waitFor(() => { flushSync(); expect(button("Edit")).toBeTruthy(); });
+  expect(document.querySelector(".kv-value.revealed")).toBeNull();
+  expect(document.body.textContent).not.toContain("synthetic-late-key");
 });

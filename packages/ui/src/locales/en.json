@@ -372,8 +372,8 @@
   "settings.autoLock24h": "24 hours",
   "settings.autoLockNever": "Never",
   "settings.autoLockCustom": "{minutes} minutes",
-  "settings.clipboardClear": "Clipboard clear",
-  "settings.clipboardClearDesc": "Wipe copied secrets after this many seconds.",
+  "settings.clipboardClear": "Clear clipboard (seconds)",
+  "settings.clipboardClearDesc": "Clear copied credentials after 1–600 seconds.",
   "settings.lockOnSleep": "Lock on sleep",
   "settings.lockOnSleepDesc": "Lock the vault when the system goes to sleep.",
   "settings.lockOnScreenLock": "Lock on screen lock",
@@ -1310,5 +1310,10 @@
   "search.mcpAuth": "Use an enabled group’s token as a Bearer token.",
   "search.incomplete": "Select credentials, a SearXNG URL, or a search model.",
   "search.saveFailed": "Could not save. Check the configuration.",
-  "search.add": "Add"
+  "search.add": "Add",
+  "confirm.cannotUndo": "This action cannot be undone.",
+  "settings.credentialClickAction": "Credential click",
+  "settings.credentialClickReveal": "Reveal",
+  "settings.credentialClickCopy": "Copy",
+  "settings.confirmSecretCopy": "Confirm before copying credentials"
 }

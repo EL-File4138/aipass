@@ -22,13 +22,18 @@ afterEach(async () => {
   } finally {
     vi.useRealTimers();
     document.body.innerHTML = "";
+    vi.clearAllMocks();
+    setLocale("system");
   }
 });
 
-test("an available update keeps installation errors visible and allows retry", async () => {
+test.each([
+  ["error.updateInstallPermission", "No permission to install"],
+  ["error.updatesUnavailable", "Updates are unavailable in browser preview"],
+] as const)("an available update retains %s and clears it after retry", async (key, message) => {
   setLocale("en");
   check.mockResolvedValue({ currentVersion: "1.0.0-beta.1", latestVersion: "1.0.0-beta.2", available: true });
-  install.mockRejectedValue(localizedMessage("error.updateInstallPermission"));
+  install.mockReset().mockRejectedValueOnce(localizedMessage(key)).mockResolvedValue(undefined);
   app = mount(SettingsPanel, { target: document.body, props: { initialTab: "about", browserExtensionStatus: undefined, ccSwitchDetection: undefined } });
   await vi.waitFor(() => { flushSync(); expect(button("Check now")).toBeTruthy(); expect(document.body.textContent).toContain("1.0.0-beta.1"); });
   button("Check now").click();
@@ -37,10 +42,16 @@ test("an available update keeps installation errors visible and allows retry", a
   await vi.waitFor(() => {
     flushSync();
     expect(install).toHaveBeenCalled();
-    expect([...document.querySelectorAll('[role="alert"]')].some(node => node.textContent?.includes("No permission to install"))).toBe(true);
+    expect([...document.querySelectorAll('[role="alert"]')].some(node => node.textContent?.includes(message))).toBe(true);
   });
   expect(button("Install").disabled).toBe(false);
   expect(document.body.textContent).toContain("1.0.0-beta.2");
+  button("Install").click();
+  await vi.waitFor(() => {
+    flushSync();
+    expect(install).toHaveBeenCalledTimes(2);
+    expect(document.body.textContent).not.toContain(message);
+  });
 });
 
 
@@ -58,5 +69,5 @@ test("auto-lock keeps custom durations and saves the never option once", async (
   const option = () => [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(node => node.textContent?.trim() === "Never");
   await vi.waitFor(() => { flushSync(); expect(option()).toBeTruthy(); });
   option()!.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0, pointerType: "mouse" }));
-  await vi.waitFor(() => { flushSync(); expect(trigger.textContent).toContain("Never"); expect(save).toHaveBeenCalledTimes(1); });
+  await vi.waitFor(() => { flushSync(); expect(trigger.textContent).toContain("Never"); expect(save).toHaveBeenCalledTimes(1); expect(save).toHaveBeenCalledWith(expect.objectContaining({autoLockMinutes:0})); });
 });

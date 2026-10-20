@@ -161,7 +161,7 @@ test.each([undefined, "   ", "fixture-model"])("shows Grok Build and explains mi
   expect(row!.textContent?.includes("Set a default model for this credential first.")).toBe(missingModel);
 });
 
-test("copy, reveal and key editing are separate keyboard-focusable actions", () => {
+test("row click reveals by default and explicit copy remains separate", () => {
   const onCopySecret = vi.fn();
   const onRevealSecret = vi.fn();
   render({ onCopySecret, onRevealSecret });
@@ -173,6 +173,9 @@ test("copy, reveal and key editing are separate keyboard-focusable actions", () 
   expect(onRevealSecret).toHaveBeenCalledWith("key");
   expect(onCopySecret).not.toHaveBeenCalled();
   copy.click();
+  expect(onRevealSecret).toHaveBeenCalledTimes(2);
+  expect(onCopySecret).not.toHaveBeenCalled();
+  document.querySelector<HTMLButtonElement>(".kv-actions .copy-hint")!.click();
   expect(onCopySecret).toHaveBeenCalledWith("key");
   document.querySelector<HTMLButtonElement>(".kv-actions button[aria-label='Edit credential']")!.click();
   flushSync();
@@ -478,4 +481,13 @@ test("a subscription without a first snapshot can load usage", async () => {
   expect(button).toBeTruthy(); button!.click();
   await vi.waitFor(() => { flushSync(); expect(document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBe("12"); });
   expect(invokeTauri).toHaveBeenCalledWith("community_refresh", { id: "provider" });
+});
+
+test("credential row supports the configured copy action", () => {
+  const onCopySecret = vi.fn();
+  const onRevealSecret = vi.fn();
+  render({ credentialClickAction: "copy", onCopySecret, onRevealSecret });
+  document.querySelector<HTMLButtonElement>("button.secret-copy")!.click();
+  expect(onCopySecret).toHaveBeenCalledWith("key");
+  expect(onRevealSecret).not.toHaveBeenCalled();
 });
