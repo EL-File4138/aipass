@@ -12,14 +12,17 @@
   export let onOpenChange: (open: boolean) => void = () => {};
   export let onSave: (config: ProxyConfig) => MaybePromise<boolean | void> = () => {};
   export let onCopy: (text: string) => MaybePromise = () => {};
-  const vendors: {value: SearchVendor; label: string; base: string}[] = [
+  let vendors: {value: SearchVendor; label: string; base: string}[];
+  $: vendors = [
     {value:"tavily",label:"Tavily",base:"https://api.tavily.com"},
     {value:"brave",label:"Brave",base:"https://api.search.brave.com"},
     {value:"exa",label:"Exa",base:"https://api.exa.ai"},
     {value:"firecrawl",label:"Firecrawl",base:"https://api.firecrawl.dev"},
     {value:"you",label:"You.com",base:"https://ydc-index.io"},
     {value:"deepseek",label:"DeepSeek",base:"https://api.deepseek.com"},
-    {value:"searxng",label:"SearXNG",base:""}
+    {value:"searxng",label:"SearXNG",base:""},
+    {value:"bocha",label:"Bocha",base:"https://api.bocha.cn"},
+    {value:"yuanbao",label:$t("search.yuanbao"),base:"https://api.wsa.cloud.tencent.com"}
   ];
   let draft: SearchConfig = {apis: [], apiFirst: false};
   let routeId = "";

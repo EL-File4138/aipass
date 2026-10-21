@@ -1292,6 +1292,7 @@
   "subscriptionPolicy.quotaCapPercent": "已用 {percent}%",
   "server.strategyResetSoonest": "优先即将重置",
   "server.strategyQuotaPace": "按周额度节奏",
+  "search.yuanbao": "元宝搜索",
   "search.title": "联网搜索",
   "search.modelRoute": "搜索分组",
   "search.model": "模型",

@@ -71,6 +71,16 @@ async fn ask(
             }
             post("/v1/tools/search", json!({"query":query,"count":6}))
         }
+        SearchVendor::Bocha => post(
+            "/v1/web-search",
+            json!({"query":query,"count":6,"summary":true,"freshness":"noLimit"}),
+        ),
+        SearchVendor::Yuanbao => {
+            if query.len() > 1500 {
+                return Err("Yuanbao search accepts at most 1500 bytes".into());
+            }
+            post("/SearchPro", json!({"Query":query}))
+        }
         SearchVendor::Searxng => get("/search", &[("q", query), ("format", "json")])?,
     };
     if !api.api_key.is_empty() {
@@ -109,8 +119,16 @@ fn text(value: &str, max: usize) -> String {
     value[..end].to_owned()
 }
 pub(super) fn decode(vendor: SearchVendor, body: &Value) -> Result<Value, String> {
+    // Providers may report application errors in otherwise successful HTTP replies.
+    if (vendor == SearchVendor::Bocha && body["code"] != 200)
+        || (vendor == SearchVendor::Yuanbao && body.pointer("/Response/Error").is_some())
+    {
+        return Err("search API rejected the request".into());
+    }
     let rows = match vendor {
         SearchVendor::Brave => &body["web"]["results"],
+        SearchVendor::Bocha => &body["data"]["webPages"]["value"],
+        SearchVendor::Yuanbao => &body["Response"]["Pages"],
         SearchVendor::Firecrawl => body.pointer("/data/web").unwrap_or(&body["data"]),
         SearchVendor::You => body
             .pointer("/results/web")
@@ -120,6 +138,18 @@ pub(super) fn decode(vendor: SearchVendor, body: &Value) -> Result<Value, String
     };
     let mut results = Vec::new();
     for row in rows.as_array().into_iter().flatten().take(6) {
+        // Yuanbao Pages are JSON-encoded strings, rather than JSON objects.
+        let decoded;
+        let row = if vendor == SearchVendor::Yuanbao {
+            let Some(page) = row.as_str() else { continue };
+            let Ok(value) = serde_json::from_str::<Value>(page) else {
+                continue;
+            };
+            decoded = value;
+            &decoded
+        } else {
+            row
+        };
         let Some(url) = row["url"].as_str().or_else(|| row["link"].as_str()) else {
             continue;
         };
@@ -138,6 +168,7 @@ pub(super) fn decode(vendor: SearchVendor, body: &Value) -> Result<Value, String
             "description",
             "summary",
             "snippet",
+            "passage",
             "markdown",
         ]
         .iter()
@@ -152,7 +183,7 @@ pub(super) fn decode(vendor: SearchVendor, body: &Value) -> Result<Value, String
             })
         })
         .unwrap_or_default();
-        results.push(json!({"title":text(row["title"].as_str().unwrap_or(url),512),"url":url,"content":text(&content,8000)}));
+        results.push(json!({"title":text(row["title"].as_str().or_else(|| row["name"].as_str()).unwrap_or(url),512),"url":url,"content":text(&content,8000)}));
     }
     if results.is_empty() {
         return Err("search API returned no usable results".into());

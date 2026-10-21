@@ -1,3 +1,4 @@
+mod chinese_providers;
 mod websocket;
 use super::*;
 use crate::tests::{available_addr, single_target_route};

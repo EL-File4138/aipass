@@ -110,7 +110,7 @@ export type UpstreamProxyConfig = {
   customUrl?: string;
 };
 
-export type SearchVendor = "tavily" | "brave" | "exa" | "firecrawl" | "you" | "deepseek" | "searxng";
+export type SearchVendor = "tavily" | "brave" | "exa" | "firecrawl" | "you" | "deepseek" | "searxng" | "bocha" | "yuanbao";
 export type SearchApiConfig = { id: string; vendor: SearchVendor; providerEntryId?: string; secretId?: string; baseUrl?: string; enabled: boolean };
 export type SearchConfig = { apis: SearchApiConfig[]; model?: {routeId: string; model: string}; apiFirst: boolean };
 export type ProxyConfig = {

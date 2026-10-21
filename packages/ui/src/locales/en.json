@@ -1292,6 +1292,7 @@
   "subscriptionPolicy.quotaCapPercent": "{percent}% used",
   "server.strategyResetSoonest": "Reset soonest",
   "server.strategyQuotaPace": "Weekly quota pace",
+  "search.yuanbao": "Yuanbao",
   "search.title": "Web search",
   "search.modelRoute": "Search group",
   "search.model": "Model",

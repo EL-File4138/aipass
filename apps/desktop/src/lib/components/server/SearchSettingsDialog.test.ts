@@ -3,6 +3,7 @@ import { flushSync, mount, unmount } from "svelte";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import SearchSettingsDialog from "./SearchSettingsDialog.svelte";
 import { setLocale } from "../../stores/i18n";
+import type { ProviderEntry } from "@aipass/schemas";
 import type { ProxyConfig } from "../../types";
 let app: ReturnType<typeof mount> | undefined;
 beforeEach(() => { vi.useFakeTimers(); });
@@ -46,4 +47,33 @@ test("only one save runs while its result is pending",async()=>{
   setLocale("en");let finish!:(value:boolean)=>void;const onSave=vi.fn(()=>new Promise<boolean>(resolve=>{finish=resolve;}));const target=document.createElement("div");document.body.append(target);
   app=mount(SearchSettingsDialog,{target,props:{open:true,config,onSave}});flushSync();
   button("Save").click();button("Save").click();expect(onSave).toHaveBeenCalledOnce();finish(true);await vi.waitFor(()=>expect(button("Save").disabled).toBe(false));
+});
+
+async function choose(selector: string, value: string) {
+  await vi.advanceTimersByTimeAsync(50);flushSync();
+  document.querySelector<HTMLButtonElement>(selector)!.dispatchEvent(new PointerEvent("pointerdown", {bubbles:true,button:0,pointerType:"mouse"}));
+  await vi.waitFor(() => expect(document.querySelector(`[role="option"][data-value="${value}"]`)).toBeTruthy());
+  document.querySelector<HTMLElement>(`[role="option"][data-value="${value}"]`)!.dispatchEvent(new PointerEvent("pointerup", {bubbles:true,button:0,pointerType:"mouse"}));
+  flushSync();
+  await vi.advanceTimersByTimeAsync(50);flushSync();
+}
+test.each([
+  ["en", "bocha", "Bocha", "https://api.bocha.cn"],
+  ["en", "yuanbao", "Yuanbao", "https://api.wsa.cloud.tencent.com"],
+  ["zh-CN", "yuanbao", "元宝搜索", "https://api.wsa.cloud.tencent.com"]
+] as const)("%s saves %s using a vault reference and its default endpoint", async (locale, vendor, label, endpoint) => {
+  setLocale(locale);
+  const onSave=vi.fn().mockResolvedValue(true);
+  const target=document.createElement("div");document.body.append(target);
+  const entry: ProviderEntry = {id:"search-entry",title:"Search key",credentialKind:"api",favorite:false,providerKind:"official",domains:[],endpoints:[],interfaceType:"custom_http",authScheme:"bearer",tags:[],secretRefs:[{id:"search-key",label:"Production",masked:"****",fingerprint:"test"}]};
+  app=mount(SearchSettingsDialog,{target,props:{open:true,config,entries:[entry],onSave}});flushSync();
+  await choose('[aria-label="'+(locale === "en" ? "Search service" : "搜索服务")+'"]', vendor);
+  expect(document.body.textContent).toContain(label);
+  const input=document.querySelector<HTMLInputElement>(".endpoint")!;
+  expect(input.value).toBe("");expect(input.placeholder).toBe(endpoint);
+  const save=locale === "en" ? "Save" : "保存";
+  button(save).click();flushSync();expect(onSave).not.toHaveBeenCalled();
+  await choose('[aria-label="'+(locale === "en" ? "Vault credential" : "保险库凭据")+'"]', "search-entry/search-key");
+  button(save).click();await vi.waitFor(()=>expect(onSave).toHaveBeenCalledOnce());
+  expect(onSave.mock.calls[0][0].search.apis[0]).toEqual({id:"source-one",vendor,enabled:true,providerEntryId:"search-entry",secretId:"search-key",baseUrl:undefined});
 });

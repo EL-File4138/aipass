@@ -16,10 +16,18 @@ The API-first switch selects whether APIs or the configured model run first.
 Existing CLI `proxy config-get` / `proxy config-set` commands manage the same
 `search` field through the authenticated Agent; configuration remains encrypted.
 
-Supported API transports are Tavily, Brave, Exa, Firecrawl, You.com, DeepSeek and
-SearXNG. Their URLs default to their official API hosts; a custom URL is explicit
-configuration. Redirects never receive API keys. API results retain source titles,
-URLs and bounded text. Errors do not fabricate results or zero usage.
+Supported API transports are Tavily, Brave, Exa, Firecrawl, You.com, DeepSeek,
+SearXNG, Bocha and Yuanbao (Tencent Cloud Web Search). Their URLs default to their
+official API hosts; a custom URL is explicit configuration. Redirects never
+receive API keys. API results retain source titles, URLs and bounded text. Errors do not fabricate results or zero usage.
+
+Bocha uses `POST https://api.bocha.cn/v1/web-search` with a Bocha API key.
+Yuanbao uses `POST https://api.wsa.cloud.tencent.com/SearchPro` with a **service
+API key** from the Tencent Cloud Yuanbao search console (not a Tencent Cloud
+SecretId/SecretKey pair or a Yuanbao app login). Save each key in the vault, then
+select it in Web search. Yuanbao queries are limited to 1,500 UTF-8 bytes; its
+returned JSON-encoded pages are normalized to the same titles, URLs and text as
+other sources. Both sources participate in the existing ordered fallback.
 
 ## Model requests
 
@@ -108,6 +116,8 @@ No Magpie engine, plugins or source dependency is included in AIPass.
 - [Firecrawl search](https://docs.firecrawl.dev/api-reference/endpoint/search)
 - [You.com search](https://you.com/docs/api-reference/search/v1-search)
 - [DeepSeek search](https://api-docs.deepseek.com/api/search/)
+- [Bocha Web Search](https://github.com/bocha-ai/dsh-web-search-bocha/blob/main/README.zh.md)
+- [Yuanbao service API key](https://cloud.tencent.com/document/product/1806/130615)
 - [SearXNG search API](https://docs.searxng.org/dev/search_api.html)
 
 Synthetic regressions exercise gateway conversion and continuation, source

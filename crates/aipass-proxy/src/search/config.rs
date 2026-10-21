@@ -11,6 +11,8 @@ pub enum SearchVendor {
     You,
     Deepseek,
     Searxng,
+    Bocha,
+    Yuanbao,
 }
 impl SearchVendor {
     pub fn base(self) -> &'static str {
@@ -22,6 +24,8 @@ impl SearchVendor {
             Self::You => "https://ydc-index.io",
             Self::Deepseek => "https://api.deepseek.com",
             Self::Searxng => "",
+            Self::Bocha => "https://api.bocha.cn",
+            Self::Yuanbao => "https://api.wsa.cloud.tencent.com",
         }
     }
 }
