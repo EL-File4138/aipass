@@ -10,7 +10,7 @@ let app: ReturnType<typeof mount> | undefined;
 afterEach(async () => { if (app) await unmount(app); app = undefined; await new Promise(r => setTimeout(r, 30)); document.body.innerHTML = ""; });
 function invokeFixture(outcome = "applied") {
   return vi.fn(async (command: string) => {
-    if (command === "tool_config_detect") return [{ tool: "codex", binaryFound: true }, { tool: "pi", binaryFound: false }];
+    if (command === "tool_config_detect") return [{ tool: "codex", binaryFound: true }, { tool: "pi", binaryFound: false, configPath: "/leftover/.pi" }];
     if (command === "tool_config_status") return { tool: "codex", state: "ready", entryId: "api", secretId: "key", entryTitle: "Gateway", overrides: [] };
     if (command === "tool_config_preview") return preview;
     if (command === "agent_management_apply") return { ...preview, outcome, message: outcome === "applied" ? undefined : "Configuration changed externally", operationId: "op", backupPath: "/encrypted" };

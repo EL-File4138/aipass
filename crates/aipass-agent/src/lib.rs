@@ -31,6 +31,8 @@ mod tool_switch;
 pub(crate) mod usage_probe;
 pub(crate) mod vault_sync;
 pub(crate) mod websocket_capability;
+#[cfg(windows)]
+pub(crate) mod windows_process;
 pub mod windows_service;
 
 #[cfg(target_os = "macos")]

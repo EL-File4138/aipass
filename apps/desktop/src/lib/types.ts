@@ -87,7 +87,22 @@ export type ToolConfigTarget =
   | "opencode"
   | "grok"
   | "pi"
-  | "cursor";
+  | "cursor"
+  | "kimi-code"
+  | "zed"
+  | "deepseek-harness"
+  | "antigravity-cli"
+  | "muse-code"
+  | "hermes-agent"
+  | "command-code"
+  | "codebuddy"
+  | "workbuddy"
+  | "vscode-chat"
+  | "cline"
+  | "trae"
+  | "qoder"
+  | "zcode"
+  | "jetbrains-copilot";
 export type ToolConfigMode = "official" | "helper" | "env" | "plaintext";
 export type CodexApiKeyMode = "experimental_bearer_token" | "auth_json";
 
@@ -185,7 +200,7 @@ export type PricingConfig = {
   listPriceUpdatedAt?: number;
 };
 export type PricingApplyScope = "all_history" | "from_now";
-export type ToolDetection = { tool: ToolConfigTarget; binaryFound: boolean; localRuntimeFound?: boolean; configPath?: string };
+export type ToolDetection = { tool: ToolConfigTarget; binaryFound: boolean; localRuntimeFound?: boolean; extensionFound?: boolean; configPath?: string };
 export type UsageRange = "24h" | 7 | 30;
 export type ServerUsageByRange = Record<UsageRange, ServerUsageSummary>;
 

@@ -120,6 +120,14 @@ fn updater_for_channel(
     channel: &str,
 ) -> Result<tauri_plugin_updater::Updater, String> {
     let builder = app.updater_builder();
+    // Windows install() hands off to NSIS and exits inside the plugin. Code
+    // after install() and Tauri's normal Exit event do not run on that path.
+    #[cfg(windows)]
+    let builder = builder.on_before_exit(|| {
+        std::env::set_var("AIPASS_WINDOW_TARGET", "main");
+        let _ = crate::secret_clipboard::clear_now();
+        let _ = crate::logging::log_event("desktop.update.windows_handoff", &[]);
+    });
     #[cfg(target_os = "linux")]
     let builder = builder.target(linux::target()?);
     if let Some(endpoint) = crate::runtime_check::endpoint() {
@@ -480,11 +488,10 @@ fn install_verified_update(
     crate::runtime_check::installed()?;
     // The updater only swaps the bundle on disk; relaunch so the new
     // version actually runs ("Install & restart" in the UI promises this).
-    // The relaunched process inherits this process's environment, so drop a
-    // tray-mode AIPASS_WINDOW_TARGET (set when this instance was started by
-    // the tray autostart) — otherwise the updated app comes back hidden in
-    // the tray instead of showing the main window.
-    std::env::remove_var("AIPASS_WINDOW_TARGET");
+    // Restart retains argv as well as environment. An explicit main target
+    // also overrides --login-start, so a login-launched Windows instance
+    // shows the updated window after "Install & restart".
+    std::env::set_var("AIPASS_WINDOW_TARGET", "main");
     crate::ALLOW_PROCESS_EXIT.store(true, std::sync::atomic::Ordering::SeqCst);
     let _ = crate::logging::log_event("desktop.update.installed_restarting", &[]);
     app.restart()

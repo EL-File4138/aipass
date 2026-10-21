@@ -572,6 +572,21 @@ pub enum ToolArg {
     Grok,
     Pi,
     Cursor,
+    KimiCode,
+    Zed,
+    DeepseekHarness,
+    AntigravityCli,
+    MuseCode,
+    HermesAgent,
+    CommandCode,
+    Codebuddy,
+    Workbuddy,
+    VscodeChat,
+    Cline,
+    Trae,
+    Qoder,
+    Zcode,
+    JetbrainsCopilot,
 }
 
 #[derive(Clone, ValueEnum)]

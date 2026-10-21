@@ -5,8 +5,10 @@
   import type { ProviderEntry } from "@aipass/schemas";
   import { t } from "../../stores/i18n";
   import type { ToolDetection, ToolConfigTarget, ToolConfigStatus, ToolSwitchRequest, ToolConfigPreview, ToolConfigApplyResult } from "../../types";
-  import { integrationToolDefinitions } from "../../utils/integrations";
+  import { integrationToolDefinitions, installedIntegrationTools, toolIsInstalled } from "../../utils/integrations";
   import { agentCredentialChoices } from "../../utils/agent-credentials";
+  import IntegrationSetupDialog from "./IntegrationSetupDialog.svelte";
+  import { integrationSetupDetails } from "../../utils/integration-setup";
   import IntegrationToolIcon from "./IntegrationToolIcon.svelte";
   import IntegrationPreviewDialog from "./IntegrationPreviewDialog.svelte";
 
@@ -23,11 +25,15 @@
   let generation = 0;
   let mounted = false;
   let pending: ToolSwitchRequest | undefined;
+  let setupRequest: ToolSwitchRequest | undefined;
+  $: setupTool = integrationToolDefinitions.find(tool => tool.id === setupRequest?.tool);
+  $: setupDetails = integrationSetupDetails(entries.find(entry => entry.id === setupRequest?.id), setupRequest?.secretId);
+  $: if (setupRequest && (!entries.some(entry => entry.id === setupRequest?.id && entry.secretRefs.some(secret => secret.id === setupRequest?.secretId)) || !tools.some(tool => tool.id === setupRequest?.tool))) setupRequest = undefined;
   let preview: ToolConfigPreview | undefined;
   let previewOpen = false;
   let selectionRevision = "";
   $: revision = JSON.stringify(entries);
-  $: tools = integrationToolDefinitions.filter(tool => detections.some(d => d.tool === tool.id && (d.binaryFound || d.configPath)));
+  $: tools = installedIntegrationTools(detections);
   $: choices = Object.fromEntries(tools.map(tool => [tool.id, agentCredentialChoices(entries, tool.id)]));
   $: if (previewOpen && selectionRevision !== revision && !busy) { previewOpen = false; pending = undefined; }
 
@@ -36,8 +42,9 @@
     loading = true; if (clearError) error = "";
     try {
       const detected = await invokeTauri<ToolDetection[]>("tool_config_detect");
-      const active = detected.filter(d => d.binaryFound || d.configPath);
+      const active = detected.filter(toolIsInstalled);
       const results = await Promise.all(active.map(async d => {
+        if (integrationToolDefinitions.find(tool => tool.id === d.tool)?.setupGuide) return {tool:d.tool,state:"unmanaged",overrides:[]} as ToolConfigStatus;
         try { return await invokeTauri<ToolConfigStatus>("tool_config_status", { tool: d.tool }); }
         catch { return { tool: d.tool, state: "storage_unavailable", overrides: [] } as ToolConfigStatus; }
       }));
@@ -61,6 +68,7 @@
   async function prepare(tool: ToolConfigTarget) {
     const choice = choices[tool]?.find(c => c.value === selections[tool]);
     if (!choice || busy || loading) return;
+    if (integrationToolDefinitions.find(item => item.id === tool)?.setupGuide) { setupRequest = { ...choice.request }; return; }
     busy = tool; error = message = "";
     const current = generation;
     const sourceRevision = revision;
@@ -132,10 +140,10 @@
           <div class="identity">
             <span class="tool-icon"><IntegrationToolIcon tool={tool.id} size={24} /></span>
             <div class="tool-copy"><strong>{tool.name}</strong>
-              <span class="current" title={status?.accountIdentity || status?.entryTitle}>
+              {#if !tool.setupGuide}<span class="current" title={status?.accountIdentity || status?.entryTitle}>
                 {status?.entryTitle || status?.accountIdentity || $t("integration.unmanaged")}
-              </span>
-              {#if !detection?.binaryFound}<span class="subtle">{$t("agents.configOnly")}</span>{/if}
+              </span>{/if}
+              {#if !detection?.binaryFound && !detection?.extensionFound}<span class="subtle">{$t("agents.configOnly")}</span>{/if}
               {#if needsRuntime}<span class="subtle">{$t("agents.cursorRuntimeRequired")}</span>{/if}
             </div>
           </div>
@@ -145,7 +153,7 @@
               ariaLabel={`${tool.name}: ${$t("agents.credential")}`} disabled={loading || Boolean(busy) || !available.length || needsRuntime}
               onValueChange={value => selections = { ...selections, [tool.id]: value }} />
             <Button size="sm" variant="secondary" disabled={loading || Boolean(busy) || !selections[tool.id] || needsRuntime || status?.state === "conflict" || status?.state === "storage_unavailable"}
-              loading={busy === tool.id} on:click={() => prepare(tool.id)}>{$t("agents.switch")}</Button>
+              loading={busy === tool.id} on:click={() => prepare(tool.id)}>{$t(tool.setupGuide ? "integration.setupAction" : "agents.switch")}</Button>
           </div>
           {#if status?.state && status.state !== "ready" && status.state !== "unmanaged"}
             <div class="row-note">{$t(`integration.state.${status.state}`)}
@@ -184,3 +192,9 @@
   :global(.spinning) { animation: agent-scan 1s linear infinite; }
   @keyframes agent-scan { to { transform: rotate(360deg); } }
 </style>
+
+{#if setupTool && setupDetails && setupRequest}
+  <IntegrationSetupDialog tool={setupTool} {...setupDetails}
+    onCopyKey={() => invokeTauri("secret_copy", { id: setupRequest!.id, field: setupRequest!.secretId })}
+    onClose={() => setupRequest = undefined} />
+{/if}

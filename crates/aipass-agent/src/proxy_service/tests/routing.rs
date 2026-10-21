@@ -433,11 +433,7 @@ fn reload_if_running_rebuilds_credentials_after_the_vault_changed() {
     let (request_tx, request_rx) = std::sync::mpsc::channel();
     let upstream_thread = std::thread::spawn(move || {
         for _ in 0..2 {
-            let (mut stream, _) = upstream.accept().expect("accept proxy request");
-            stream
-                .set_read_timeout(Some(Duration::from_secs(3)))
-                .unwrap();
-            let request = read_http_request(&mut stream).expect("read complete proxy request");
+            let (mut stream, request) = accept_fixture_request(&upstream);
             request_tx
                 .send(String::from_utf8_lossy(&request).to_string())
                 .expect("capture proxy request");

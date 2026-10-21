@@ -839,7 +839,7 @@ fn pi_writer_updates_provider_and_default_model_without_losing_settings() {
     std::fs::write(agent_dir.join("settings.json"), r#"{"theme":"dark"}"#).unwrap();
     let mut entry = entry(InterfaceType::AnthropicMessages, AuthScheme::XApiKey);
     entry.title = "Local Claude".to_string();
-    entry.endpoint = Some("http://127.0.0.1:8787".to_string());
+    entry.endpoint = Some("http://127.0.0.1:8787/gateway/v1".to_string());
     entry.default_model = Some("claude-sonnet-4-6".to_string());
     entry.api_key = Some("pi-local-secret".to_string());
 
@@ -850,6 +850,7 @@ fn pi_writer_updates_provider_and_default_model_without_losing_settings() {
 
     assert_eq!(plan.tool, ToolId::Pi);
     assert_eq!(provider["api"], "anthropic-messages");
+    assert_eq!(provider["baseUrl"], "http://127.0.0.1:8787/gateway");
     assert_eq!(provider["apiKey"], "pi-local-secret");
     assert_eq!(provider["models"][0]["id"], "claude-sonnet-4-6");
     assert!(root["providers"]["keep"].is_object());
@@ -1023,12 +1024,12 @@ fn codex_writer_preview_redacts_auth_values_during_provider_rename() {
 #[test]
 fn cursor_local_writer_targets_the_official_local_runtime() {
     let dir = tempdir().unwrap();
-    let mut entry = entry(InterfaceType::AnthropicMessages, AuthScheme::XApiKey);
+    let mut entry = entry(InterfaceType::OpenAiCompatible, AuthScheme::Bearer);
     entry.endpoint = Some("http://127.0.0.1:8787/v1".to_string());
     let (_plan, content) = plan_cursor_local(dir.path(), &entry).unwrap();
-    assert!(content.contains("CURSOR_LOCAL_AGENT_BASE_URL=\"http://127.0.0.1:8787/v1/messages\""));
+    assert!(content.contains("CURSOR_LOCAL_AGENT_BASE_URL='http://127.0.0.1:8787/v1'"));
     assert!(content.contains("CURSOR_LOCAL_AGENT_API_KEY=\"$(aipass get "));
-    assert!(content.contains("CURSOR_ENABLE_AUTHLESS=1"));
+    assert!(content.contains("CURSOR_ENABLE_AUTHLESS='1'"));
 }
 
 #[test]
@@ -1038,8 +1039,8 @@ fn cursor_local_plaintext_redacts_api_key_and_accepts_chat_completions() {
     entry.endpoint = Some("http://127.0.0.1:8787/v1".to_string());
     entry.api_key = Some("cursor-local-secret".to_string());
     let (plan, content) = plan_cursor_local_plaintext(dir.path(), &entry).unwrap();
-    assert!(content.contains("CURSOR_LOCAL_AGENT_BASE_URL=\"http://127.0.0.1:8787/v1\""));
-    assert!(content.contains("CURSOR_LOCAL_AGENT_API_KEY=\"cursor-local-secret\""));
+    assert!(content.contains("CURSOR_LOCAL_AGENT_BASE_URL='http://127.0.0.1:8787/v1'"));
+    assert!(content.contains("CURSOR_LOCAL_AGENT_API_KEY='cursor-local-secret'"));
     assert!(!plan.preview.contains("cursor-local-secret"));
 }
 

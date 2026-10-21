@@ -26,12 +26,55 @@ pub(super) fn paths(home: &Path, tool: &ToolConfigTool) -> Vec<PathBuf> {
             aipass_config_writers::opencode_config_path(home),
             aipass_config_writers::opencode_auth_path(home),
         ],
-        ToolConfigTool::Grok => vec![home.join(".grok/config.toml"), home.join(".grok/auth.json")],
-        ToolConfigTool::Pi => vec![
-            home.join(".pi/agent/models.json"),
-            home.join(".pi/agent/settings.json"),
+        ToolConfigTool::Grok => vec![
+            aipass_config_writers::grok_config_dir(home).join("config.toml"),
+            aipass_config_writers::grok_config_dir(home).join("auth.json"),
         ],
-        ToolConfigTool::Cursor => vec![home.join(".aipass/tools/cursor-agent-local.env")],
+        ToolConfigTool::Pi => vec![
+            aipass_config_writers::pi_config_dir(home).join("models.json"),
+            aipass_config_writers::pi_config_dir(home).join("settings.json"),
+        ],
+        ToolConfigTool::MuseCode
+        | ToolConfigTool::HermesAgent
+        | ToolConfigTool::CommandCode
+        | ToolConfigTool::Codebuddy
+        | ToolConfigTool::Workbuddy => aipass_config_writers::byok_config_paths(
+            home,
+            &match tool {
+                ToolConfigTool::MuseCode => aipass_config_writers::ToolId::MuseCode,
+                ToolConfigTool::HermesAgent => aipass_config_writers::ToolId::HermesAgent,
+                ToolConfigTool::CommandCode => aipass_config_writers::ToolId::CommandCode,
+                ToolConfigTool::Codebuddy => aipass_config_writers::ToolId::Codebuddy,
+                _ => aipass_config_writers::ToolId::Workbuddy,
+            },
+        ),
+        ToolConfigTool::VscodeChat
+        | ToolConfigTool::Cline
+        | ToolConfigTool::Trae
+        | ToolConfigTool::Qoder
+        | ToolConfigTool::Zcode
+        | ToolConfigTool::JetbrainsCopilot => vec![],
+        ToolConfigTool::KimiCode => vec![
+            aipass_config_writers::kimi_config_dir(home).join("config.toml"),
+            aipass_config_writers::helper_path(home, "kimi-code"),
+        ],
+        ToolConfigTool::Zed => vec![
+            aipass_config_writers::zed_config_path(home),
+            aipass_config_writers::helper_path(home, "zed"),
+        ],
+        ToolConfigTool::DeepseekHarness => vec![
+            aipass_config_writers::dsh_home(home).join("profiles/web/cordis.patch.yml"),
+            aipass_config_writers::dsh_home(home).join(".credentials.yaml"),
+            aipass_config_writers::helper_path(home, "deepseek-harness"),
+        ],
+        ToolConfigTool::AntigravityCli => vec![
+            home.join(".gemini/antigravity-cli/settings.json"),
+            aipass_config_writers::helper_path(home, "antigravity-cli"),
+        ],
+        ToolConfigTool::Cursor => vec![aipass_config_writers::helper_path(
+            home,
+            "cursor-agent-local",
+        )],
     }
 }
 pub(super) fn document(path: &Path) -> Result<PrivateJson> {
@@ -49,10 +92,10 @@ pub(super) fn document(path: &Path) -> Result<PrivateJson> {
     anyhow::ensure!(value.is_object(), "invalid credential configuration");
     Ok(PrivateJson(value))
 }
-fn field<'a>(doc: &'a Value, key: &str) -> Option<&'a str> {
+pub(super) fn field<'a>(doc: &'a Value, key: &str) -> Option<&'a str> {
     doc.get(key)?.as_str().filter(|s| !s.trim().is_empty())
 }
-fn add(
+pub(super) fn add(
     out: &mut Vec<Credential>,
     key: Option<&str>,
     endpoint: Option<&str>,
@@ -86,14 +129,20 @@ fn add(
     });
     Ok(())
 }
-fn env(path: &Path) -> Result<PrivateJson> {
+pub(super) fn env(path: &Path) -> Result<PrivateJson> {
     let Some(raw) = Resource::File(path.to_owned()).read()? else {
         return Ok(PrivateJson(json!({})));
     };
     let text = std::str::from_utf8(&raw).context("invalid environment configuration")?;
     let mut values = PrivateJson(json!({}));
     for line in text.lines() {
-        let line = line.trim().strip_prefix("export ").unwrap_or(line.trim());
+        let line = if line.trim().starts_with("# AIPASS_CURSOR_API_TYPE=") {
+            line.trim().trim_start_matches("# ")
+        } else {
+            line.trim()
+        };
+        let line = line.strip_prefix("export ").unwrap_or(line);
+        let line = line.strip_prefix("$env:").unwrap_or(line);
         let Some((key, value)) = line.split_once('=') else {
             continue;
         };
@@ -101,11 +150,26 @@ fn env(path: &Path) -> Result<PrivateJson> {
             continue;
         }
         let value = value.trim();
+        // Generated helpers may append `|| return $?` after a command. They
+        // remain references, never JSON strings or commands to execute here.
+        if value.starts_with("\"$(") || value.starts_with("$(") {
+            continue;
+        }
+        if path.extension().is_some_and(|e| e == "ps1")
+            && !value.starts_with('\'')
+            && key.trim() != "AIPASS_CURSOR_API_TYPE"
+        {
+            continue;
+        }
         let value = if value.starts_with('"') {
             serde_json::from_str::<String>(value)
                 .map_err(|_| anyhow::anyhow!("unsupported environment value"))?
         } else if value.starts_with('\'') && value.ends_with('\'') {
-            value[1..value.len() - 1].to_owned()
+            if path.extension().is_some_and(|e| e == "ps1") {
+                value[1..value.len() - 1].replace("''", "'")
+            } else {
+                value[1..value.len() - 1].replace("'\\''", "'")
+            }
         } else {
             value.split(" #").next().unwrap_or("").trim().to_owned()
         };
@@ -114,6 +178,26 @@ fn env(path: &Path) -> Result<PrivateJson> {
     Ok(values)
 }
 pub(super) fn read(home: &Path, tool: &ToolConfigTool) -> Result<Vec<Credential>> {
+    if matches!(
+        tool,
+        ToolConfigTool::KimiCode
+            | ToolConfigTool::Zed
+            | ToolConfigTool::DeepseekHarness
+            | ToolConfigTool::AntigravityCli
+            | ToolConfigTool::MuseCode
+            | ToolConfigTool::HermesAgent
+            | ToolConfigTool::CommandCode
+            | ToolConfigTool::Codebuddy
+            | ToolConfigTool::Workbuddy
+            | ToolConfigTool::VscodeChat
+            | ToolConfigTool::Cline
+            | ToolConfigTool::Trae
+            | ToolConfigTool::Qoder
+            | ToolConfigTool::Zcode
+            | ToolConfigTool::JetbrainsCopilot
+    ) {
+        return super::additional::read(home, tool);
+    }
     let files = paths(home, tool);
     let mut out = Vec::new();
     let doc = if matches!(tool, ToolConfigTool::GeminiCli | ToolConfigTool::Cursor) {
@@ -196,8 +280,8 @@ pub(super) fn read(home: &Path, tool: &ToolConfigTool) -> Result<Vec<Credential>
         }
         ToolConfigTool::Cursor => {
             let endpoint = field(&doc.0, "CURSOR_LOCAL_AGENT_BASE_URL");
-            let anthropic =
-                endpoint.is_some_and(|s| s.trim_end_matches('/').ends_with("/messages"));
+            let anthropic = field(&doc.0, "AIPASS_CURSOR_API_TYPE") == Some("anthropic_messages")
+                || endpoint.is_some_and(|s| s.trim_end_matches('/').ends_with("/messages"));
             add(
                 &mut out,
                 field(&doc.0, "CURSOR_LOCAL_AGENT_API_KEY"),
@@ -358,6 +442,21 @@ pub(super) fn read(home: &Path, tool: &ToolConfigTool) -> Result<Vec<Credential>
                 }
             }
         }
+        ToolConfigTool::KimiCode
+        | ToolConfigTool::Zed
+        | ToolConfigTool::DeepseekHarness
+        | ToolConfigTool::AntigravityCli
+        | ToolConfigTool::MuseCode
+        | ToolConfigTool::HermesAgent
+        | ToolConfigTool::CommandCode
+        | ToolConfigTool::Codebuddy
+        | ToolConfigTool::Workbuddy
+        | ToolConfigTool::VscodeChat
+        | ToolConfigTool::Cline
+        | ToolConfigTool::Trae
+        | ToolConfigTool::Qoder
+        | ToolConfigTool::Zcode
+        | ToolConfigTool::JetbrainsCopilot => unreachable!(),
         ToolConfigTool::Grok => {
             if let Some(models) = doc.0["model"].as_object() {
                 let selected = field(&doc.0["models"], "default");

@@ -33,7 +33,9 @@ test("Developer ID wildcard services allow only the app's explicit CloudKit requ
   }
 });
 
-test("profile parsing supports native plist dates and certificate data", () => {
+test("profile parsing supports native plist dates and certificate data", {
+  skip: process.platform === "win32" ? "Apple profile decoding uses plutil/POSIX Python; CloudKit signing is macOS-only" : false,
+}, () => {
   const value = parseProfile(Buffer.from(`<?xml version="1.0"?><plist version="1.0"><dict>
     <key>ExpirationDate</key><date>2099-01-01T00:00:00Z</date>
     <key>DeveloperCertificates</key><array><data>ZmFrZQ==</data></array>

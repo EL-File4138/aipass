@@ -15,6 +15,21 @@ pub enum ToolId {
     Grok,
     Pi,
     Cursor,
+    KimiCode,
+    Zed,
+    DeepseekHarness,
+    AntigravityCli,
+    MuseCode,
+    HermesAgent,
+    CommandCode,
+    Codebuddy,
+    Workbuddy,
+    VscodeChat,
+    Cline,
+    Trae,
+    Qoder,
+    Zcode,
+    JetbrainsCopilot,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,6 +57,26 @@ pub struct ToolEntry {
 
 impl ToolEntry {
     pub fn credential_command(&self) -> String {
+        self.credential_command_for(cfg!(windows))
+    }
+    pub(crate) fn credential_command_for(&self, windows: bool) -> String {
+        if windows {
+            use base64::Engine;
+            let secret = self
+                .secret_id
+                .as_ref()
+                .map(|id| format!("--secret-id '{}'", id.replace('\'', "''")))
+                .unwrap_or_else(|| "--field api_key".into());
+            let script = format!(
+                "$ErrorActionPreference = 'Stop'; & aipass get {} {} --reveal; exit $LASTEXITCODE",
+                self.id, secret
+            );
+            let bytes: Vec<_> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+            return format!(
+                "powershell.exe -NoProfile -NonInteractive -EncodedCommand {}",
+                base64::engine::general_purpose::STANDARD.encode(bytes)
+            );
+        }
         match &self.secret_id {
             Some(id) => format!(
                 "aipass get {} --secret-id '{}' --reveal",

@@ -16,17 +16,83 @@ pub fn default_vault_dir() -> Result<PathBuf> {
 }
 
 pub fn canonical_vault_dir(path: impl AsRef<Path>) -> Result<PathBuf> {
-    let path = path.as_ref();
-    if path.exists() {
-        return fs::canonicalize(path).map_err(Into::into);
+    #[cfg(windows)]
+    return canonical_windows_vault(path.as_ref());
+    #[cfg(not(windows))]
+    canonical_unix_vault(path.as_ref())
+}
+
+#[cfg(not(windows))]
+fn canonical_unix_vault(path: &Path) -> Result<PathBuf> {
+    use std::path::Component;
+    let absolute = std::path::absolute(path)?;
+    // Resolve the longest existing ancestor, not just the immediate parent.
+    // Otherwise a new nested vault under a symlink changes IPC namespace as
+    // soon as the Agent creates its directories (including /var -> /private/var).
+    for ancestor in absolute.ancestors() {
+        let mut resolved = match fs::canonicalize(ancestor) {
+            Ok(path) => path,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+        for component in absolute.strip_prefix(ancestor)?.components() {
+            match component {
+                Component::Normal(value) => resolved.push(value),
+                Component::ParentDir => {
+                    resolved.pop();
+                }
+                Component::CurDir => {}
+                _ => bail!("invalid vault path"),
+            }
+        }
+        return Ok(resolved);
     }
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let canonical_parent = fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
-    Ok(canonical_parent.join(
-        path.file_name()
-            .map(|value| value.to_os_string())
-            .unwrap_or_default(),
-    ))
+    bail!("vault has no existing ancestor")
+}
+
+#[cfg(windows)]
+fn canonical_windows_vault(path: &Path) -> Result<PathBuf> {
+    use std::path::{Component, Prefix};
+    // Canonicalize the longest existing ancestor. Otherwise a new nested
+    // vault hashes as C:\... before creation and \\?\C:\... afterwards, so
+    // every later client connects to a different pipe than the first Agent.
+    let absolute = std::path::absolute(path)?;
+    let mut ancestor = absolute.as_path();
+    let mut missing = Vec::new();
+    while !ancestor.exists() {
+        missing.push(
+            ancestor
+                .file_name()
+                .context("invalid vault path")?
+                .to_owned(),
+        );
+        ancestor = ancestor
+            .parent()
+            .context("vault has no existing ancestor")?;
+    }
+    let canonical = fs::canonicalize(ancestor)?;
+    let mut components = canonical.components();
+    let mut result = match components.next() {
+        Some(Component::Prefix(prefix)) => match prefix.kind() {
+            Prefix::VerbatimDisk(drive) => PathBuf::from(format!("{}:\\", drive as char)),
+            Prefix::VerbatimUNC(server, share) => {
+                let mut unc = std::ffi::OsString::from(r"\\");
+                unc.push(server);
+                unc.push(r"\");
+                unc.push(share);
+                PathBuf::from(unc)
+            }
+            _ => PathBuf::from(prefix.as_os_str()),
+        },
+        _ => anyhow::bail!("vault does not have an absolute Windows prefix"),
+    };
+    for component in components {
+        result.push(component);
+    }
+    for component in missing.into_iter().rev() {
+        result.push(component);
+    }
+    Ok(result)
 }
 
 pub fn namespace_for_vault_dir(path: impl AsRef<Path>) -> Result<String> {
@@ -184,10 +250,7 @@ fn existing_dir(path: PathBuf, label: &str) -> Result<PathBuf> {
 }
 
 fn home_dir() -> Result<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .context("home directory is not set")
+    aipass_config_writers::user_home_dir().context("home directory is not set")
 }
 
 fn one_drive_home_candidates(home: &Path) -> Vec<PathBuf> {
@@ -229,13 +292,68 @@ mod tests {
     use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
 
+    #[cfg(unix)]
+    #[test]
+    fn nested_new_unix_vault_keeps_its_namespace_through_a_symlink() {
+        let root = tempdir().unwrap();
+        let real = root.path().join("real");
+        fs::create_dir(&real).unwrap();
+        let alias = root.path().join("alias");
+        std::os::unix::fs::symlink(&real, &alias).unwrap();
+        let vault = alias.join("new/nested/vault");
+        let before = namespace_for_vault_dir(&vault).unwrap();
+        let expected = fs::canonicalize(&real).unwrap().join("new/nested/vault");
+        assert_eq!(canonical_vault_dir(&vault).unwrap(), expected);
+        fs::create_dir_all(&vault).unwrap();
+        assert_eq!(namespace_for_vault_dir(&vault).unwrap(), before);
+        assert_eq!(namespace_for_vault_dir(&expected).unwrap(), before);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_vault_resolves_missing_suffix_dots_without_reinterpreting_existing_symlinks() {
+        let root = tempdir().unwrap();
+        let real = root.path().join("real/child");
+        fs::create_dir_all(&real).unwrap();
+        let alias = root.path().join("alias");
+        std::os::unix::fs::symlink(&real, &alias).unwrap();
+        let expected = fs::canonicalize(real.parent().unwrap())
+            .unwrap()
+            .join("vault");
+        assert_eq!(
+            canonical_vault_dir(alias.join("../vault")).unwrap(),
+            expected
+        );
+        let missing = alias.join("new/../nested/vault");
+        let expected = fs::canonicalize(&real).unwrap().join("nested/vault");
+        assert_eq!(canonical_vault_dir(&missing).unwrap(), expected);
+        fs::create_dir_all(&expected).unwrap();
+        assert_eq!(canonical_vault_dir(&expected).unwrap(), expected);
+        assert_eq!(canonical_vault_dir(&missing).unwrap(), expected);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn nested_new_windows_vault_keeps_its_pipe_namespace_after_creation() {
+        let root = tempdir().unwrap();
+        let vault = root.path().join("中文 空格/parent/vault");
+        let before = namespace_for_vault_dir(&vault).unwrap();
+        let path = canonical_vault_dir(&vault).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        assert_eq!(canonical_vault_dir(&vault).unwrap(), path);
+        assert_eq!(namespace_for_vault_dir(&vault).unwrap(), before);
+        assert_eq!(
+            namespace_for_vault_dir(fs::canonicalize(&vault).unwrap()).unwrap(),
+            before
+        );
+    }
+
     #[test]
     fn linux_configuration_uses_only_absolute_xdg_overrides() {
-        let home = Path::new("/home/fixture");
-        assert_eq!(
-            linux_config_home_from(home, Some("/custom/config".into())),
-            Path::new("/custom/config")
-        );
+        let root = tempdir().unwrap();
+        let home = root.path();
+        let custom = root.path().join("custom/config");
+        assert_eq!(linux_config_home_from(home, Some(custom.clone())), custom);
         assert_eq!(
             linux_config_home_from(home, Some("relative".into())),
             home.join(".config")

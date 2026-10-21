@@ -8,6 +8,7 @@ mod cloudkit;
 mod command_handler;
 mod commands;
 mod deeplink;
+mod launch_options;
 mod logging;
 mod models;
 mod oauth_browser;
@@ -25,6 +26,13 @@ mod runtime_lifecycle;
 #[cfg(target_os = "macos")]
 mod self_install;
 mod singleton;
+mod startup;
+use startup::{ensure_agent_resident_async, ensure_agent_running_for_desktop_inner};
+pub(crate) use startup::{
+    ensure_agent_running_for_desktop, install_tray_autostart_for_current_desktop,
+};
+#[cfg(target_os = "macos")]
+use startup::{ensure_tray_autostart_for_current_desktop, stop_tray_autostart_for_current_desktop};
 mod subscription_import;
 mod tool_commands;
 mod tray;
@@ -192,81 +200,6 @@ fn agent_client(_app: &AppHandle) -> Result<AgentClient, String> {
     }
     .map_err(|err| err.to_string())?;
     Ok(AgentClient::new(config))
-}
-
-pub(crate) fn ensure_agent_running_for_desktop(client: &AgentClient) -> Result<(), String> {
-    let _starting = runtime_lifecycle::RUNTIME.start()?;
-    ensure_agent_running_for_desktop_inner(client)
-}
-
-fn ensure_agent_running_for_desktop_inner(client: &AgentClient) -> Result<(), String> {
-    if runtime_check::active() {
-        return client
-            .ensure_running_for_desktop_companion()
-            .map_err(|err| err.to_string());
-    }
-    #[cfg(target_os = "macos")]
-    {
-        client.ensure_running().map_err(|err| err.to_string())
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        client
-            .ensure_running_for_desktop_companion()
-            .map_err(|err| err.to_string())
-    }
-}
-
-pub(crate) fn install_tray_autostart_for_current_desktop(
-    desktop_binary: &Path,
-    vault_dir: &Path,
-) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        let singleton_socket =
-            singleton::current_singleton_socket_path().map_err(|err| err.to_string())?;
-        aipass_agent::install_tray_autostart_with_socket(
-            desktop_binary,
-            vault_dir,
-            &singleton_socket,
-        )
-        .map(|_| ())
-        .map_err(|err| err.to_string())
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        aipass_agent::install_tray_autostart(desktop_binary, vault_dir)
-            .map(|_| ())
-            .map_err(|err| err.to_string())
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn ensure_tray_autostart_for_current_desktop(binary: &Path, vault: &Path) -> Result<(), String> {
-    aipass_agent::install_tray_autostart(binary, vault)
-        .map(|_| ())
-        .map_err(|err| err.to_string())
-}
-
-#[cfg(target_os = "macos")]
-fn ensure_tray_autostart_for_current_desktop(
-    desktop_binary: &Path,
-    vault_dir: &Path,
-) -> Result<(), String> {
-    let singleton_socket =
-        singleton::current_singleton_socket_path().map_err(|err| err.to_string())?;
-    aipass_agent::ensure_tray_autostart_with_socket(desktop_binary, vault_dir, &singleton_socket)
-        .map(|_| ())
-        .map_err(|err| err.to_string())
-}
-
-#[cfg(target_os = "macos")]
-pub(crate) fn stop_tray_autostart_for_current_desktop(vault_dir: &Path) -> Result<(), String> {
-    let singleton_socket =
-        singleton::current_singleton_socket_path().map_err(|err| err.to_string())?;
-    aipass_agent::stop_tray_autostart_with_socket(vault_dir, &singleton_socket)
-        .map(|_| ())
-        .map_err(|err| err.to_string())
 }
 
 fn agent_request<T: DeserializeOwned>(app: &AppHandle, request: AgentRequest) -> Result<T, String> {
@@ -1953,70 +1886,20 @@ pub(crate) fn handle_deep_link_urls(app: &AppHandle, urls: Vec<url::Url>) {
     }
 }
 
-fn ensure_agent_resident_async(app: AppHandle) {
-    thread::spawn(move || {
-        let Ok(_starting) = runtime_lifecycle::RUNTIME.start() else {
-            return;
-        };
-        let client = match agent_client(&app) {
-            Ok(client) => client,
-            Err(err) => {
-                eprintln!("failed to resolve AIPass agent config: {err}");
-                return;
-            }
-        };
-
-        if runtime_check::active() {
-            let _ = ensure_agent_running_for_desktop_inner(&client);
-            return;
-        }
-
-        #[cfg(target_os = "macos")]
-        match aipass_agent::agent_binary_path() {
-            Ok(agent_binary) => {
-                if let Err(err) =
-                    aipass_agent::ensure_agent_autostart(&agent_binary, &client.config.vault_dir)
-                {
-                    eprintln!("failed to refresh AIPass agent autostart: {err}");
-                }
-            }
-            Err(err) => {
-                eprintln!("failed to resolve AIPass agent binary: {err}");
-            }
-        }
-
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
-        if singleton::should_install_tray_autostart() {
-            match std::env::current_exe() {
-                Ok(desktop_binary) => {
-                    if let Err(err) = ensure_tray_autostart_for_current_desktop(
-                        &desktop_binary,
-                        &client.config.vault_dir,
-                    ) {
-                        eprintln!("failed to refresh AIPass tray autostart: {err}");
-                    }
-                }
-                Err(err) => {
-                    eprintln!("failed to resolve AIPass desktop binary: {err}");
-                }
-            }
-        }
-
-        if let Err(err) = ensure_agent_running_for_desktop_inner(&client) {
-            eprintln!("failed to ensure AIPass agent is running: {err}");
-        }
-        if let Err(err) = repair_bundled_native_host_manifest(&app) {
-            eprintln!("failed to repair bundled AIPass native host manifest: {err}");
-        }
-    });
-}
-
 fn repair_bundled_native_host_manifest(app: &AppHandle) -> Result<NativeHostStatus, String> {
     let package = bundled_extension_package(app)?;
     repair_native_host_manifest(vec![package.id])
 }
 
 pub fn run() {
+    match launch_options::initialize() {
+        Ok(true) => {}
+        Ok(false) => return,
+        Err(err) => {
+            eprintln!("desktop launch failed: {err}");
+            std::process::exit(1);
+        }
+    }
     if let Err(err) = runtime_check::initialize() {
         eprintln!("runtime verification setup failed: {err}");
         std::process::exit(1);

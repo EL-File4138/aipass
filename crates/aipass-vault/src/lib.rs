@@ -459,6 +459,7 @@ struct VaultExportPayload {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct VaultExportFile {
+    #[serde(with = "aipass_storage::portable_path")]
     relative_path: PathBuf,
     bytes_b64: String,
 }

@@ -82,6 +82,7 @@ pub(super) fn handle(
                     "Preview the Agent switch before applying",
                 ));
             }
+            require_installed(state, &crate::server::tool_id_for(&request.tool))?;
             if crate::tool_switch::supported(&request.tool) && request.mode != ToolConfigMode::Env {
                 return crate::tool_switch::apply_managed(state, request, managed)
                     .map(AgentResponse::success);
@@ -263,6 +264,7 @@ pub(super) fn handle(
             result
         }
         AgentRequest::ToolConfigProxyApply { request } => {
+            require_installed(state, &request.tool)?;
             if matches!(
                 request.tool,
                 aipass_config_writers::ToolId::Codex | aipass_config_writers::ToolId::ClaudeCode
@@ -337,4 +339,32 @@ pub(super) fn handle(
             "unsupported tool operation",
         )),
     }
+}
+
+fn require_installed(
+    state: &Arc<AgentState>,
+    tool: &aipass_config_writers::ToolId,
+) -> ServiceResult<()> {
+    with_vault(state, true, |vault| {
+        let home = home_dir(vault)?;
+        let dirs = aipass_config_writers::cli_discovery::search_dirs();
+        #[cfg(test)]
+        let dirs = if crate::server::TOOL_HOME_OVERRIDES
+            .lock()
+            .unwrap()
+            .contains_key(&vault.vault_id())
+        {
+            vec![home.join(".local/bin"), home.join(".grok/bin")]
+        } else {
+            dirs
+        };
+        if aipass_config_writers::detect_tool_in(Some(&home), &dirs, tool).is_installed() {
+            Ok(())
+        } else {
+            Err(ServiceError::new(
+                AgentErrorCode::ValidationFailed,
+                "Agent is no longer installed; scan installed Agents again",
+            ))
+        }
+    })
 }

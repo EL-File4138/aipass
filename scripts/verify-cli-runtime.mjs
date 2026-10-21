@@ -2,7 +2,7 @@
 // Exercise installed binaries with disposable data and no vendor credentials.
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import {
   cpSync,
   existsSync,
@@ -52,6 +52,7 @@ const env = {
   ),
   HOME: home,
   USERPROFILE: home,
+  ...(process.platform === "win32" ? { APPDATA: join(home, "AppData/Roaming"), LOCALAPPDATA: join(home, "AppData/Local") } : {}),
   XDG_CONFIG_HOME: join(home, ".config"),
   XDG_DATA_HOME: join(home, ".local/share"),
   XDG_CACHE_HOME: join(home, ".cache"),
@@ -83,11 +84,28 @@ const agent = spawn(join(stage, "aipass-agent" + suffix), ["--vault", vault], {
   env,
   stdio: "ignore",
 });
+// The native manifest reference lives in HKCU rather than APPDATA. Preserve it
+// even when this disposable test is run on a developer's Windows account.
+const registryKey = "HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\dev.aipass.native";
+const registryBackup = join(root, "native-host-registry.reg");
+let registryExisted = false;
+let registryPrepared = false;
+
 let stopped = false;
+let complete = false;
+let failed = false;
 agent.on("exit", () => {
   stopped = true;
 });
 try {
+  if (process.platform === "win32") {
+    const probe = spawnSync("reg.exe", ["query", registryKey], { stdio: "ignore" });
+    if (probe.status === 0) {
+      execFileSync("reg.exe", ["export", registryKey, registryBackup, "/y"], { stdio: "ignore" });
+      registryExisted = true;
+    } else assert.equal(probe.status, 1, "Could not inspect Native Messaging registry key");
+  }
+  registryPrepared = process.platform === "win32";
   for (let attempt = 0; attempt < 100; attempt++) {
     assert.ok(!stopped, "Agent exited during startup");
     if (readdirSync(runtime).some((name) => name.endsWith(".token"))) break;
@@ -122,6 +140,17 @@ try {
   });
   assert.equal(reply.readUInt32LE(0), reply.length - 4);
   assert.equal(JSON.parse(reply.subarray(4).toString()).ok, true);
+  // The headless Windows Agent must still honor explicitly piped MCP stdio.
+  const mcpReply = execFileSync(join(stage, "aipass-agent" + suffix), ["--claude-mcp-helper", "--vault", vault], {
+    env: { ...env, AIPASS_CLAUDE_CAPABILITY: "fixture-not-a-real-capability" },
+    input: [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+      { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+    ].map(value => JSON.stringify(value) + "\n").join(""),
+    encoding: "utf8", timeout: 30_000,
+  }).trim().split(/\r?\n/).map(line => JSON.parse(line));
+  assert.equal(mcpReply[0].result.protocolVersion, "2024-11-05");
+  assert.ok(mcpReply[1].error, "MCP accepted an unregistered capability");
   const key = "sk-aipass-platform-runtime-fixture-secret";
   const id = run(
     [
@@ -169,6 +198,24 @@ try {
   run(["unlock"], { AIPASS_MASTER_PASSWORD: password });
   run(["delete", id, "--yes"]);
   assert.equal(run(["list"]).length, 0);
+  if (process.platform === "win32") {
+    // Exercise real per-user Run registration, idempotence, stop/start and
+    // removal. This fixture has a unique vault and restores browser registry.
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const installed = run(["agent", "install"]);
+        assert.equal(installed.autostart.registered, true);
+        assert.equal(installed.autostart.running, true);
+        assert.match(installed.autostart.installPath, /^HKCU\\/);
+      }
+      assert.equal(run(["agent", "stop"]).autostart.running, false);
+      assert.equal(run(["agent", "start"]).autostart.running, true);
+    } finally {
+      const removed = run(["agent", "uninstall"]);
+      assert.equal(removed.autostart.registered, false);
+      assert.equal(removed.autostart.running, false);
+    }
+  }
   const scan = (directory) => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
@@ -183,11 +230,26 @@ try {
   for (const directory of [vault, sync, join(root, "logs")])
     if (existsSync(directory)) scan(directory);
   console.log(
-    "CLI runtime passed: create, CRUD, search, reveal, encrypted backup, folder sync, lock/unlock, Native Messaging ping, plaintext scan",
+    "CLI runtime passed: create, CRUD, search, reveal, encrypted backup, folder sync, lock/unlock, Native Messaging ping, MCP stdio/denial, plaintext scan" + (process.platform === "win32" ? ", per-user Agent login registration/stop/start/uninstall" : ""),
   );
+  complete = true;
+} catch (error) {
+  failed = true;
+  console.error(`Retained failed CLI fixture: ${root}`);
+  throw error;
 } finally {
-  agent.kill("SIGTERM");
-  for (let attempt = 0; attempt < 50 && !stopped; attempt++) await delay(100);
-  if (!stopped) agent.kill("SIGKILL");
-  rmSync(root, { recursive: true, force: true });
+  try {
+    agent.kill("SIGTERM");
+    for (let attempt = 0; attempt < 50 && !stopped; attempt++) await delay(100);
+    if (!stopped) agent.kill("SIGKILL");
+    if (registryPrepared) {
+      if (registryExisted) execFileSync("reg.exe", ["import", registryBackup], { stdio: "ignore" });
+      else spawnSync("reg.exe", ["delete", registryKey, "/f"], { stdio: "ignore" });
+    }
+    if (complete) rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  } catch (error) {
+    console.error(`CLI fixture cleanup failed: ${root}`);
+    if (!failed) throw error;
+    console.error(error.message);
+  }
 }

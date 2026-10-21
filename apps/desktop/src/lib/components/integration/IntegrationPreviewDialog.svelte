@@ -57,15 +57,18 @@
   });
 
   $: activePath = files[Number(activeFile)]?.path ?? preview?.targetPath ?? "";
+  $: sourcedEnv = files.find(file => /\/\.aipass\/tools\/[^/]+\.(?:env|ps1)$/.test(file.path.replaceAll("\\", "/")))?.path;
   $: accessNote = localProxy
     ? $t("integration.proxyNote")
     : preview?.mode === "plaintext"
       ? $t("integration.plaintextNote")
       : preview?.mode === "helper"
-        ? $t(preview.tool === "claude-code" ? "integration.helperNote" : "integration.envNote")
+        ? $t(sourcedEnv ? "integration.envNote" : "integration.helperNote")
         : preview?.mode === "env"
           ? $t("integration.envNote")
           : $t("integration.officialNote");
+
+  $: launchCommand = sourcedEnv ? sourcedEnv.endsWith(".ps1") ? `. '${sourcedEnv.replaceAll("'", "''")}'` : `source '${sourcedEnv.replaceAll("'", "'\\''")}'` : "";
 
   function fileName(path: string): string {
     return path.split(/[\\/]/).pop() || path;
@@ -136,7 +139,7 @@
       {/if}
 
       <div class="dialog-footer">
-        <span class="dialog-note"><span class="access-note">{accessNote}</span>{$t(managedSwitch ? "agents.backupDescription" : "integration.backupNote")}</span>
+        <span class="dialog-note"><span class="access-note">{accessNote}{#if launchCommand}<code>{launchCommand}</code>{/if}</span>{$t(managedSwitch ? "agents.backupDescription" : "integration.backupNote")}</span>
         <div class="dialog-actions">
           <!-- Button does not forward Dialog.Close child props (onclick), so
                closing is wired through the controlled onOpenChange instead. -->
@@ -421,6 +424,8 @@
     color: var(--text-secondary);
     line-height: 1.5;
   }
+
+  .access-note code { display: block; overflow-wrap: anywhere; }
 
   .dialog-actions {
     display: flex;

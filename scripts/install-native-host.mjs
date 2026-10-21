@@ -12,7 +12,8 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
-  readFileSync
+  readFileSync,
+  realpathSync
 } from "node:fs";
 import { createHash, createPublicKey } from "node:crypto";
 import { homedir } from "node:os";
@@ -296,12 +297,20 @@ function killStaleProcesses() {
 }
 
 function killStale(processName) {
+  const paths = [join(debugDir, processName), join(installDir, processName)].map((path) => {
+    try { return realpathSync(path); } catch { return resolve(path); }
+  });
   if (process.platform === "win32") {
-    spawnSync("taskkill", ["/F", "/IM", processName], { stdio: "ignore" });
+    // Development setup must never terminate a production Agent with the same
+    // basename. Resolve and recheck the exact executable before stopping it.
+    const literals = paths.map(path => `'${path.replaceAll("'", "''")}'`).join(",");
+    const script = `$ErrorActionPreference='Stop'; $paths=@(${literals}); Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -in $paths } | ForEach-Object { $p=Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue; if ($p -and $p.Path -in $paths) { Stop-Process -InputObject $p -Force } }`;
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { stdio: "ignore" });
+    if (result.status !== 0) throw new Error("Could not stop the development binaries; close them and retry");
     return;
   }
-  const escaped = processName.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-  spawnSync("pkill", ["-f", `(^|/)${escaped}($|[[:space:]])`], { stdio: "ignore" });
+  const escaped = paths.map(path => path.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`));
+  spawnSync("pkill", ["-f", `^(${escaped.join("|")})($|[[:space:]])`], { stdio: "ignore" });
 }
 
 function copyExecutable(source, destination) {

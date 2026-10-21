@@ -1,5 +1,7 @@
 use crate::desktop::open_desktop_window;
 use crate::ipc;
+use crate::ipc::framing::{read_frame_with_deadline, write_frame_with_deadline};
+use crate::ipc::PrivateListener as Listener;
 use crate::logging::{write_component_log, AGENT_LOG};
 use crate::paths::{canonical_vault_dir, cloud_sync_dir, namespace_for_vault_dir};
 use crate::session::{
@@ -19,7 +21,6 @@ use aipass_agent_protocol::{
     SyncConflictActionRequest, SyncConflictResponse, SyncMode, ToolConfigApplyResponse,
     ToolConfigMode, ToolConfigPreviewFile, ToolConfigPreviewResponse, ToolConfigProxyRequest,
     ToolConfigRequest, ToolConfigTool, VaultCreateResponse, AGENT_PROTOCOL_VERSION,
-    MAX_FRAME_BYTES,
 };
 use aipass_config_writers::{
     apply_plan_encrypted, config_backup_path, diff_preview_for_path, plan_claude_code,
@@ -45,11 +46,10 @@ use aipass_sync::{
 use aipass_vault::{EntrySummary, ProviderEntryInput, SecretMetadataInput, TtlGrantSummary, Vault};
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use interprocess::local_socket::{prelude::*, Listener, ListenerNonblockingMode, Stream};
+use interprocess::local_socket::{prelude::*, ListenerNonblockingMode, Stream};
 use reqwest::blocking::{Client as HttpClient, RequestBuilder};
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use reqwest::Url;
-use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
 use std::collections::HashSet;
 use std::fs;
@@ -330,86 +330,6 @@ fn reject_busy(mut conn: Stream) {
     let response = AgentResponse::error(AgentErrorCode::ServiceUnavailable, "agent is busy");
     let _ = write_frame_with_deadline(&mut conn, &response, CONNECTION_IO_TIMEOUT);
     let _ = conn.flush();
-}
-
-fn read_frame_with_deadline<T: DeserializeOwned>(
-    conn: &mut Stream,
-    timeout: Duration,
-) -> Result<T> {
-    let deadline = Instant::now() + timeout;
-    let mut len = [0_u8; 4];
-    read_exact_with_deadline(conn, &mut len, deadline)?;
-    let len = u32::from_le_bytes(len) as usize;
-    if len > MAX_FRAME_BYTES {
-        bail!("frame too large");
-    }
-    let mut body = vec![0_u8; len];
-    if let Err(err) = read_exact_with_deadline(conn, &mut body, deadline) {
-        body.zeroize();
-        return Err(err);
-    }
-    let parsed = serde_json::from_slice(&body);
-    body.zeroize();
-    Ok(parsed?)
-}
-
-fn write_frame_with_deadline<T: Serialize>(
-    conn: &mut Stream,
-    value: &T,
-    timeout: Duration,
-) -> Result<()> {
-    let mut body = serde_json::to_vec(value)?;
-    if body.len() > MAX_FRAME_BYTES {
-        body.zeroize();
-        bail!("frame too large");
-    }
-    let deadline = Instant::now() + timeout;
-    let len = (body.len() as u32).to_le_bytes();
-    let result = write_all_with_deadline(conn, &len, deadline)
-        .and_then(|_| write_all_with_deadline(conn, &body, deadline));
-    body.zeroize();
-    result
-}
-
-fn read_exact_with_deadline(conn: &mut Stream, buf: &mut [u8], deadline: Instant) -> Result<()> {
-    let mut offset = 0;
-    while offset < buf.len() {
-        match conn.read(&mut buf[offset..]) {
-            Ok(0) => {
-                return Err(std::io::Error::from(ErrorKind::UnexpectedEof).into());
-            }
-            Ok(count) => offset += count,
-            Err(err) if err.kind() == ErrorKind::Interrupted => {}
-            Err(err) if err.kind() == ErrorKind::WouldBlock => wait_for_io(deadline)?,
-            Err(err) => return Err(err.into()),
-        }
-    }
-    Ok(())
-}
-
-fn write_all_with_deadline(conn: &mut Stream, buf: &[u8], deadline: Instant) -> Result<()> {
-    let mut offset = 0;
-    while offset < buf.len() {
-        match conn.write(&buf[offset..]) {
-            Ok(0) => {
-                return Err(std::io::Error::from(ErrorKind::WriteZero).into());
-            }
-            Ok(count) => offset += count,
-            Err(err) if err.kind() == ErrorKind::Interrupted => {}
-            Err(err) if err.kind() == ErrorKind::WouldBlock => wait_for_io(deadline)?,
-            Err(err) => return Err(err.into()),
-        }
-    }
-    Ok(())
-}
-
-fn wait_for_io(deadline: Instant) -> Result<()> {
-    let now = Instant::now();
-    if now >= deadline {
-        bail!("agent IPC timed out");
-    }
-    thread::sleep((deadline - now).min(Duration::from_millis(5)));
-    Ok(())
 }
 
 fn auth_tokens_match(left: &SensitiveString, right: &SensitiveString) -> bool {

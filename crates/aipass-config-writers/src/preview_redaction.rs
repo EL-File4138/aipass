@@ -23,7 +23,7 @@ fn sensitive(key: &str) -> bool {
     .iter()
     .any(|part| key.contains(part))
         || key.ends_with("token")
-        || matches!(key.as_str(), "auth" | "key")
+        || matches!(key.as_str(), "auth" | "key" | "refs" | "records")
 }
 fn helper(key: &str, value: &str) -> bool {
     static COMMAND: LazyLock<regex::Regex> = LazyLock::new(|| {
@@ -90,6 +90,34 @@ pub fn redact_config(content: &str) -> String {
         table(doc.as_table_mut());
         return doc.to_string();
     }
+    if let Ok(value) = serde_yaml_ng::from_str::<Value>(content) {
+        if value.is_object() || value.is_array() {
+            let mut value = PrivateJson(value);
+            json(&mut value.0);
+            return serde_yaml_ng::to_string(&value.0).unwrap_or_else(|_| "[redacted]".into());
+        }
+    }
+    if content.lines().any(|line| {
+        line.trim_start().starts_with("export ") || line.trim_start().starts_with("$env:")
+    }) {
+        return content
+            .lines()
+            .map(|line| {
+                if let Some((key, _)) = line.split_once('=') {
+                    let name = key
+                        .trim()
+                        .trim_start_matches("export ")
+                        .trim_start_matches("$env:")
+                        .trim();
+                    if sensitive(name) {
+                        return format!("{key}= '[redacted]'");
+                    }
+                }
+                line.to_owned()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
     // Shell env helpers and legacy line diffs are not structured documents.
     static SECRET: LazyLock<regex::Regex> = LazyLock::new(|| {
         regex::Regex::new(
@@ -111,6 +139,7 @@ mod tests {
             "[model_providers.custom.auth]\ncommand = 'echo'\nargs = ['fake-private-token']\n",
             r#"{"auth":{"command":"echo","args":["fake-private-token"]},"api_token":"fake-private-token"}"#,
             "export AIPASS_KEY_FIXTURE='fake-private-token'\nexport AIPASS_PROXY_TOKEN='fake-private-token'\n",
+            "$env:AIPASS_API_KEY = 'prefix''fake-private-token'\r\n",
             r#"{"env":{"AIPASS_KEY_FIXTURE":"fake-private-token","AIPASS_PROXY_TOKEN":"fake-private-token"}}"#,
         ] {
             assert!(!redact_config(raw).contains("fake-private-token"));

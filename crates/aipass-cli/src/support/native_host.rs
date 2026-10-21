@@ -104,6 +104,8 @@ pub(crate) fn allowed_origins(extension_ids: &[String]) -> Result<Vec<String>> {
 }
 
 pub(crate) fn default_native_manifest_path(browser: &BrowserArg) -> Option<PathBuf> {
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let _ = browser;
     #[cfg(target_os = "macos")]
     {
         let home = std::env::var_os("HOME").map(PathBuf::from)?;
@@ -153,7 +155,7 @@ pub(crate) fn default_native_manifest_path(browser: &BrowserArg) -> Option<PathB
 
 pub(crate) fn install_native_manifest_reference(
     browser: &BrowserArg,
-    manifest_path: &PathBuf,
+    manifest_path: &Path,
 ) -> Result<()> {
     #[cfg(target_os = "windows")]
     {
@@ -171,7 +173,7 @@ pub(crate) fn install_native_manifest_reference(
                 r"HKCU\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\dev.aipass.native"
             }
         };
-        let status = ProcessCommand::new("reg")
+        let result = ProcessCommand::new("reg.exe")
             .args([
                 "add",
                 key,
@@ -182,9 +184,9 @@ pub(crate) fn install_native_manifest_reference(
                 &manifest_path.display().to_string(),
                 "/f",
             ])
-            .status()
+            .output()
             .context("failed to register native host")?;
-        if !status.success() {
+        if !result.status.success() {
             anyhow::bail!("native host registry update failed");
         }
     }

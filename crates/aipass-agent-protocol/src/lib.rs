@@ -53,7 +53,9 @@ pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 // Version 16 adds cancellable, source-bound native subscription imports.
 // Version 17 adds native credential switching and target-bound reauthentication.
 // Version 18 requires credential-bound subscription response feedback.
-pub const AGENT_PROTOCOL_VERSION: u32 = 18;
+// Version 19 requires the expanded installed-Agent catalog and native-OS config helpers.
+// Older residents cannot parse the added tool IDs or enforce installation before writes.
+pub const AGENT_PROTOCOL_VERSION: u32 = 19;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "method", rename_all = "snake_case")]

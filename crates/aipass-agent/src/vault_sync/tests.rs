@@ -1200,18 +1200,30 @@ fn local_writes_publish_automatically_without_manual_sync() {
             .map_err(ServiceError::internal)
     })
     .unwrap();
+    struct StopWatcher(Arc<AgentState>);
+    impl Drop for StopWatcher {
+        fn drop(&mut self) {
+            self.0.shutdown.store(true, Ordering::Relaxed);
+            self.0.sync_watcher.lock().unwrap().take();
+        }
+    }
+    let _stop = StopWatcher(state.clone());
     crate::sync_watch::restart_sync_watcher(&state, &settings);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
     let remote = aipass_sync::FolderSnapshotRemote(&dir);
-    while remote.list().unwrap().is_empty() {
-        assert!(std::time::Instant::now() < deadline);
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
+    let wait_for = |count, phase| {
+        // Bootstrap and the subsequent independent mutation each have the same
+        // eight-second bound. Setup must not consume the mutation's allowance.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+        while remote.list().unwrap().len() < count {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{phase} did not publish automatically; status={:?}",
+                state.sync_status.lock().unwrap()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    };
+    wait_for(1, "bootstrap");
     add(&state, "automatic");
-    while remote.list().unwrap().len() < 2 {
-        assert!(std::time::Instant::now() < deadline);
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-    state.shutdown.store(true, Ordering::Relaxed);
-    state.sync_watcher.lock().unwrap().take();
+    wait_for(2, "mutation");
 }

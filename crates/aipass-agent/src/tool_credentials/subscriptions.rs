@@ -55,7 +55,7 @@ pub(super) fn preserve(
     tool: &ToolConfigTool,
 ) -> ServiceResult<()> {
     if *tool == ToolConfigTool::Grok {
-        let root = home.join(".grok");
+        let root = aipass_config_writers::grok_config_dir(home);
         if Resource::File(root.join("auth.json"))
             .read()
             .map_err(error)?

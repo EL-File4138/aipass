@@ -96,6 +96,8 @@ pub fn install_cli() -> Result<PathBuf, String> {
 
     #[cfg(target_os = "linux")]
     install_linux_helpers(&bundled_path, &install_path)?;
+    #[cfg(windows)]
+    install_windows_helpers(&bundled_path, &install_path)?;
 
     // A distro package may already install the CLI at this exact path.
     if fs::canonicalize(&bundled_path).ok() == fs::canonicalize(&install_path).ok()
@@ -129,6 +131,20 @@ fn copy_executable(source: &Path, destination: &Path) -> Result<(), String> {
             .map_err(|e| format!("Failed to set executable permissions: {}", e))?;
     }
 
+    Ok(())
+}
+
+#[cfg(any(windows, test))]
+fn install_windows_helpers(bundled: &Path, installed: &Path) -> Result<(), String> {
+    let source = bundled.parent().ok_or("invalid bundled CLI path")?;
+    let destination = installed.parent().ok_or("invalid CLI installation path")?;
+    for name in ["aipass-agent.exe", "aipass-native-host.exe"] {
+        let from = source.join(name);
+        let to = destination.join(name);
+        if fs::canonicalize(&from).ok() != fs::canonicalize(&to).ok() || !to.is_file() {
+            copy_executable(&from, &to)?;
+        }
+    }
     Ok(())
 }
 
@@ -171,6 +187,13 @@ pub fn is_cli_installed() -> bool {
 
 /// Attempt to install CLI on first run
 pub fn ensure_cli_installed() {
+    #[cfg(windows)]
+    if let (Some(bundled), Some(installed)) = (bundled_cli_path(), cli_install_path()) {
+        if let Err(error) = install_windows_helpers(&bundled, &installed) {
+            log::warn!("Failed to install CLI helpers: {error}");
+            return;
+        }
+    }
     // Matching CLI bytes do not prove its companion binaries are current.
     #[cfg(target_os = "linux")]
     if let (Some(bundled), Some(installed)) = (bundled_cli_path(), cli_install_path()) {
@@ -201,10 +224,41 @@ pub fn ensure_cli_installed() {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(unix)]
+fn is_in_path(cli_path: &Path) -> bool {
+    if let Some(parent) = cli_path.parent() {
+        if let Ok(path_var) = std::env::var("PATH") {
+            return path_var.split(':').any(|p| p == parent.to_string_lossy());
+        }
+    }
+    false
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn windows_cli_copy_keeps_agent_and_native_host_beside_the_cli() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("安装目录");
+        let installed = root.path().join("Programs/AIPass/aipass.exe");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(installed.parent().unwrap()).unwrap();
+        for name in ["aipass-agent.exe", "aipass-native-host.exe"] {
+            fs::write(source.join(name), name).unwrap();
+        }
+        install_windows_helpers(&source.join("aipass.exe"), &installed).unwrap();
+        fs::remove_dir_all(source).unwrap();
+        for name in ["aipass-agent.exe", "aipass-native-host.exe"] {
+            assert_eq!(
+                fs::read(installed.with_file_name(name)).unwrap(),
+                name.as_bytes()
+            );
+        }
+    }
+
+    #[cfg(unix)]
     #[test]
     fn linux_helpers_survive_removing_the_appimage_mount_and_refresh_atomically() {
         let root = tempfile::tempdir().unwrap();
@@ -230,14 +284,4 @@ mod tests {
         (&old_inode).read_to_string(&mut previous).unwrap();
         assert_eq!(previous, "original helper");
     }
-}
-
-#[cfg(unix)]
-fn is_in_path(cli_path: &Path) -> bool {
-    if let Some(parent) = cli_path.parent() {
-        if let Ok(path_var) = std::env::var("PATH") {
-            return path_var.split(':').any(|p| p == parent.to_string_lossy());
-        }
-    }
-    false
 }

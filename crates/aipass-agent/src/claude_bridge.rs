@@ -64,6 +64,8 @@ impl Drop for Run {
         if matches!(self.child.try_wait(), Ok(Some(_))) {
             return;
         }
+        #[cfg(windows)]
+        crate::windows_process::terminate_tree(self.child.id());
         #[cfg(unix)]
         {
             if let Some(pid) = rustix::process::Pid::from_raw(self.child.id() as i32) {

@@ -548,7 +548,6 @@ jobs:
           Compress-Archive -Path artifacts/stage/* -DestinationPath "artifacts/${{ matrix.archive }}" -Force
 
       - name: Verify standalone CLI and Native Messaging runtime
-        if: runner.os != 'Windows'
         run: node scripts/verify-cli-runtime.mjs artifacts/stage
 
       - uses: actions/upload-artifact@v4

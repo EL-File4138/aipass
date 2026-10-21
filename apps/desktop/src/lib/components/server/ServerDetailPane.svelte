@@ -1,7 +1,7 @@
 <script lang="ts">
   import { scrollMask, Badge, Banner, Button, IconButton, ProxyStatusGrid } from "@aipass/ui";
   import { AlertTriangle, Check, Copy, FileText, LoaderCircle, Pencil, Play, RotateCw, Server, Square, Trash2, X } from "lucide-svelte";
-  import type { ProviderEntry } from "@aipass/schemas";
+  import { proxyGroupModel, type ProviderEntry } from "@aipass/schemas";
 
   import { t } from "../../stores/i18n";
   import type { MaybePromise, ProxyConfig, ProxyLogEntry, ProxyStatus, ServerUsageByRange, UsageRange, ToolConfigApplyResult, ToolConfigPreview, ToolConfigTarget, ToolDetection, UsageTimeseriesPoint } from "../../types";
@@ -10,6 +10,8 @@
   import { advertisedProxyAddress } from "../../utils/server";
   import { Card } from "@aipass/ui";
   import ConfirmModal from "../shared/ConfirmModal.svelte";
+  import IntegrationSetupDialog from "../integration/IntegrationSetupDialog.svelte";
+  import type { IntegrationToolDefinition } from "../../utils/integrations";
   import IntegrationCard from "../integration/IntegrationCard.svelte";
   import UsageBreakdown from "./UsageBreakdown.svelte";
   import UsageChart from "./UsageChart.svelte";
@@ -53,6 +55,11 @@
     input.focus();
     input.select();
   }
+  let setupTool: IntegrationToolDefinition | undefined;
+  $: if (setupTool && !toolDetections.some(d => d.tool === setupTool?.id && (d.binaryFound || d.extensionFound))) setupTool = undefined;
+  $: routeModel = (integrateRoute && proxyGroupModel(integrateRoute)) || integrateRoute?.targets.filter(target => target.enabled).map(target => {
+    const entry = entryById(target.providerEntryId); return entry?.secretRefs.find(secret => secret.id === target.secretId)?.defaultModel ?? entry?.defaultModel;
+  }).find(Boolean) || "";
   let clearUsageConfirmOpen = false;
   let searchOpen = false;
   let logsOpen = false;
@@ -80,7 +87,7 @@
   }
 
   $: hasRouteDefaultModel = Boolean(
-    integrateRoute?.targets.some(
+    (integrateRoute && proxyGroupModel(integrateRoute)) || integrateRoute?.targets.some(
       (target) =>
         target.enabled &&
         Boolean((entryById(target.providerEntryId)?.secretRefs.find(secret => secret.id === target.secretId)?.defaultModel ?? entryById(target.providerEntryId)?.defaultModel)?.trim())
@@ -98,10 +105,12 @@
             ? $t("integration.protocolMismatch")
             : availability === "default-model"
               ? $t("integration.defaultModelRequired")
+              : availability === "unsupported" && tool.localProxyUnsupportedReason === "model-catalog"
+                ? $t("integration.modelCatalogRequired")
               : availability === "unsupported" && tool.localProxyUnsupportedReason === "custom-endpoint"
                 ? $t("integration.cursorProxyUnsupported")
                 : availability === "unsupported" && tool.localProxyUnsupportedReason === "native-api"
-                  ? $t("integration.geminiProxyUnsupported")
+                  ? $t(tool.id === "gemini-cli" ? "integration.geminiProxyUnsupported" : "integration.protocolMismatch")
                   : undefined;
         return { ...tool, disabledReason };
       })
@@ -233,6 +242,7 @@
       detections={toolDetections}
       resetKey={integrateRoute?.id ?? ""}
       disabled={Boolean(busy) || !integrateRoute?.token}
+      onSetup={tool => setupTool = tool}
       onRefresh={onRefreshToolDetections}
       onPreview={async (tool) => {
         if (!integrateRoute) throw new Error("no active route");
@@ -556,3 +566,9 @@
 </style>
 
 <SearchSettingsDialog open={searchOpen} {config} {entries} onSave={onSaveConfig} onCopy={onCopyEndpoint} onOpenChange={open => searchOpen = open} />
+
+{#if setupTool && integrateRoute}
+  <IntegrationSetupDialog tool={setupTool} endpoint={integrateEndpoint} model={routeModel}
+    protocol={integrateRoute.inboundProtocol === "anthropic_messages" ? "Anthropic Messages" : integrateRoute.inboundProtocol === "open_ai_responses" ? "OpenAI Responses" : "OpenAI Chat Completions"}
+    onCopyKey={() => onCopyToken(integrateRoute.token)} onClose={() => setupTool = undefined} />
+{/if}

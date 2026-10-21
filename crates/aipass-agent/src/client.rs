@@ -3,9 +3,11 @@ use crate::launcher;
 use crate::paths::{canonical_vault_dir, default_vault_dir, namespace_for_vault_dir};
 #[cfg(target_os = "windows")]
 use crate::windows_service;
+#[cfg(not(windows))]
+use aipass_agent_protocol::{read_frame, write_frame};
 use aipass_agent_protocol::{
-    read_frame, write_frame, AgentErrorCode, AgentRequest, AgentResponse,
-    AuthenticatedAgentRequest, SessionStatus, AGENT_PROTOCOL_VERSION,
+    AgentErrorCode, AgentRequest, AgentResponse, AuthenticatedAgentRequest, SessionStatus,
+    AGENT_PROTOCOL_VERSION,
 };
 use anyhow::Result;
 use serde::de::DeserializeOwned;
@@ -35,13 +37,19 @@ fn apply_request_timeouts(
     response_timeout: Duration,
 ) -> std::result::Result<(), AgentCommandError> {
     use interprocess::local_socket::traits::Stream as _;
-    stream
+    #[cfg(windows)]
+    let result = {
+        let _ = response_timeout;
+        stream.set_nonblocking(true)
+    };
+    #[cfg(not(windows))]
+    let result = stream
         .set_send_timeout(Some(REQUEST_SEND_TIMEOUT))
-        .and_then(|()| stream.set_recv_timeout(Some(response_timeout)))
-        .map_err(|err| AgentCommandError {
-            code: Some(AgentErrorCode::Internal),
-            message: format!("failed to set agent request timeout: {err}"),
-        })
+        .and_then(|()| stream.set_recv_timeout(Some(response_timeout)));
+    result.map_err(|err| AgentCommandError {
+        code: Some(AgentErrorCode::Internal),
+        message: format!("failed to set agent request timeout: {err}"),
+    })
 }
 
 /// A timed-out agent is reported as unavailable rather than an internal fault,
@@ -181,8 +189,35 @@ impl AgentClient {
             request_id: Some(request_id),
             request: request.clone(),
         };
-        write_frame(&mut stream, &payload).map_err(timeout_aware_error)?;
-        read_frame(&mut stream).map_err(timeout_aware_error)
+        #[cfg(windows)]
+        {
+            // Retain the peer on this transaction. A separate connect-and-drop
+            // probe can race named-pipe accept and instance recycling.
+            let process = if matches!(request, AgentRequest::AgentShutdown) {
+                crate::windows_process::peer_process(&stream)
+                    .map_err(AgentCommandError::internal)?
+            } else {
+                None
+            };
+            ipc::framing::write_frame_with_deadline(&mut stream, &payload, REQUEST_SEND_TIMEOUT)
+                .map_err(timeout_aware_error)?;
+            let response: AgentResponse =
+                ipc::framing::read_frame_with_deadline(&mut stream, request.response_timeout())
+                    .map_err(timeout_aware_error)?;
+            drop(stream);
+            if response.ok {
+                if let Some(process) = process {
+                    crate::windows_process::wait_for_exit(&process)
+                        .map_err(AgentCommandError::internal)?;
+                }
+            }
+            Ok(response)
+        }
+        #[cfg(not(windows))]
+        {
+            write_frame(&mut stream, &payload).map_err(timeout_aware_error)?;
+            read_frame(&mut stream).map_err(timeout_aware_error)
+        }
     }
 
     pub fn request<T: DeserializeOwned>(
@@ -237,15 +272,19 @@ impl AgentClient {
         #[cfg(target_os = "windows")]
         let (launched_binary, binary_candidates) = if mode.install_autostart() {
             let candidates = launcher::agent_binary_candidates();
-            if let Err(err) = windows_service::start_service(&self.config.vault_dir) {
-                anyhow::bail!(launcher::windows_service_start_failure_message(
+            if windows_service::start_service(&self.config.vault_dir).is_ok() {
+                (None, candidates)
+            } else {
+                // A standalone CLI install has no SCM registration. Normal user
+                // operations must still start the per-user Agent without elevation.
+                let launch = launcher::launch_agent(
                     &self.config.vault_dir,
                     &self.config.namespace,
                     &initial_connection_error,
-                    &err.to_string(),
-                ));
+                    mode.launch_options(),
+                )?;
+                (Some(launch.binary), launch.candidates)
             }
-            (None, candidates)
         } else {
             let launch = launcher::launch_agent(
                 &self.config.vault_dir,
@@ -330,7 +369,7 @@ impl AgentClient {
         }
     }
 
-    fn shutdown_older_agent(&self, version: u32) -> Result<()> {
+    pub(crate) fn shutdown_older_agent(&self, version: u32) -> Result<()> {
         anyhow::ensure!(
             version > 0 && version < AGENT_PROTOCOL_VERSION,
             "only older agents can be replaced"
@@ -487,6 +526,82 @@ fn decode_response<T: DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_shutdown_uses_one_authenticated_connection() {
+        use interprocess::local_socket::traits::Listener as _;
+        let root = tempfile::tempdir().unwrap();
+        let client = AgentClient::for_vault(root.path().join("vault")).unwrap();
+        let token = ipc::load_or_create_auth_token(&client.config.vault_dir).unwrap();
+        let listener = ipc::listen(&client.config.vault_dir).unwrap();
+        let server = thread::spawn(move || {
+            let mut stream = listener.accept().unwrap();
+            let payload: AuthenticatedAgentRequest =
+                ipc::framing::read_frame_with_deadline(&mut stream, Duration::from_secs(5))
+                    .unwrap();
+            assert_eq!(payload.auth_token.expose(), token.expose());
+            assert!(matches!(payload.request, AgentRequest::AgentShutdown));
+            ipc::framing::write_frame_with_deadline(
+                &mut stream,
+                &AgentResponse::empty(),
+                Duration::from_secs(5),
+            )
+            .unwrap();
+            thread::sleep(Duration::from_millis(100));
+        });
+        client.shutdown().unwrap();
+        server.join().unwrap();
+        ipc::clear_auth_token(&client.config.vault_dir).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_named_pipe_client_authenticates_and_has_a_bounded_read() {
+        use interprocess::local_socket::traits::{Listener as _, Stream as _};
+        let dir = tempfile::tempdir().unwrap();
+        let client = AgentClient::for_vault(dir.path().join("vault")).unwrap();
+        let token = ipc::load_or_create_auth_token(&client.config.vault_dir).unwrap();
+        let listener = ipc::listen(&client.config.vault_dir).unwrap();
+        let server = thread::spawn(move || {
+            let mut stream = listener.accept().unwrap();
+            let request: AuthenticatedAgentRequest =
+                ipc::framing::read_frame_with_deadline(&mut stream, Duration::from_secs(5))
+                    .unwrap();
+            assert_eq!(request.auth_token.expose(), token.expose());
+            assert!(matches!(request.request, AgentRequest::SessionStatus));
+            ipc::framing::write_frame_with_deadline(
+                &mut stream,
+                &AgentResponse::success(
+                    serde_json::json!({"marker":"windows", "large": "x".repeat(512 * 1024)}),
+                ),
+                Duration::from_secs(5),
+            )
+            .unwrap();
+            // Keep the server alive until the client reads the response.
+            std::thread::sleep(Duration::from_millis(100));
+        });
+        let response = client
+            .request::<serde_json::Value>(&AgentRequest::SessionStatus)
+            .unwrap();
+        assert_eq!(response["marker"], "windows");
+        assert_eq!(response["large"].as_str().unwrap().len(), 512 * 1024);
+        server.join().unwrap();
+        let listener = ipc::listen(&client.config.vault_dir).unwrap();
+        let mut stream = ipc::connect(&client.config.vault_dir).unwrap();
+        let _held = listener.accept().unwrap();
+        stream.set_nonblocking(true).unwrap();
+        let error = ipc::framing::read_frame_with_deadline::<AgentResponse>(
+            &mut stream,
+            Duration::from_millis(50),
+        )
+        .unwrap_err();
+        assert_eq!(
+            timeout_aware_error(error).code,
+            Some(AgentErrorCode::ServiceUnavailable)
+        );
+        ipc::clear_auth_token(&client.config.vault_dir).unwrap();
+    }
 
     /// A socket that accepts a connection and then never answers is exactly
     /// the wedged-agent case: without a receive timeout the caller blocks

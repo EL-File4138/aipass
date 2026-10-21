@@ -410,6 +410,7 @@ impl Fixture {
         let vault_id = creation.vault.vault_id();
         let tools = temp.path().join("tools");
         std::fs::create_dir_all(&tools).unwrap();
+        crate::server::tests::install_test_tools(&tools);
         crate::server::TOOL_HOME_OVERRIDES
             .lock()
             .unwrap()

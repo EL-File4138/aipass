@@ -30,7 +30,7 @@ test.each(["provider-b:auth_json", "provider-a:experimental_bearer_token"])("lat
   let finish!: (plan: { preview: ToolConfigPreview; apply: () => Promise<ToolConfigApplyResult> }) => void;
   const apply = vi.fn(async () => applied);
   app = mount(IntegrationCard, { target: document.body, props: {
-    tools: [tool], get resetKey() { return state.current; },
+    tools: [tool], detections: [{ tool: "codex", binaryFound: true }], get resetKey() { return state.current; },
     onPreview: () => new Promise(resolve => { finish = resolve; })
   } });
   flushSync();
@@ -50,7 +50,7 @@ test("confirmation uses the captured plan once and ignores its late result after
   let finish!: (result: ToolConfigApplyResult) => void;
   const apply = vi.fn(() => new Promise<ToolConfigApplyResult>(resolve => { finish = resolve; }));
   app = mount(IntegrationCard, { target: document.body, props: {
-    tools: [tool], get resetKey() { return state.current; }, onPreview: async () => ({ preview, apply })
+    tools: [tool], detections: [{ tool: "codex", binaryFound: true }], get resetKey() { return state.current; }, onPreview: async () => ({ preview, apply })
   } });
   flushSync();
   writeButton().click();
@@ -64,4 +64,38 @@ test("confirmation uses the captured plan once and ignores its late result after
   await Promise.resolve(); flushSync();
   expect(document.querySelector('.preview-dialog-content[data-state="open"]')).toBeNull();
   expect(document.querySelector(".applied-message")).toBeNull();
+});
+
+test("quick integration hides uninstalled and config-only Agents, including before detection completes", async () => {
+  setLocale("en");
+  const detections = writable([{ tool: "zed" as const, binaryFound: true }, { tool: "codex" as const, binaryFound: false, configPath: "/leftover/config" }]);
+  const state = fromStore(detections);
+  app = mount(IntegrationCard, { target: document.body, props: {
+    tools: integrationToolDefinitions, get detections() { return state.current; }
+  } });
+  flushSync();
+  expect([...document.querySelectorAll(".tool-name")].map(n => n.textContent)).toEqual(["Zed"]);
+  detections.set([]); flushSync();
+  expect(document.querySelectorAll(".tool-row")).toHaveLength(0);
+  expect(document.body.textContent).toContain("No supported Agents detected");
+});
+
+test("a detection refresh closes a preview for an Agent that is no longer installed", async () => {
+  setLocale("en");
+  const detections = writable([{ tool: "codex" as const, binaryFound: true }]); const state = fromStore(detections);
+  const apply = vi.fn(async () => applied);
+  app = mount(IntegrationCard, { target: document.body, props: { tools: [tool], get detections() { return state.current; }, onPreview: async () => ({preview, apply}) } });
+  flushSync(); writeButton().click();
+  await vi.waitFor(() => { flushSync(); expect(document.querySelector(".preview-dialog-content")).toBeTruthy(); });
+  detections.set([]); flushSync();
+  await vi.waitFor(() => { flushSync(); expect(document.querySelector('.preview-dialog-content[data-state="open"]')).toBeNull(); });
+  expect(apply).not.toHaveBeenCalled();
+});
+
+test("guided integrations expose setup without calling the automatic writer", async () => {
+  setLocale("en"); const onPreview=vi.fn(); const onSetup=vi.fn();
+  const guided=integrationToolDefinitions.find(t => t.id === "trae")!;
+  app=mount(IntegrationCard,{target:document.body,props:{tools:[guided],detections:[{tool:"trae",binaryFound:true}],onPreview,onSetup}});
+  flushSync(); expect(document.querySelectorAll(".tool-side .btn-ghost")).toHaveLength(0);
+  writeButton().click(); expect(onSetup).toHaveBeenCalledWith(guided); expect(onPreview).not.toHaveBeenCalled();
 });

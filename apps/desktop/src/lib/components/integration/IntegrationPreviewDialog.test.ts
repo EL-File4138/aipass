@@ -151,3 +151,11 @@ test("missing diff falls back to the file content", () => {
   expect(document.querySelector("pre")?.textContent).toBe("fallback = true");
   expect(document.querySelector(".diff-viewer")).toBeNull();
 });
+
+
+test("windows helper instructions use PowerShell dot sourcing and preserve native paths", () => {
+  const path = "C:\\Users\\O'Brien 中文\\.aipass\\tools\\zed.ps1";
+  mountDialog({preview: {...preview, tool: "zed", files: [{path, content: "# helper", diff: "# helper"}]}});
+  expect(document.body.textContent).toContain(`. '${path.replaceAll("'", "''")}'`);
+  expect(document.body.textContent).not.toContain("source '");
+});

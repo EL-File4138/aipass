@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
+import { pnpmCommand } from "./pnpm-command.mjs";
 
 const allowedLicenses = new Set([
   "MIT",
@@ -16,7 +17,7 @@ const allowedLicenses = new Set([
   "CC0-1.0"
 ]);
 
-const report = JSON.parse(execFileSync("pnpm", ["licenses", "list", "--json"], { encoding: "utf8" }));
+const report = JSON.parse(execFileSync(...pnpmCommand(["licenses", "list", "--json"]), { encoding: "utf8" }));
 const entries = normalizeReport(report);
 const violations = [];
 

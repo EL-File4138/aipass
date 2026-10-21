@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
+import { pnpmCommand } from "./pnpm-command.mjs";
 import { chmodSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -73,7 +74,7 @@ function buildUniversalMacosSidecars() {
 }
 
 function run(command, args) {
-  execFileSync(command, args, {
+  execFileSync(...(command === "pnpm" ? pnpmCommand(args) : [command, args]), {
     cwd: repoRoot,
     stdio: "inherit",
     env: process.env,

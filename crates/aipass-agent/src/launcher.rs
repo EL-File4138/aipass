@@ -90,14 +90,18 @@ pub(crate) fn launch_agent(
         ),
     );
 
-    match command.spawn() {
-        Ok(child) => {
+    #[cfg(windows)]
+    let spawned = crate::windows_process::spawn(&command);
+    #[cfg(not(windows))]
+    let spawned = command.spawn().map(|child| child.id());
+    match spawned {
+        Ok(pid) => {
             write_component_log(
                 AGENT_LOG,
                 "INFO",
                 &format!(
                     "spawned agent pid={} binary={} namespace={}",
-                    child.id(),
+                    pid,
                     binary.display(),
                     namespace
                 ),
@@ -154,24 +158,6 @@ pub(crate) fn agent_ready_timeout_message(
     }
     lines.push(agent_recovery_hint().to_string());
     lines.join("\n")
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn windows_service_start_failure_message(
-    vault_dir: &Path,
-    namespace: &str,
-    initial_connection_error: &str,
-    service_error: &str,
-) -> String {
-    [
-        "AIPass agent service is not running and Windows could not start it.".to_string(),
-        format!("Vault: {}", vault_dir.display()),
-        format!("Namespace: {namespace}"),
-        format!("Service start error: {service_error}"),
-        format!("Initial connection error: {initial_connection_error}"),
-        "Run `aipass agent install` with permission to register/start the Windows service, then retry.".to_string(),
-    ]
-    .join("\n")
 }
 
 fn find_agent_binary() -> AgentBinarySearch {

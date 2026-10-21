@@ -64,6 +64,38 @@ jobs:
         run: pnpm --dir apps/desktop tauri build --ci --bundles deb,appimage --config "${AIPASS_RUNTIME_BUILD_CONFIG}"
       - name: Verify packaged CLI, main window and tray startup
         run: dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' node scripts/verify-linux-runtime.mjs
+      - name: Verify official Cursor Local API integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          cursor_local_root="$(mktemp -d "${RUNNER_TEMP}/aipass-cursor-local.XXXXXX")"
+          trap 'rm -rf "$cursor_local_root"' EXIT
+          case "$(uname -m)" in
+            x86_64) cursor_local_arch=x64 ;;
+            aarch64|arm64) cursor_local_arch=arm64 ;;
+            *) echo "Unsupported Cursor Local architecture" >&2; exit 1 ;;
+          esac
+          curl --fail --location --retry 3 \
+            "https://downloads.cursor.com/lab/2026.10.19-6bbf2c4/linux/${cursor_local_arch}/agent-cli-local-package.tar.gz" \
+            | tar --strip-components=1 -xz -C "$cursor_local_root"
+          mkdir -p linux-runtime-check-reports
+          node scripts/verify-cursor-local.mjs "$cursor_local_root/cursor-agent-local" \
+            | tee linux-runtime-check-reports/cursor-local.jsonl
+      - name: Verify official Pi API integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          pi_runtime_root="$(mktemp -d "${RUNNER_TEMP}/aipass-pi-runtime.XXXXXX")"
+          trap 'rm -rf "$pi_runtime_root"' EXIT
+          for pi_flavor in legacy current; do
+            case "$pi_flavor" in
+              legacy) pi_package=@mariozechner/pi-coding-agent@0.73.1 ;;
+              current) pi_package=@earendil-works/pi-coding-agent@1.3.0 ;;
+            esac
+            npm install --prefix "$pi_runtime_root/$pi_flavor" --ignore-scripts --no-audit --no-fund "$pi_package"
+            node scripts/verify-pi-local.mjs "$pi_runtime_root/$pi_flavor/node_modules/.bin/pi" \
+              | tee -a linux-runtime-check-reports/pi-local.jsonl
+          done
       - name: Verify signed AppImage installation and failure recovery
         run: |
           mapfile -t images < <(find target/release/bundle/appimage -maxdepth 1 -name '*.AppImage')
@@ -135,3 +167,46 @@ jobs:
       - name: Remove disposable signing key
         if: always()
         run: rm -rf "${RUNNER_TEMP}/aipass-runtime-signing"
+
+  windows:
+    name: Windows workspace and installed runtime
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      RUST_TEST_THREADS: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm licenses:audit
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - name: Verify embedded Svelte control panel is reproducible
+        run: git diff --exit-code -- apps/control-panel/embedded
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: cargo build --workspace
+      - name: Prepare disposable updater signing key
+        run: node scripts/prepare-runtime-check-build.mjs "${{ runner.temp }}/aipass-windows-runtime-signing"
+      - name: Build Windows NSIS test installer
+        run: pnpm --dir apps/desktop tauri build --ci --bundles nsis --config "$env:AIPASS_RUNTIME_BUILD_CONFIG"
+      - name: Verify installed main, tray, CLI, Native Messaging and uninstall
+        run: node scripts/verify-windows-runtime.mjs target/release/bundle/nsis
+      - name: Remove disposable signing key
+        if: always()
+        run: Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "${{ runner.temp }}/aipass-windows-runtime-signing"
+      - name: Upload Windows runtime diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-runtime-checks
+          path: windows-runtime-check-reports/
+          if-no-files-found: ignore
+          retention-days: 14

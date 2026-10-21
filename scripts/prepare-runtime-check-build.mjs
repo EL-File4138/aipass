@@ -3,6 +3,7 @@
 // uses the production artifact's existing public key and detached signature.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { pnpmCommand } from "./pnpm-command.mjs";
 import {
   appendFileSync,
   existsSync,
@@ -18,8 +19,7 @@ assert.ok(!existsSync(directory), "Use a fresh signing directory");
 mkdirSync(directory, { recursive: true, mode: 0o700 });
 const key = join(directory, "updater.key");
 execFileSync(
-  "pnpm",
-  [
+  ...pnpmCommand([
     "--dir",
     "apps/desktop",
     "tauri",
@@ -30,7 +30,7 @@ execFileSync(
     "",
     "-w",
     key,
-  ],
+  ]),
   {
     stdio: ["ignore", "pipe", "pipe"],
   },

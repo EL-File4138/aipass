@@ -299,7 +299,7 @@
   "integration.backupNote": "Existing files are backed up automatically before writing.",
   "integration.plaintextNote": "This mode writes the API key into the tool’s local configuration in plaintext. The tool and anyone with access to that file can read it.",
   "integration.helperNote": "This mode lets the tool request the key from AIPass while the vault is unlocked. The tool receives the plaintext key at runtime.",
-  "integration.envNote": "Before starting the tool, source the generated .env file in your terminal. It reads the selected credential from the unlocked vault; the tool can access it at runtime.",
+  "integration.envNote": "Before starting the tool, load the generated helper using the command below. It reads the selected key from the unlocked vault.",
   "integration.officialNote": "This mode uses the tool’s native sign-in credentials, which are stored and managed by that tool.",
   "integration.proxyNote": "This configuration writes a local proxy token. The tool sends requests through AIPass; the provider key stays in the vault.",
   "settings.syncSettingsSaved": "Sync settings saved.",
@@ -1316,5 +1316,18 @@
   "settings.credentialClickAction": "Credential click",
   "settings.credentialClickReveal": "Reveal",
   "settings.credentialClickCopy": "Copy",
-  "settings.confirmSecretCopy": "Confirm before copying credentials"
+  "settings.confirmSecretCopy": "Confirm before copying credentials",
+  "integration.setupAction": "Setup guide",
+  "integration.setupProtocol": "API format",
+  "integration.setupEndpoint": "Endpoint",
+  "integration.setupModel": "Model",
+  "integration.setupCopied": "Copied",
+  "integration.setupCopyKey": "Copy key",
+  "integration.setup.vscode-chat": "Chat model picker → Manage Language Models → Add Models → Custom Endpoint. Enter these values, save, then select the model.",
+  "integration.setup.cline": "Cline Settings → API Provider → OpenAI Compatible or Anthropic. Enter these values and save. For the CLI, use cline auth.",
+  "integration.setup.trae": "Settings → Models → Add Model → Custom Model. Select this API format, enter these values, save, then select the model.",
+  "integration.setup.qoder": "Open Settings → Models, or /model → Custom in Qoder CLI. BYOK availability, providers and custom URLs depend on your plan and the live wizard catalog.",
+  "integration.modelCatalogRequired": "Requires the Meta model catalog",
+  "integration.setup.zcode": "Settings → Model Providers → Add Provider. Choose OpenAI or Anthropic, enter these values, add the model ID and enable it.",
+  "integration.setup.jetbrains-copilot": "Copilot model picker → Model management → Add a custom endpoint → OpenAI compatible. Enter these values and select the model. Update the Copilot plugin if this option is missing; organization policies may restrict BYOK."
 }

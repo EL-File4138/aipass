@@ -74,7 +74,15 @@ fn make_executable(path: &Path) {
 fn make_executable(_: &Path) {}
 fn install(path: &Path) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, "#!/bin/sh\n").unwrap();
+    std::fs::write(
+        path,
+        if cfg!(windows) {
+            "MZfixture"
+        } else {
+            "#!/bin/sh\n"
+        },
+    )
+    .unwrap();
     make_executable(path);
 }
 #[test]
@@ -138,5 +146,106 @@ fn markers_ignore_profile_noise() {
             "__END__"
         ),
         Some(OsString::from("/usr/bin:/bin"))
+    );
+}
+
+#[test]
+fn windows_resolver_rejects_extensionless_files_and_corrupt_binaries() {
+    let root = tempdir().unwrap();
+    for name in ["tool", "tool.ps1", "tool.exe", "tool.cmd"] {
+        std::fs::write(root.path().join(name), "not an executable").unwrap();
+    }
+    assert!(!windows_entrypoint(&root.path().join("tool")));
+    assert!(!windows_entrypoint(&root.path().join("tool.ps1")));
+    assert!(!windows_entrypoint(&root.path().join("tool.exe")));
+    assert!(windows_entrypoint(&root.path().join("tool.cmd")));
+    std::fs::write(root.path().join("tool.exe"), "MZfixture").unwrap();
+    assert!(windows_entrypoint(&root.path().join("tool.exe")));
+}
+#[test]
+fn removed_npm_package_invalidates_both_unix_and_windows_shims() {
+    let root = tempdir().unwrap();
+    let target = root.path().join("node_modules/vendor/bin.js");
+    for content in [
+        r#"node "$basedir/node_modules/vendor/bin.js" "$@""#,
+        r#"node "%dp0%\node_modules\vendor\bin.js" %*"#,
+        r#"node "%~dp0\node_modules\vendor\bin.js" %*"#,
+    ] {
+        let shim = root.path().join("tool.cmd");
+        std::fs::write(&shim, content).unwrap();
+        assert!(!valid_shim_targets(&shim));
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "fixture").unwrap();
+        assert!(valid_shim_targets(&shim));
+        std::fs::remove_file(&target).unwrap();
+    }
+}
+
+#[test]
+fn npm_grok_and_command_code_shims_require_existing_vendor_entry_points() {
+    let root = tempdir().unwrap();
+    for (tool, name, package) in [
+        (crate::ToolId::Grok, "grok", "@xai-official/grok"),
+        (crate::ToolId::CommandCode, "cmd", "command-code"),
+    ] {
+        let path = root.path().join(if cfg!(windows) {
+            format!("{name}.cmd")
+        } else {
+            name.into()
+        });
+        let target = format!("node_modules/{package}/bin.js");
+        std::fs::write(
+            &path,
+            if cfg!(windows) {
+                format!("node \"%dp0%\\{target}\" %*")
+            } else {
+                format!("#!/bin/sh\nnode \"$basedir/{target}\"")
+            },
+        )
+        .unwrap();
+        make_executable(&path);
+        assert!(tool_executables_in(&[root.path().into()], &tool, None).is_empty());
+        std::fs::create_dir_all(root.path().join(&target).parent().unwrap()).unwrap();
+        std::fs::write(root.path().join(&target), "fixture").unwrap();
+        assert_eq!(
+            tool_executables_in(&[root.path().into()], &tool, None),
+            vec![path]
+        );
+    }
+}
+
+#[test]
+fn wsl_wrappers_are_not_native_windows_agent_installations() {
+    assert!(windows_wsl_shim(
+        "@echo off\r\nwsl.exe -d Ubuntu kimi %*\r\n"
+    ));
+    assert!(windows_wsl_shim(
+        r#"@"C:\Windows\System32\wsl.exe" -d Ubuntu kimi %*"#
+    ));
+    assert!(!windows_wsl_shim(
+        r#"node "%dp0%\node_modules\vendor\bin.js" %*"#
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn command_shim_identity_does_not_rewrite_the_path_used_for_file_io() {
+    let root = tempdir().unwrap();
+    let bin = root.path().join(r"bin \ literal O'Brien 中文");
+    let js = bin.join("node_modules/command-code/bin.js");
+    std::fs::create_dir_all(js.parent().unwrap()).unwrap();
+    std::fs::write(js, "fixture").unwrap();
+    let shim = bin.join("cmd");
+    std::fs::write(
+        &shim,
+        r#"#!/bin/sh
+node "$basedir/node_modules/command-code/bin.js"
+"#,
+    )
+    .unwrap();
+    make_executable(&shim);
+    assert_eq!(
+        tool_executables_in(&[bin], &crate::ToolId::CommandCode, None),
+        vec![shim]
     );
 }

@@ -13,6 +13,8 @@ use std::{
 };
 use uuid::Uuid;
 use zeroize::Zeroizing;
+mod additional;
+mod byok;
 mod reader;
 mod subscriptions;
 #[cfg(test)]
@@ -254,5 +256,20 @@ fn name(tool: &ToolConfigTool) -> &'static str {
         ToolConfigTool::Grok => "Grok Build",
         ToolConfigTool::Pi => "Pi",
         ToolConfigTool::Cursor => "Cursor Agent Local",
+        ToolConfigTool::KimiCode => "Kimi Code",
+        ToolConfigTool::Zed => "Zed",
+        ToolConfigTool::DeepseekHarness => "DeepSeek Harness",
+        ToolConfigTool::AntigravityCli => "Antigravity CLI",
+        ToolConfigTool::MuseCode => "Muse Code",
+        ToolConfigTool::HermesAgent => "Hermes Agent",
+        ToolConfigTool::CommandCode => "Command Code",
+        ToolConfigTool::Codebuddy => "CodeBuddy",
+        ToolConfigTool::Workbuddy => "WorkBuddy",
+        ToolConfigTool::VscodeChat => "VS Code Chat",
+        ToolConfigTool::Cline => "Cline",
+        ToolConfigTool::Trae => "TRAE",
+        ToolConfigTool::Qoder => "Qoder",
+        ToolConfigTool::Zcode => "ZCode",
+        ToolConfigTool::JetbrainsCopilot => "JetBrains Copilot",
     }
 }

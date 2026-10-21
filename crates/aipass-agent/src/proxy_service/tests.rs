@@ -36,6 +36,67 @@ fn read_http_request(reader: &mut impl Read) -> std::io::Result<Vec<u8>> {
     Ok(request)
 }
 
+fn accept_fixture_request(listener: &TcpListener) -> (std::net::TcpStream, Vec<u8>) {
+    loop {
+        let (mut stream, _) = listener.accept().expect("accept proxy request");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let request = read_http_request(&mut stream).expect("read complete proxy request");
+        let headers = String::from_utf8_lossy(&request).to_ascii_lowercase();
+        if headers.starts_with("get / http/")
+            && !headers.contains("\r\nauthorization:")
+            && !headers.contains("\r\nx-api-key:")
+        {
+            stream
+                .write_all(
+                    b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+            continue;
+        }
+        return (stream, request);
+    }
+}
+
+#[test]
+fn fixture_discovery_probe_does_not_replace_an_authenticated_request() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut socket, request) = accept_fixture_request(&listener);
+        socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        request
+    });
+    let client = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .build()
+        .unwrap();
+    assert_eq!(
+        client
+            .get(format!("http://{address}/"))
+            .send()
+            .unwrap()
+            .status(),
+        204
+    );
+    assert_eq!(
+        client
+            .get(format!("http://{address}/"))
+            .bearer_auth("fixture")
+            .send()
+            .unwrap()
+            .status(),
+        200
+    );
+    let request = String::from_utf8(server.join().unwrap()).unwrap();
+    assert!(request
+        .to_ascii_lowercase()
+        .contains("authorization: bearer fixture"));
+}
+
 #[test]
 fn fixture_consumes_headers_and_body_across_separate_reads() {
     let headers = b"POST /v1/responses HTTP/1.1\r\nContent-Length: 2\r\n\r\n";

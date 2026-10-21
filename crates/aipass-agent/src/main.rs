@@ -1,3 +1,5 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 use aipass_agent::{
     agent_service_name, default_vault_dir,
     logging::{init_component_logging, install_panic_logger, write_component_log, AGENT_LOG},
@@ -10,6 +12,8 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(version, about = "AIPass local background agent")]
 struct Cli {
+    #[arg(long, default_value_t = false, hide = true)]
+    login_start: bool,
     #[arg(long, default_value_t = false, hide = true)]
     claude_mcp_helper: bool,
     #[arg(long)]
@@ -29,6 +33,11 @@ fn main() -> Result<()> {
         return Ok(());
     }
     let cli = Cli::parse();
+    if cli.login_start {
+        // HKCU Run has no per-entry environment. This GUI-subsystem executable
+        // remains headless and does not open another desktop on CLI-only login.
+        std::env::set_var(aipass_agent::desktop::SUPPRESS_TRAY_ENV, "1");
+    }
     if cli.claude_mcp_helper {
         return aipass_agent::claude_bridge::run_mcp_helper(
             cli.vault.unwrap_or(default_vault_dir()?),

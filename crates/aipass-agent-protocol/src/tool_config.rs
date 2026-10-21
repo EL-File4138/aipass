@@ -13,6 +13,21 @@ pub enum ToolConfigTool {
     Grok,
     Pi,
     Cursor,
+    KimiCode,
+    Zed,
+    DeepseekHarness,
+    AntigravityCli,
+    MuseCode,
+    HermesAgent,
+    CommandCode,
+    Codebuddy,
+    Workbuddy,
+    VscodeChat,
+    Cline,
+    Trae,
+    Qoder,
+    Zcode,
+    JetbrainsCopilot,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

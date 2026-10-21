@@ -49,6 +49,21 @@ impl From<ToolArg> for ToolConfigTool {
             ToolArg::Grok => Self::Grok,
             ToolArg::Pi => Self::Pi,
             ToolArg::Cursor => Self::Cursor,
+            ToolArg::KimiCode => Self::KimiCode,
+            ToolArg::Zed => Self::Zed,
+            ToolArg::DeepseekHarness => Self::DeepseekHarness,
+            ToolArg::AntigravityCli => Self::AntigravityCli,
+            ToolArg::MuseCode => Self::MuseCode,
+            ToolArg::HermesAgent => Self::HermesAgent,
+            ToolArg::CommandCode => Self::CommandCode,
+            ToolArg::Codebuddy => Self::Codebuddy,
+            ToolArg::Workbuddy => Self::Workbuddy,
+            ToolArg::VscodeChat => Self::VscodeChat,
+            ToolArg::Cline => Self::Cline,
+            ToolArg::Trae => Self::Trae,
+            ToolArg::Qoder => Self::Qoder,
+            ToolArg::Zcode => Self::Zcode,
+            ToolArg::JetbrainsCopilot => Self::JetbrainsCopilot,
         }
     }
 }
@@ -93,6 +108,21 @@ impl From<ToolArg> for ToolId {
             ToolArg::Grok => ToolId::Grok,
             ToolArg::Pi => ToolId::Pi,
             ToolArg::Cursor => ToolId::Cursor,
+            ToolArg::KimiCode => ToolId::KimiCode,
+            ToolArg::Zed => ToolId::Zed,
+            ToolArg::DeepseekHarness => ToolId::DeepseekHarness,
+            ToolArg::AntigravityCli => ToolId::AntigravityCli,
+            ToolArg::MuseCode => ToolId::MuseCode,
+            ToolArg::HermesAgent => ToolId::HermesAgent,
+            ToolArg::CommandCode => ToolId::CommandCode,
+            ToolArg::Codebuddy => ToolId::Codebuddy,
+            ToolArg::Workbuddy => ToolId::Workbuddy,
+            ToolArg::VscodeChat => ToolId::VscodeChat,
+            ToolArg::Cline => ToolId::Cline,
+            ToolArg::Trae => ToolId::Trae,
+            ToolArg::Qoder => ToolId::Qoder,
+            ToolArg::Zcode => ToolId::Zcode,
+            ToolArg::JetbrainsCopilot => ToolId::JetbrainsCopilot,
         }
     }
 }

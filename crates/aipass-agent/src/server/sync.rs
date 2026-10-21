@@ -78,10 +78,8 @@ pub(crate) fn home_dir(_vault: &Vault) -> ServiceResult<PathBuf> {
         return Ok(home.clone());
     }
 
-    std::env::var("HOME")
-        .map(PathBuf::from)
-        .or_else(|_| std::env::var("USERPROFILE").map(PathBuf::from))
-        .map_err(|_| ServiceError::new(AgentErrorCode::Internal, "home directory unavailable"))
+    aipass_config_writers::user_home_dir()
+        .ok_or_else(|| ServiceError::new(AgentErrorCode::Internal, "home directory unavailable"))
 }
 
 pub(crate) fn run_sync_local(state: &Arc<AgentState>, dir: &Path) -> ServiceResult<SyncReport> {

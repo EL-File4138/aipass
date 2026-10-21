@@ -2,7 +2,7 @@
   import { onDestroy } from "svelte";
   import { Banner, Button, IconButton } from "@aipass/ui";
   import { readableAccountIdentity } from "@aipass/schemas";
-  import { Eye, ScanSearch, X, Check, Minus } from "lucide-svelte";
+  import { Eye, ScanSearch, X, Check } from "lucide-svelte";
 
   import { t } from "../../stores/i18n";
   import type {
@@ -10,7 +10,7 @@
     ToolConfigPreview,
     ToolDetection, ToolConfigStatus
   } from "../../types";
-  import type { IntegrationToolDefinition } from "../../utils/integrations";
+  import { installedIntegrationTools, type IntegrationToolDefinition } from "../../utils/integrations";
   import { Card } from "@aipass/ui";
   import SegmentedControl from "../shared/SegmentedControl.svelte";
   import IntegrationPreviewDialog from "./IntegrationPreviewDialog.svelte";
@@ -29,6 +29,7 @@
   }> = async () => {
     throw new Error("preview unavailable");
   };
+  export let onSetup: (tool: IntegrationToolDefinition) => void = () => {};
   export let onRefresh: () => Promise<void> | void = () => {};
   export let resetKey = "";
   export let disabled = false;
@@ -93,14 +94,11 @@
 
   $: stateFor = (tool: IntegrationToolDefinition): ToolState => toolState[tool.id] ?? emptyState();
 
-  function toolInstalled(tool: IntegrationToolDefinition): boolean {
-    const detection = detections.find((item) => item.tool === tool.id);
-    return Boolean(detection && (detection.binaryFound || detection.configPath));
+  $: sortedTools = installedIntegrationTools(detections, tools);
+  $: if (pendingTool && !sortedTools.some(tool => tool.id === pendingTool?.id)) {
+    generation++;
+    previewOpen = false; pendingTool = undefined; pendingApply = undefined; activePreview = undefined;
   }
-
-  $: sortedTools = detections.length > 0
-    ? [...tools].sort((a, b) => Number(toolInstalled(b)) - Number(toolInstalled(a)))
-    : tools;
 
   function patchState(tool: IntegrationToolDefinition, patch: Partial<ToolState>) {
     toolState = { ...toolState, [tool.id]: { ...stateFor(tool), ...patch } };
@@ -117,10 +115,10 @@
   }
 
   async function showPreview(tool: IntegrationToolDefinition, readonly: boolean) {
-    if (disabled || stateFor(tool).busy || confirming) return;
+    if (disabled || stateFor(tool).busy || confirming || !sortedTools.some(item => item.id === tool.id)) return;
     const requestGeneration = ++generation;
     const context = resetKey;
-    const current = () => generation === requestGeneration && resetKey === context;
+    const current = () => generation === requestGeneration && resetKey === context && sortedTools.some(item => item.id === tool.id);
     toolState = {};
     clearAllAppliedTimers();
     pendingApply = undefined;
@@ -148,7 +146,7 @@
     const apply = pendingApply;
     const requestGeneration = generation;
     const context = resetKey;
-    const current = () => generation === requestGeneration && resetKey === context;
+    const current = () => generation === requestGeneration && resetKey === context && sortedTools.some(item => item.id === tool.id);
     confirming = true;
     patchState(tool, { busy: true, error: "" });
     try {
@@ -187,15 +185,14 @@
     </IconButton>
   </svelte:fragment>
   <div class="integrate-body">
-    {#if showContext && $$slots.default}
+    {#if sortedTools.length && showContext && $$slots.default}
       <div class="integration-context"><slot /></div>
     {/if}
 
     <div class="tool-list">
       {#each sortedTools as tool (tool.id)}
         {@const state = stateFor(tool)}
-        {@const installed = toolInstalled(tool)}
-        <div class="tool-block" class:missing={detections.length > 0 && !installed}>
+        <div class="tool-block">
           <div class="tool-row">
             <span class="tool-identity">
               <span class="tool-icon"><IntegrationToolIcon tool={tool.id} /></span>
@@ -207,16 +204,12 @@
               </span>
             </span>
             <span class="tool-side">
-              {#if detections.length > 0}
-                <span class="tool-status" class:installed title={installed ? $t("server.installed") : $t("server.notInstalled")} aria-label={installed ? $t("server.installed") : $t("server.notInstalled")}>
-                  {#if installed}<Check size={13} />{:else}<Minus size={13} />{/if}
-                </span>
-              {/if}
-              <IconButton class="btn-ghost" size="sm" label={$t("providerDetail.preview")} on:click={() => showPreview(tool, true)} disabled={state.busy || disabled || Boolean(tool.disabledReason)}>
+              <span class="tool-status installed" title={$t("server.installed")} aria-label={$t("server.installed")}><Check size={13} /></span>
+              {#if !tool.setupGuide}<IconButton class="btn-ghost" size="sm" label={$t("providerDetail.preview")} on:click={() => showPreview(tool, true)} disabled={state.busy || disabled || Boolean(tool.disabledReason)}>
                 <Eye size={14} />
-              </IconButton>
-              <Button variant="secondary" size="sm" on:click={() => showPreview(tool, false)} disabled={state.busy || disabled || Boolean(tool.disabledReason)}>
-                {$t(nativeSwitch ? "integration.switchAccount" : "server.writeConfig")}
+              </IconButton>{/if}
+              <Button variant="secondary" size="sm" on:click={() => tool.setupGuide ? onSetup(tool) : showPreview(tool, false)} disabled={state.busy || disabled || Boolean(tool.disabledReason)}>
+                {$t(tool.setupGuide ? "integration.setupAction" : nativeSwitch ? "integration.switchAccount" : "server.writeConfig")}
               </Button>
             </span>
           </div>
@@ -274,6 +267,8 @@
             </Banner>
           {/if}
         </div>
+      {:else}
+        <div class="tool-block">{$t("agents.empty")}</div>
       {/each}
     </div>
   </div>
@@ -333,9 +328,6 @@
       border-bottom: 0;
     }
 
-    &.missing {
-      opacity: 0.65;
-    }
   }
 
   .tool-row {

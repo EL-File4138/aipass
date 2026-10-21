@@ -76,8 +76,10 @@ pub(crate) fn initialize() -> Result<(), String> {
     let root = args
         .next()
         .ok_or("missing runtime verification directory")?;
-    if args.next().is_some() || !cfg!(any(target_os = "macos", target_os = "linux")) {
-        return Err("runtime verification requires macOS/Linux and one fixture directory".into());
+    if args.next().is_some() || !cfg!(any(target_os = "macos", target_os = "linux", windows)) {
+        return Err(
+            "runtime verification requires a supported desktop OS and one fixture directory".into(),
+        );
     }
     let root = std::fs::canonicalize(root).map_err(|err| err.to_string())?;
     let exe = std::env::current_exe()
@@ -89,6 +91,9 @@ pub(crate) fn initialize() -> Result<(), String> {
     )
     .map_err(|err| err.to_string())?;
     validate_endpoint(&config.endpoint)?;
+    if cfg!(windows) && config.mode != Mode::Startup {
+        return Err("Windows runtime verification currently supports startup only".into());
+    }
     if cfg!(target_os = "linux")
         && std::env::var_os("HOME").is_none_or(|home| Path::new(&home) != root.join("home"))
     {
@@ -137,7 +142,12 @@ pub(crate) fn initialize() -> Result<(), String> {
 }
 
 fn validate_fixture_executable(root: &Path, exe: &Path) -> Result<(), String> {
-    let temporary = std::fs::canonicalize("/tmp").map_err(|err| err.to_string())?;
+    let temporary = std::fs::canonicalize(if cfg!(windows) {
+        std::env::temp_dir()
+    } else {
+        PathBuf::from("/tmp")
+    })
+    .map_err(|err| err.to_string())?;
     if !root.starts_with(temporary)
         || !root
             .file_name()
@@ -145,13 +155,17 @@ fn validate_fixture_executable(root: &Path, exe: &Path) -> Result<(), String> {
         || !fixture_executable(root, exe)
     {
         return Err(
-            "runtime verification only accepts a disposable /tmp/aipass-runtime-* app copy".into(),
+            "runtime verification only accepts a disposable temporary aipass-runtime-* app copy"
+                .into(),
         );
     }
     Ok(())
 }
 
 fn fixture_executable(root: &Path, exe: &Path) -> bool {
+    if cfg!(windows) {
+        return exe == root.join("package/aipass-desktop.exe");
+    }
     if !cfg!(target_os = "linux") {
         return exe == root.join("AIPass.app/Contents/MacOS/aipass-desktop");
     }
@@ -345,6 +359,35 @@ fn observe(app: &AppHandle) -> Result<(), String> {
         && !window.is_visible().map_err(|err| err.to_string())?
     {
         return Err("main window was not revealed".into());
+    }
+    #[cfg(windows)]
+    {
+        if app.tray_by_id("aipass-agent").is_none() {
+            return Err("native tray was not registered".into());
+        }
+        if std::env::var("AIPASS_WINDOW_TARGET").as_deref() == Ok("tray") {
+            if window.is_visible().map_err(|err| err.to_string())? {
+                return Err("tray startup unexpectedly revealed the main window".into());
+            }
+        } else {
+            window.close().map_err(|err| err.to_string())?;
+            wait_for_visibility(&window, false)?;
+            crate::activate_window_target(app, "main");
+            wait_for_visibility(&window, true)?;
+            crate::logging::log_event("desktop.runtime_check.close_reopen_passed", &[])?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn wait_for_visibility(window: &tauri::WebviewWindow, visible: bool) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while window.is_visible().map_err(|err| err.to_string())? != visible {
+        if Instant::now() >= deadline {
+            return Err("close-to-tray/reopen did not finish".into());
+        }
+        std::thread::sleep(Duration::from_millis(25));
     }
     Ok(())
 }

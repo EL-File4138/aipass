@@ -26,8 +26,11 @@ pub const DESKTOP_LOG: &str = "desktop";
 pub const CLIENT_LOG: &str = "client";
 
 thread_local! {
+    // Clippy 1.99 misreads the already-const Windows GNU fallback TLS.
+    #[cfg_attr(all(windows, target_env = "gnu"), allow(clippy::missing_const_for_thread_local))]
     static REQUEST_ID: Cell<Option<uuid::Uuid>> = const { Cell::new(None) };
     #[cfg(test)]
+    #[cfg_attr(all(windows, target_env = "gnu"), allow(clippy::missing_const_for_thread_local))]
     static TEST_LOG_DIR: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
 }
 

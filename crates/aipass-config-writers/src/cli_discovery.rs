@@ -4,9 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 pub fn search_dirs() -> Vec<PathBuf> {
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from);
+    let home = crate::user_home_dir();
     let path = std::env::var_os("PATH");
     let mut dirs: Vec<PathBuf> = path
         .as_deref()
@@ -17,8 +15,8 @@ pub fn search_dirs() -> Vec<PathBuf> {
     dirs.extend(binary_search_dirs(None, home.as_deref()));
     for (key, suffix) in [
         ("PNPM_HOME", ""),
-        ("NPM_CONFIG_PREFIX", "bin"),
-        ("npm_config_prefix", "bin"),
+        ("NPM_CONFIG_PREFIX", if cfg!(windows) { "" } else { "bin" }),
+        ("npm_config_prefix", if cfg!(windows) { "" } else { "bin" }),
         ("CARGO_HOME", "bin"),
         ("BUN_INSTALL", "bin"),
         ("VOLTA_HOME", "bin"),
@@ -68,10 +66,35 @@ pub(crate) fn tool_executables_in(
         ToolId::OpenCode => &["opencode"],
         ToolId::Grok => &["grok"],
         ToolId::Pi => &["pi"],
+        ToolId::KimiCode => &["kimi", "kimi-code"],
+        ToolId::Zed => &["zed", "zeditor"],
+        ToolId::DeepseekHarness => &["dsh"],
+        ToolId::AntigravityCli => &["agy"],
+        ToolId::MuseCode => &["muse"],
+        ToolId::HermesAgent => &["hermes"],
+        ToolId::CommandCode => &["cmd", "command-code"],
+        ToolId::Codebuddy => &["codebuddy"],
+        ToolId::Workbuddy => &["workbuddy"],
+        ToolId::VscodeChat => &["code", "code-insiders"],
+        ToolId::Cline => &["cline"],
+        ToolId::Trae => &["trae"],
+        ToolId::Zcode => &["zcode"],
+        ToolId::JetbrainsCopilot => &[],
+        ToolId::Qoder => &["qoder", "qodercli"],
         ToolId::Cursor => &["cursor-agent", "agent", "cursor-agent-local"],
     };
     let mut candidates = executable_candidates_in(dirs, names);
     match tool {
+        ToolId::CommandCode => candidates.retain(|p| {
+            p.canonicalize().is_ok_and(|p| {
+                let label = p.to_string_lossy().replace('\\', "/");
+                label.split('/').any(|part| {
+                    part == "command-code"
+                        || part == ".commandcode"
+                        || part.starts_with("command-code.")
+                }) || shim_contains(&p, "node_modules/command-code/")
+            })
+        }),
         ToolId::Cursor => candidates.retain(|p| {
             p.file_stem().is_some_and(|n| n != "agent")
                 || p.canonicalize()
@@ -79,8 +102,12 @@ pub(crate) fn tool_executables_in(
         }),
         ToolId::Grok => {
             candidates.retain(|p| {
-                p.canonicalize()
-                    .is_ok_and(|p| p.to_string_lossy().replace('\\', "/").contains("/.grok/"))
+                p.canonicalize().is_ok_and(|p| {
+                    let path = p.to_string_lossy().replace('\\', "/");
+                    path.contains("/.grok/")
+                        || path.contains("/@xai-official/grok/")
+                        || shim_contains(&p, "node_modules/@xai-official/grok/")
+                })
             });
             if let Some(root) = grok_override.filter(|p| p.is_absolute()) {
                 let mut explicit = executable_candidates_in(&[root.to_owned()], names);
@@ -162,8 +189,85 @@ pub fn is_executable(path: &Path) -> bool {
             return false;
         }
     }
-    true
+    #[cfg(windows)]
+    if !windows_entrypoint(path) {
+        return false;
+    }
+    valid_shim_targets(path)
 }
+
+#[cfg(any(windows, test))]
+fn windows_entrypoint(path: &Path) -> bool {
+    use std::io::Read;
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "exe" | "com" => {
+            let mut header = [0; 2];
+            std::fs::File::open(path)
+                .and_then(|mut f| f.read_exact(&mut header))
+                .is_ok()
+                && header == *b"MZ"
+        }
+        "cmd" | "bat" => std::fs::metadata(path).is_ok_and(|m| m.len() > 0),
+        _ => false,
+    }
+}
+
+fn shim_contains(path: &Path, target: &str) -> bool {
+    use std::io::Read;
+    let mut text = String::new();
+    std::fs::File::open(path)
+        .and_then(|f| f.take(128 * 1024).read_to_string(&mut text))
+        .is_ok()
+        && text.replace('\\', "/").contains(target)
+}
+
+// npm leaves shims behind when package removal/update is interrupted. Check
+// their referenced JS entry point without launching the tool or its shell.
+fn valid_shim_targets(path: &Path) -> bool {
+    use std::io::Read;
+    static TARGET: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r#"(?i)(?:\$basedir[\\/]|\$\{basedir\}[\\/]|%dp0%[\\/]|%~dp0[\\/])([^"'\r\n]+?\.(?:cjs|mjs|js))"#).unwrap()
+    });
+    let mut bytes = Vec::new();
+    if std::fs::File::open(path)
+        .and_then(|f| f.take(128 * 1024).read_to_end(&mut bytes))
+        .is_err()
+    {
+        return false;
+    }
+    if bytes.is_empty() {
+        return false;
+    }
+    let Ok(text) = std::str::from_utf8(&bytes) else {
+        return true;
+    };
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    #[cfg(windows)]
+    if path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"))
+        && windows_wsl_shim(text)
+    {
+        return false;
+    }
+    TARGET
+        .captures_iter(text)
+        .all(|m| parent.join(m[1].replace('\\', "/")).is_file())
+}
+#[cfg(any(windows, test))]
+fn windows_wsl_shim(text: &str) -> bool {
+    static WSL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r#"(?im)^\s*@?(?:call\s+)?(?:wsl(?:\.exe)?|"[^"\r\n]*[\\/]wsl\.exe")\s"#)
+            .unwrap()
+    });
+    WSL.is_match(text)
+}
+
 fn append_node_bins(dirs: &mut Vec<PathBuf>, root: &Path, fnm: bool) {
     if let Ok(entries) = std::fs::read_dir(root) {
         let mut versions: Vec<_> = entries
@@ -199,6 +303,9 @@ fn binary_search_dirs(path_env: Option<&OsStr>, home: Option<&Path>) -> Vec<Path
             "bin",
             ".opencode/bin",
             ".grok/bin",
+            ".kimi-code/bin",
+            ".commandcode/bin",
+            ".hermes/bin",
             ".pi/bin",
             ".bun/bin",
             "Library/pnpm",
@@ -232,11 +339,14 @@ fn binary_search_dirs(path_env: Option<&OsStr>, home: Option<&Path>) -> Vec<Path
     #[cfg(windows)]
     {
         // npm/pnpm/volta/scoop shims live outside the PATH a GUI app inherits.
-        let env_dirs: [(&str, &str); 4] = [
+        let env_dirs = [
             ("APPDATA", "npm"),
             ("LOCALAPPDATA", "Programs\\nodejs"),
             ("LOCALAPPDATA", "Volta\\bin"),
             ("LOCALAPPDATA", "pnpm"),
+            ("LOCALAPPDATA", "agy/bin"),
+            ("LOCALAPPDATA", "Microsoft/WinGet/Links"),
+            ("LOCALAPPDATA", "Microsoft/WindowsApps"),
         ];
         for (var, rel) in env_dirs {
             if let Some(base) = std::env::var_os(var) {
@@ -394,12 +504,16 @@ fn binary_candidates(name: &str) -> Vec<OsString> {
         // the Windows command resolver does.
         let pathext =
             std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
-        let mut candidates: Vec<OsString> = pathext
+        let candidates: Vec<OsString> = pathext
             .split(';')
-            .filter(|ext| !ext.is_empty())
+            .filter(|ext| {
+                matches!(
+                    ext.to_ascii_lowercase().as_str(),
+                    ".com" | ".exe" | ".bat" | ".cmd"
+                )
+            })
             .map(|ext| OsString::from(format!("{name}{ext}")))
             .collect();
-        candidates.push(OsString::from(name));
         candidates
     } else {
         vec![OsString::from(name)]

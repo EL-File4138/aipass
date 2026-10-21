@@ -40,6 +40,11 @@ pub(crate) fn binary() -> Option<PathBuf> {
 }
 
 pub(crate) fn configure(command: &mut Command, dir: &Path) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(crate::windows_process::CREATE_NO_WINDOW);
+    }
     if let Some(path) =
         aipass_config_writers::cli_discovery::command_path(Path::new(command.get_program()))
     {
@@ -93,6 +98,8 @@ fn stop(child: &mut Child) {
     if matches!(child.try_wait(), Ok(Some(_))) {
         return;
     }
+    #[cfg(windows)]
+    crate::windows_process::terminate_tree(child.id());
     #[cfg(unix)]
     if let Some(pid) = rustix::process::Pid::from_raw(child.id() as i32) {
         let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
@@ -388,5 +395,5 @@ pub(crate) fn local_account(path: &Path) -> Result<NativeAccount, String> {
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use login::LoginManager;

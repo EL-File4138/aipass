@@ -192,6 +192,7 @@ pub(crate) async fn tool_config_detect() -> Result<Vec<ToolDetection>, String> {
                 tool: from_tool_id(detection.tool),
                 binary_found: detection.binary_found,
                 local_runtime_found: detection.local_runtime_found,
+                extension_found: detection.extension_found,
                 config_path: detection.config_path.map(|path| path.display().to_string()),
             })
             .collect())

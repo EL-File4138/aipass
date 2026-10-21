@@ -1,4 +1,6 @@
-use anyhow::{Context, Result};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use anyhow::Context;
+use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -121,6 +123,7 @@ pub fn query_tray_autostart(vault_dir: &Path) -> Result<TrayAutostartStatus> {
     imp::query_tray(vault_dir)
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn shutdown_agent(vault_dir: &Path) {
     if let Ok(client) = crate::client::AgentClient::for_vault(vault_dir.to_path_buf()) {
         let _ = client.shutdown();
@@ -132,6 +135,19 @@ fn tray_service_name(vault_dir: &Path) -> Result<String> {
         "com.aipass.tray.{}",
         crate::paths::namespace_for_vault_dir(vault_dir)?
     ))
+}
+
+#[cfg(any(windows, test))]
+mod windows_command;
+#[cfg(windows)]
+mod windows_registry;
+
+/// Remove only login entries pointing at this exact installed desktop. An
+/// uninstaller must also clean entries for custom vaults, without touching dev
+/// installations or another copy of AIPass.
+#[cfg(windows)]
+pub fn uninstall_windows_tray_entries(desktop: &Path) -> Result<()> {
+    imp::uninstall_entries(desktop)
 }
 
 #[cfg(target_os = "macos")]
@@ -847,88 +863,9 @@ mod linux;
 use linux as imp;
 
 #[cfg(target_os = "windows")]
-mod imp {
-    use super::*;
-
-    pub(super) fn install(agent_binary: &Path, vault_dir: &Path) -> Result<AgentAutostartStatus> {
-        let service = crate::windows_service::install_service(agent_binary, vault_dir)?;
-        Ok(AgentAutostartStatus {
-            service_name: service.service_name.clone(),
-            registered: service.registered,
-            running: service.running,
-            install_path: Some(PathBuf::from(format!(r"SCM\{}", service.service_name))),
-            supervisor_path: None,
-            agent_binary: Some(agent_binary.to_path_buf()),
-        })
-    }
-
-    pub(super) fn uninstall(vault_dir: &Path) -> Result<AgentAutostartStatus> {
-        let service = crate::windows_service::uninstall_service(vault_dir)?;
-        Ok(AgentAutostartStatus {
-            service_name: service.service_name.clone(),
-            registered: service.registered,
-            running: service.running,
-            install_path: Some(PathBuf::from(format!(r"SCM\{}", service.service_name))),
-            supervisor_path: None,
-            agent_binary: None,
-        })
-    }
-
-    pub(super) fn stop(vault_dir: &Path) -> Result<AgentAutostartStatus> {
-        let _ = crate::windows_service::stop_service(vault_dir);
-        let service = crate::windows_service::query_service(vault_dir)?;
-        Ok(AgentAutostartStatus {
-            service_name: service.service_name.clone(),
-            registered: service.registered,
-            running: service.running,
-            install_path: Some(PathBuf::from(format!(r"SCM\{}", service.service_name))),
-            supervisor_path: None,
-            agent_binary: None,
-        })
-    }
-
-    pub(super) fn query(vault_dir: &Path) -> Result<AgentAutostartStatus> {
-        let service = crate::windows_service::query_service(vault_dir)?;
-        Ok(AgentAutostartStatus {
-            service_name: service.service_name.clone(),
-            registered: service.registered,
-            running: service.running,
-            install_path: Some(PathBuf::from(format!(r"SCM\{}", service.service_name))),
-            supervisor_path: None,
-            agent_binary: None,
-        })
-    }
-
-    pub(super) fn install_tray(
-        _desktop_binary: &Path,
-        vault_dir: &Path,
-    ) -> Result<TrayAutostartStatus> {
-        unsupported_tray(vault_dir)
-    }
-
-    pub(super) fn uninstall_tray(vault_dir: &Path) -> Result<TrayAutostartStatus> {
-        unsupported_tray(vault_dir)
-    }
-
-    pub(super) fn stop_tray(vault_dir: &Path) -> Result<TrayAutostartStatus> {
-        unsupported_tray(vault_dir)
-    }
-
-    pub(super) fn query_tray(vault_dir: &Path) -> Result<TrayAutostartStatus> {
-        unsupported_tray(vault_dir)
-    }
-
-    fn unsupported_tray(vault_dir: &Path) -> Result<TrayAutostartStatus> {
-        Ok(TrayAutostartStatus {
-            service_name: tray_service_name(vault_dir)?,
-            registered: false,
-            running: false,
-            install_path: None,
-            supervisor_path: None,
-            desktop_binary: None,
-        })
-    }
-}
+mod windows;
+#[cfg(target_os = "windows")]
+use windows as imp;
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 mod imp {

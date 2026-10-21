@@ -27,6 +27,7 @@ pub struct SyncObject {
     pub etag: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
+    #[serde(with = "aipass_storage::portable_path")]
     pub relative_path: PathBuf,
 }
 
@@ -34,7 +35,9 @@ pub struct SyncObject {
 #[serde(rename_all = "camelCase")]
 pub struct ConflictRecord {
     pub origin: String,
+    #[serde(with = "aipass_storage::portable_path")]
     pub conflict_path: PathBuf,
+    #[serde(with = "aipass_storage::portable_path")]
     pub target_path: PathBuf,
     pub object: SyncObject,
 }
@@ -651,7 +654,10 @@ fn remove_conflict_record(record_path: &Path) -> Result<()> {
 fn write_checkpoint(root: &Path) -> Result<()> {
     let mut objects = BTreeMap::new();
     for object in list_sync_files(root)? {
-        objects.insert(object.relative_path.display().to_string(), object.hash_hex);
+        objects.insert(
+            normalize_remote_path(&object.relative_path),
+            object.hash_hex,
+        );
     }
     let checkpoint = SyncCheckpoint {
         format: "aipass-sync-checkpoint".to_string(),

@@ -138,7 +138,29 @@ fn no_replay_guard_ignores_only_discovery_and_rejects_real_requests() {
             "{line}\r\nHost: localhost\r\n{auth}Content-Length: 0\r\n\r\n"
         )
         .unwrap();
-        let result = std::panic::catch_unwind(|| assert_no_api_request(&listener));
+        // A completed connect/write is not a synchronization barrier for a
+        // nonblocking accept on every OS. Keep the actual guard running until
+        // this client observes its response/EOF, so an empty accept queue can
+        // never turn a real request into a false success.
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_guard = stop.clone();
+        let guard = std::thread::spawn(move || {
+            while !stop_guard.load(Ordering::Relaxed) {
+                assert_no_api_request(&listener);
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        });
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut reply = Vec::new();
+        let read = client.read_to_end(&mut reply);
+        stop.store(true, Ordering::Relaxed);
+        let result = guard.join();
+        read.unwrap();
         assert_eq!(result.is_ok(), allowed, "{line}");
+        if allowed {
+            assert!(reply.starts_with(b"HTTP/1.1 204"));
+        }
     }
 }

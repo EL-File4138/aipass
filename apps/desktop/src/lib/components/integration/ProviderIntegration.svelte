@@ -4,7 +4,9 @@
   import { secretAuthScheme, secretInterfaceType, type ProviderEntry, type SecretRef } from "@aipass/schemas";
   import { t } from "../../stores/i18n";
   import type { ToolSwitchRequest, ToolConfigPreview, ToolConfigApplyResult, ToolDetection, ToolConfigStatus, CodexApiKeyMode, MaybePromise } from "../../types";
-  import { compatibleToolsFor, integrationToolDefinitions, providerIntegrationAvailability, type IntegrationToolDefinition } from "../../utils/integrations";
+  import { installedIntegrationTools, compatibleToolsFor, integrationToolDefinitions, providerIntegrationAvailability, type IntegrationToolDefinition } from "../../utils/integrations";
+  import IntegrationSetupDialog from "./IntegrationSetupDialog.svelte";
+  import { integrationSetupDetails } from "../../utils/integration-setup";
   import CredentialPicker from "../providers/CredentialPicker.svelte";
   import IntegrationCard from "./IntegrationCard.svelte";
   import ToolLoginDialog from "./ToolLoginDialog.svelte";
@@ -16,6 +18,9 @@
   export let onRefresh: () => MaybePromise = () => {};
   export let checkRevision = "";
   let secretId = "";
+  let setupTool: IntegrationToolDefinition | undefined;
+  $: if (setupTool && !installedIntegrationTools(detections).some(tool => tool.id === setupTool?.id)) setupTool = undefined;
+  $: setupDetails = integrationSetupDetails(entry, secretId);
   let codexMode: CodexApiKeyMode = "auth_json";
   let lastEntryId = "";
   let statuses: Record<string, ToolConfigStatus> = {};
@@ -29,7 +34,7 @@
   let mounted = false;
   let lastCheckRevision = "";
   $: if (checkRevision !== lastCheckRevision) { lastCheckRevision = checkRevision; if (mounted) void refreshStatus(); }
-  function effective(secret: SecretRef) { return { ...entry, defaultModel: secret.defaultModel ?? entry.defaultModel, interfaceType: secretInterfaceType(secret, entry.interfaceType), authScheme: secretAuthScheme(secret, entry.interfaceType, entry.authScheme) }; }
+  function effective(secret: SecretRef) { return { ...entry, endpoint: secret.endpoint ?? entry.endpoints.find(e => e.kind === "api")?.url, defaultModel: secret.defaultModel ?? entry.defaultModel, interfaceType: secretInterfaceType(secret, entry.interfaceType), authScheme: secretAuthScheme(secret, entry.interfaceType, entry.authScheme) }; }
   $: oauth = entry.credentialKind === "oauth" && entry.providerKind === "official";
   $: nativeTool = oauth ? (["codex", "openai"].includes(entry.providerId ?? "") ? "codex" : entry.providerId === "anthropic" ? "claude-code" : "") : "";
   $: secret = entry.secretRefs.find(s => s.id === secretId);
@@ -62,7 +67,7 @@
   onDestroy(() => { mounted = false; generation++; window.removeEventListener("focus", focused); document.removeEventListener("visibilitychange", focused); });
   $: selectionKey = JSON.stringify([entry.id, entry.providerId, entry.credentialKind, entry.accountIdentity, secret, entry.interfaceType, entry.authScheme, entry.endpoints, entry.defaultModel, entry.supportsWebsockets, codexMode]);
   let lastSelection = "";
-  $: if (selectionKey !== lastSelection) { lastSelection = selectionKey; pendingLogin = undefined; loginOpen = false; message = error = ""; }
+  $: if (selectionKey !== lastSelection) { lastSelection = selectionKey; pendingLogin = undefined; setupTool = undefined; loginOpen = false; message = error = ""; }
   async function preview(tool: IntegrationToolDefinition) {
     if (!secret) throw new Error($t("integration.chooseKey"));
     const selection = selectionKey;
@@ -121,6 +126,7 @@
 {#if tools.length}
   <IntegrationCard {tools} disabled={!secret} {detections} {statuses} nativeSwitch={Boolean(nativeTool)}
     showContext={entry.credentialKind !== "oauth" || Boolean(message || error || (pendingLogin && !loginOpen))}
+    onSetup={tool => setupTool = tool}
     onRestore={restore} onReconnect={reconnect} onPreview={preview}
     onRefresh={async () => { await onRefresh(); await refreshStatus(); }}
     {codexMode} codexModeOptions={codexOptions} onCodexModeChange={mode => codexMode = mode as CodexApiKeyMode}
@@ -134,4 +140,10 @@
 {#if loginOpen && pendingLogin}
   <ToolLoginDialog {invokeTauri} request={pendingLogin} onClose={() => loginOpen = false}
     onComplete={() => { loginOpen = false; pendingLogin = undefined; message = $t("integration.restartCli"); void refreshStatus(); }} />
+{/if}
+
+{#if setupTool && setupDetails}
+  <IntegrationSetupDialog tool={setupTool} {...setupDetails}
+    onCopyKey={() => invokeTauri("secret_copy", { id: entry.id, field: secretId })}
+    onClose={() => setupTool = undefined} />
 {/if}

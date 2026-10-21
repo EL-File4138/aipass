@@ -241,6 +241,54 @@ pub(crate) fn build_tool_config_plan(
         (ToolConfigTool::Pi, ToolConfigMode::Plaintext) => {
             plan_pi_plaintext(&home, &tool_entry).map_err(ServiceError::internal)?
         }
+        (
+            ToolConfigTool::KimiCode
+            | ToolConfigTool::Zed
+            | ToolConfigTool::DeepseekHarness
+            | ToolConfigTool::AntigravityCli
+            | ToolConfigTool::MuseCode
+            | ToolConfigTool::HermesAgent
+            | ToolConfigTool::CommandCode
+            | ToolConfigTool::Codebuddy
+            | ToolConfigTool::Workbuddy
+            | ToolConfigTool::VscodeChat
+            | ToolConfigTool::Cline
+            | ToolConfigTool::Trae
+            | ToolConfigTool::Qoder
+            | ToolConfigTool::Zcode
+            | ToolConfigTool::JetbrainsCopilot,
+            ToolConfigMode::Helper | ToolConfigMode::Plaintext,
+        ) => aipass_config_writers::plan_additional_tool(
+            &home,
+            tool_id_for(&request.tool),
+            &tool_entry,
+            request.mode == ToolConfigMode::Plaintext,
+            None,
+        )
+        .map_err(ServiceError::internal)?,
+        (
+            ToolConfigTool::KimiCode
+            | ToolConfigTool::Zed
+            | ToolConfigTool::DeepseekHarness
+            | ToolConfigTool::AntigravityCli
+            | ToolConfigTool::MuseCode
+            | ToolConfigTool::HermesAgent
+            | ToolConfigTool::CommandCode
+            | ToolConfigTool::Codebuddy
+            | ToolConfigTool::Workbuddy
+            | ToolConfigTool::VscodeChat
+            | ToolConfigTool::Cline
+            | ToolConfigTool::Trae
+            | ToolConfigTool::Qoder
+            | ToolConfigTool::Zcode
+            | ToolConfigTool::JetbrainsCopilot,
+            ToolConfigMode::Env,
+        ) => {
+            return Err(ServiceError::new(
+                AgentErrorCode::ValidationFailed,
+                "use helper mode to configure this Agent and its environment together",
+            ));
+        }
         (ToolConfigTool::Cursor, ToolConfigMode::Plaintext) => {
             plan_cursor_local_plaintext(&home, &tool_entry).map_err(ServiceError::internal)?
         }
@@ -288,14 +336,36 @@ pub(super) fn ensure_tool_credential(
         && entry.auth_scheme == AuthScheme::Bearer;
     let anthropic = entry.interface_type == InterfaceType::AnthropicMessages
         && matches!(entry.auth_scheme, AuthScheme::Bearer | AuthScheme::XApiKey);
+    if anthropic && entry.auth_scheme == AuthScheme::Bearer && *tool != ToolConfigTool::ClaudeCode {
+        return Err(ServiceError::new(AgentErrorCode::ValidationFailed, "use an AIPass proxy route for bearer-authenticated Anthropic credentials with this tool"));
+    }
     let compatible = match tool {
         ToolConfigTool::Codex => openai,
         ToolConfigTool::ClaudeCode => anthropic,
-        ToolConfigTool::GeminiCli => {
+        ToolConfigTool::GeminiCli | ToolConfigTool::AntigravityCli => {
             entry.interface_type == InterfaceType::Gemini
                 && entry.auth_scheme == AuthScheme::GoogleApiKey
         }
-        ToolConfigTool::Grok | ToolConfigTool::Pi | ToolConfigTool::Cursor => openai || anthropic,
+        ToolConfigTool::Cursor => openai,
+        ToolConfigTool::Grok
+        | ToolConfigTool::Pi
+        | ToolConfigTool::Zed
+        | ToolConfigTool::DeepseekHarness => openai || anthropic,
+        ToolConfigTool::KimiCode => {
+            openai
+                || anthropic
+                || (entry.interface_type == InterfaceType::Gemini
+                    && entry.auth_scheme == AuthScheme::GoogleApiKey)
+        }
+        ToolConfigTool::MuseCode | ToolConfigTool::Codebuddy | ToolConfigTool::Workbuddy => openai,
+        ToolConfigTool::HermesAgent
+        | ToolConfigTool::CommandCode
+        | ToolConfigTool::VscodeChat
+        | ToolConfigTool::Cline
+        | ToolConfigTool::Trae
+        | ToolConfigTool::Qoder
+        | ToolConfigTool::Zcode => openai || anthropic,
+        ToolConfigTool::JetbrainsCopilot => openai,
         ToolConfigTool::OpenCode => true,
     };
     if !compatible {
@@ -361,10 +431,29 @@ pub(crate) fn build_tool_config_proxy_plan(
                     .filter(|model| !model.trim().is_empty())
             })
     });
-    if matches!(request.tool, ToolId::Grok | ToolId::Pi) && default_model.is_none() {
+    if matches!(
+        request.tool,
+        ToolId::Grok
+            | ToolId::Pi
+            | ToolId::KimiCode
+            | ToolId::Zed
+            | ToolId::DeepseekHarness
+            | ToolId::MuseCode
+            | ToolId::HermesAgent
+            | ToolId::CommandCode
+            | ToolId::Codebuddy
+            | ToolId::Workbuddy
+            | ToolId::VscodeChat
+            | ToolId::Cline
+            | ToolId::Trae
+            | ToolId::Qoder
+            | ToolId::Zcode
+            | ToolId::JetbrainsCopilot
+    ) && default_model.is_none()
+    {
         return Err(ServiceError::new(
             AgentErrorCode::ValidationFailed,
-            "Grok and Pi integration requires a default model on a route credential",
+            "Agent integration requires a default model on a route credential",
         ));
     }
     let tool_entry = ToolEntry {
@@ -396,7 +485,7 @@ pub(crate) fn build_tool_config_proxy_plan(
         ToolId::ClaudeCode => {
             plan_claude_code_plaintext(&home, &tool_entry).map_err(ServiceError::internal)?
         }
-        ToolId::GeminiCli => return Err(ServiceError::new(
+        ToolId::GeminiCli | ToolId::AntigravityCli => return Err(ServiceError::new(
             AgentErrorCode::ValidationFailed,
             "Gemini CLI requires a Gemini-native model endpoint; the AIPass local proxy currently exposes OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages",
         )),
@@ -427,8 +516,17 @@ pub(crate) fn build_tool_config_proxy_plan(
             plan_pi_plaintext_with_api(&home, &tool_entry, api)
                 .map_err(ServiceError::internal)?
         }
+        ToolId::KimiCode | ToolId::Zed | ToolId::DeepseekHarness | ToolId::MuseCode | ToolId::HermesAgent | ToolId::CommandCode | ToolId::Codebuddy | ToolId::Workbuddy | ToolId::VscodeChat | ToolId::Cline | ToolId::Trae | ToolId::Qoder | ToolId::Zcode | ToolId::JetbrainsCopilot => {
+            let api = match route.inbound_protocol {
+                ProxyProtocol::OpenAiResponses => aipass_config_writers::ModelApi::Responses,
+                ProxyProtocol::OpenAiChatCompletions => aipass_config_writers::ModelApi::ChatCompletions,
+                ProxyProtocol::AnthropicMessages => aipass_config_writers::ModelApi::Messages,
+            };
+            aipass_config_writers::plan_additional_tool(&home, request.tool.clone(), &tool_entry, true, Some(api)).map_err(ServiceError::internal)?
+        }
         ToolId::Cursor => {
-            plan_cursor_local_plaintext(&home, &tool_entry).map_err(ServiceError::internal)?
+            aipass_config_writers::plan_cursor_local_proxy_plaintext(&home, &tool_entry)
+                .map_err(ServiceError::internal)?
         }
     };
     let content = if request.tool == ToolId::Codex {
@@ -447,13 +545,27 @@ pub(super) fn ensure_proxy_tool_protocol(
     let supported = match tool {
         ToolId::Codex => protocol == ProxyProtocol::OpenAiResponses,
         ToolId::ClaudeCode => protocol == ProxyProtocol::AnthropicMessages,
-        ToolId::OpenCode | ToolId::Grok | ToolId::Pi => true,
-        ToolId::GeminiCli => {
+        ToolId::OpenCode
+        | ToolId::Grok
+        | ToolId::Pi
+        | ToolId::KimiCode
+        | ToolId::Zed
+        | ToolId::DeepseekHarness => true,
+        ToolId::GeminiCli | ToolId::AntigravityCli => {
             return Err(ServiceError::new(
                 AgentErrorCode::ValidationFailed,
                 "Gemini CLI requires a Gemini-native model endpoint; the AIPass local proxy currently exposes OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages",
             ));
         }
+        ToolId::MuseCode => {
+            return Err(ServiceError::new(AgentErrorCode::ValidationFailed, "Muse Code requires a Meta model catalog; ordinary Responses routes are insufficient"));
+        }
+        ToolId::Codebuddy | ToolId::Workbuddy => protocol == ProxyProtocol::OpenAiChatCompletions,
+        ToolId::HermesAgent | ToolId::CommandCode | ToolId::VscodeChat | ToolId::Cline => true,
+        ToolId::Trae => protocol != ProxyProtocol::OpenAiResponses,
+        ToolId::Qoder => true,
+        ToolId::Zcode => protocol != ProxyProtocol::OpenAiResponses,
+        ToolId::JetbrainsCopilot => protocol == ProxyProtocol::OpenAiChatCompletions,
         ToolId::Cursor => true,
     };
     if supported {
@@ -468,8 +580,8 @@ pub(super) fn ensure_proxy_tool_protocol(
 
 /// SDKs disagree about whether an Anthropic base URL includes `/v1`.
 /// Claude Code appends the versioned path itself, while the AI SDK providers
-/// used by OpenCode, Grok, and Pi expect the versioned base URL. Keep that
-/// transport detail here instead of leaking it into each config writer.
+/// used by OpenCode and Grok expect the versioned base URL. Other SDK writers
+/// normalize their Anthropic base for both direct credentials and proxy routes.
 pub(super) fn proxy_endpoint_for_tool(
     tool: &ToolId,
     protocol: ProxyProtocol,
@@ -478,7 +590,6 @@ pub(super) fn proxy_endpoint_for_tool(
     let origin = format!("http://{bind_addr}");
     match (tool, protocol) {
         (ToolId::ClaudeCode, ProxyProtocol::AnthropicMessages) => origin,
-        (ToolId::Cursor, ProxyProtocol::AnthropicMessages) => format!("{origin}/v1/messages"),
         _ => format!("{origin}/v1"),
     }
 }
@@ -540,6 +651,21 @@ pub(super) fn tool_config_tool_for(tool: &ToolId) -> ToolConfigTool {
         ToolId::Grok => ToolConfigTool::Grok,
         ToolId::Pi => ToolConfigTool::Pi,
         ToolId::Cursor => ToolConfigTool::Cursor,
+        ToolId::KimiCode => ToolConfigTool::KimiCode,
+        ToolId::Zed => ToolConfigTool::Zed,
+        ToolId::DeepseekHarness => ToolConfigTool::DeepseekHarness,
+        ToolId::AntigravityCli => ToolConfigTool::AntigravityCli,
+        ToolId::MuseCode => ToolConfigTool::MuseCode,
+        ToolId::HermesAgent => ToolConfigTool::HermesAgent,
+        ToolId::CommandCode => ToolConfigTool::CommandCode,
+        ToolId::Codebuddy => ToolConfigTool::Codebuddy,
+        ToolId::Workbuddy => ToolConfigTool::Workbuddy,
+        ToolId::VscodeChat => ToolConfigTool::VscodeChat,
+        ToolId::Cline => ToolConfigTool::Cline,
+        ToolId::Trae => ToolConfigTool::Trae,
+        ToolId::Qoder => ToolConfigTool::Qoder,
+        ToolId::Zcode => ToolConfigTool::Zcode,
+        ToolId::JetbrainsCopilot => ToolConfigTool::JetbrainsCopilot,
     }
 }
 
@@ -598,6 +724,21 @@ pub(super) fn plan_tool_env_helper(
         ToolConfigTool::Grok => aipass_config_writers::ToolId::Grok,
         ToolConfigTool::Pi => aipass_config_writers::ToolId::Pi,
         ToolConfigTool::Cursor => aipass_config_writers::ToolId::Cursor,
+        ToolConfigTool::KimiCode => aipass_config_writers::ToolId::KimiCode,
+        ToolConfigTool::Zed => aipass_config_writers::ToolId::Zed,
+        ToolConfigTool::DeepseekHarness => aipass_config_writers::ToolId::DeepseekHarness,
+        ToolConfigTool::AntigravityCli => aipass_config_writers::ToolId::AntigravityCli,
+        ToolConfigTool::MuseCode => aipass_config_writers::ToolId::MuseCode,
+        ToolConfigTool::HermesAgent => aipass_config_writers::ToolId::HermesAgent,
+        ToolConfigTool::CommandCode => aipass_config_writers::ToolId::CommandCode,
+        ToolConfigTool::Codebuddy => aipass_config_writers::ToolId::Codebuddy,
+        ToolConfigTool::Workbuddy => aipass_config_writers::ToolId::Workbuddy,
+        ToolConfigTool::VscodeChat => aipass_config_writers::ToolId::VscodeChat,
+        ToolConfigTool::Cline => aipass_config_writers::ToolId::Cline,
+        ToolConfigTool::Trae => aipass_config_writers::ToolId::Trae,
+        ToolConfigTool::Qoder => aipass_config_writers::ToolId::Qoder,
+        ToolConfigTool::Zcode => aipass_config_writers::ToolId::Zcode,
+        ToolConfigTool::JetbrainsCopilot => aipass_config_writers::ToolId::JetbrainsCopilot,
     };
     let tool_name = match tool {
         ToolConfigTool::Codex => "codex",
@@ -607,11 +748,23 @@ pub(super) fn plan_tool_env_helper(
         ToolConfigTool::Grok => "grok",
         ToolConfigTool::Pi => "pi",
         ToolConfigTool::Cursor => "cursor",
+        ToolConfigTool::KimiCode => "kimi-code",
+        ToolConfigTool::Zed => "zed",
+        ToolConfigTool::DeepseekHarness => "deepseek-harness",
+        ToolConfigTool::AntigravityCli => "antigravity-cli",
+        ToolConfigTool::MuseCode => "muse-code",
+        ToolConfigTool::HermesAgent => "hermes-agent",
+        ToolConfigTool::CommandCode => "command-code",
+        ToolConfigTool::Codebuddy => "codebuddy",
+        ToolConfigTool::Workbuddy => "workbuddy",
+        ToolConfigTool::VscodeChat => "vscode-chat",
+        ToolConfigTool::Cline => "cline",
+        ToolConfigTool::Trae => "trae",
+        ToolConfigTool::Qoder => "qoder",
+        ToolConfigTool::Zcode => "zcode",
+        ToolConfigTool::JetbrainsCopilot => "jetbrains-copilot",
     };
-    let target = home
-        .join(".aipass")
-        .join("tools")
-        .join(format!("{tool_name}.env"));
+    let target = aipass_config_writers::helper_path(home, tool_name);
     let operation_id = Uuid::new_v4();
     let backup_path = config_backup_path(&target);
     let env_key = match tool {
@@ -622,20 +775,14 @@ pub(super) fn plan_tool_env_helper(
         ToolConfigTool::GeminiCli => "GEMINI_API_KEY",
         _ => entry.env_key.as_str(),
     };
-    let mut content = format!(
-        "# Generated by AIPass. Source this file before starting the tool.\nexport {env_key}=\"$({})\"\n",
-        entry.credential_command()
-    );
+    let mut content = aipass_config_writers::shell_env(entry, env_key, None);
     if let Some(endpoint) = &entry.endpoint {
         let endpoint_key = match tool {
             ToolConfigTool::ClaudeCode => "ANTHROPIC_BASE_URL",
             ToolConfigTool::GeminiCli => "GOOGLE_GEMINI_BASE_URL",
             _ => "AIPASS_BASE_URL",
         };
-        content.push_str(&format!(
-            "export {endpoint_key}={}\n",
-            shell_quote(endpoint)
-        ));
+        content.push_str(&aipass_config_writers::env_literal(endpoint_key, endpoint));
     }
     if let Some(model) = &entry.default_model {
         let model_key = match tool {
@@ -644,7 +791,7 @@ pub(super) fn plan_tool_env_helper(
             _ => None,
         };
         if let Some(model_key) = model_key {
-            content.push_str(&format!("export {model_key}={}\n", shell_quote(model)));
+            content.push_str(&aipass_config_writers::env_literal(model_key, model));
         }
     }
     let plan = ConfigPlan {
@@ -659,4 +806,31 @@ pub(super) fn plan_tool_env_helper(
         codex_provider_migration: None,
     };
     Ok((plan, content))
+}
+
+pub(crate) fn tool_id_for(tool: &ToolConfigTool) -> ToolId {
+    match tool {
+        ToolConfigTool::Codex => ToolId::Codex,
+        ToolConfigTool::ClaudeCode => ToolId::ClaudeCode,
+        ToolConfigTool::GeminiCli => ToolId::GeminiCli,
+        ToolConfigTool::OpenCode => ToolId::OpenCode,
+        ToolConfigTool::Grok => ToolId::Grok,
+        ToolConfigTool::Pi => ToolId::Pi,
+        ToolConfigTool::Cursor => ToolId::Cursor,
+        ToolConfigTool::KimiCode => ToolId::KimiCode,
+        ToolConfigTool::Zed => ToolId::Zed,
+        ToolConfigTool::DeepseekHarness => ToolId::DeepseekHarness,
+        ToolConfigTool::AntigravityCli => ToolId::AntigravityCli,
+        ToolConfigTool::MuseCode => ToolId::MuseCode,
+        ToolConfigTool::HermesAgent => ToolId::HermesAgent,
+        ToolConfigTool::CommandCode => ToolId::CommandCode,
+        ToolConfigTool::Codebuddy => ToolId::Codebuddy,
+        ToolConfigTool::Workbuddy => ToolId::Workbuddy,
+        ToolConfigTool::VscodeChat => ToolId::VscodeChat,
+        ToolConfigTool::Cline => ToolId::Cline,
+        ToolConfigTool::Trae => ToolId::Trae,
+        ToolConfigTool::Qoder => ToolId::Qoder,
+        ToolConfigTool::Zcode => ToolId::Zcode,
+        ToolConfigTool::JetbrainsCopilot => ToolId::JetbrainsCopilot,
+    }
 }

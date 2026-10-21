@@ -97,6 +97,7 @@ fn login_shell_env() -> HashMap<String, String> {
     HashMap::new()
 }
 
+#[cfg(any(unix, test))]
 fn parse_env_output(output: &str) -> HashMap<String, String> {
     let mut vars = HashMap::new();
     for line in output.lines() {

@@ -16,16 +16,7 @@ fn websocket_capability_survives_lock_stop_retry_and_vault_reopen() {
             let mut refusals = 0;
             let mut completed_http = false;
             for index in 0..8 {
-                let (mut socket, _) = upstream.accept().unwrap();
-                socket
-                    .set_read_timeout(Some(Duration::from_secs(3)))
-                    .unwrap();
-                let mut request = Vec::new();
-                let mut byte = [0];
-                while !request.ends_with(b"\r\n\r\n") {
-                    socket.read_exact(&mut byte).unwrap();
-                    request.push(byte[0]);
-                }
+                let (mut socket, request) = accept_fixture_request(&upstream);
                 let request = String::from_utf8(request).unwrap().to_ascii_lowercase();
                 if request.contains("upgrade: websocket") {
                     refusals += 1;
@@ -39,14 +30,6 @@ fn websocket_capability_survives_lock_stop_retry_and_vault_reopen() {
                         request.starts_with("post /v1/responses"),
                         "unexpected upstream request in {index}: {request}"
                     );
-                    let length: usize = request
-                        .lines()
-                        .find_map(|line| line.strip_prefix("content-length: "))
-                        .unwrap()
-                        .trim()
-                        .parse()
-                        .unwrap();
-                    socket.read_exact(&mut vec![0; length]).unwrap();
                     let body = r#"{"id":"response-test","status":"completed","output":[]}"#;
                     write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
                     completed_http = true;
@@ -435,11 +418,7 @@ fn locking_session_keeps_runtime_credentials_available_to_proxy() {
     let upstream_addr = upstream.local_addr().expect("upstream address");
     let (request_tx, request_rx) = std::sync::mpsc::channel();
     let upstream_thread = std::thread::spawn(move || {
-        let (mut stream, _) = upstream.accept().expect("accept proxy request");
-        stream
-            .set_read_timeout(Some(Duration::from_secs(3)))
-            .unwrap();
-        let request = read_http_request(&mut stream).expect("read complete proxy request");
+        let (mut stream, request) = accept_fixture_request(&upstream);
         request_tx
             .send(String::from_utf8_lossy(&request).to_string())
             .expect("capture proxy request");
@@ -625,11 +604,7 @@ fn provider_update_refreshes_running_credentials_and_headers() {
     let (request_tx, request_rx) = std::sync::mpsc::channel();
     let upstream_thread = std::thread::spawn(move || {
         for _ in 0..2 {
-            let (mut stream, _) = upstream.accept().expect("accept proxy request");
-            stream
-                .set_read_timeout(Some(Duration::from_secs(3)))
-                .unwrap();
-            let request = read_http_request(&mut stream).expect("read complete proxy request");
+            let (mut stream, request) = accept_fixture_request(&upstream);
             request_tx
                 .send(String::from_utf8_lossy(&request).to_string())
                 .expect("capture proxy request");

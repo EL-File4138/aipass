@@ -242,10 +242,6 @@ pub(super) fn join_url(base: &str, suffix: &str) -> String {
     )
 }
 
-pub(super) fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
 pub(super) fn append_query_param(url: &str, key: &str, value: &str) -> String {
     let separator = if url.contains('?') { '&' } else { '?' };
     format!("{url}{separator}{key}={value}")

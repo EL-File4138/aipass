@@ -63,7 +63,11 @@ impl Provider {
                                 async move {
                                     let (parts, body) = request.into_parts();
                                     let body = body.collect().await.unwrap().to_bytes();
-                                    captured.lock().unwrap().push(Captured { uri: parts.uri.to_string(), headers: parts.headers, body });
+                                    let probe = parts.method == hyper::Method::GET && parts.uri == "/"
+                                        && !parts.headers.contains_key(header::AUTHORIZATION)
+                                        && !parts.headers.contains_key("x-api-key");
+                                    let reply = if probe { Reply::json(StatusCode::NO_CONTENT, "") } else { reply };
+                                    if !probe { captured.lock().unwrap().push(Captured { uri: parts.uri.to_string(), headers: parts.headers, body }); }
                                     let chunks = stream::unfold((reply.chunks.into_iter(), false), move |(mut chunks, sent)| async move {
                                         let chunk = chunks.next()?;
                                         if sent { tokio::time::sleep(reply.delay).await; }
@@ -92,6 +96,42 @@ impl Provider {
     fn count(&self) -> usize {
         self.requests.lock().unwrap().len()
     }
+}
+
+#[tokio::test]
+async fn image_fixture_ignores_only_unauthenticated_root_discovery() {
+    let provider = Provider::new(Reply::json(StatusCode::OK, IMAGE)).await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    assert_eq!(
+        client
+            .get(format!("http://{}/", provider.addr))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        204
+    );
+    assert_eq!(provider.count(), 0);
+    assert_eq!(
+        client
+            .get(format!("http://{}/", provider.addr))
+            .bearer_auth("fixture")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    assert_eq!(
+        client
+            .get(format!("http://{}/v1/images", provider.addr))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    assert_eq!(provider.count(), 2);
 }
 
 fn proxy(route: ResolvedRoute) -> (tempfile::TempDir, ProxyHandle) {

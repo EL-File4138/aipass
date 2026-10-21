@@ -34,6 +34,11 @@ pub(crate) fn status(provider: &str) -> aipass_agent_protocol::ClaudeCliStatus {
     let probe = |args: &[&str]| -> Option<String> {
         let file = tempfile::tempfile().ok()?;
         let mut cmd = std::process::Command::new(&exe);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(crate::windows_process::CREATE_NO_WINDOW);
+        }
         cmd.env(
             "PATH",
             aipass_config_writers::cli_discovery::command_path(&exe)?,
@@ -48,6 +53,8 @@ pub(crate) fn status(provider: &str) -> aipass_agent_protocol::ClaudeCliStatus {
             cmd.process_group(0);
         }
         fn stop(child: &mut std::process::Child) {
+            #[cfg(windows)]
+            crate::windows_process::terminate_tree(child.id());
             #[cfg(unix)]
             if let Some(pid) = rustix::process::Pid::from_raw(child.id() as i32) {
                 let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);

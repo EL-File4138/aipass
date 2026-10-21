@@ -7,7 +7,9 @@ authors.workspace = true
 
 [lib]
 name = "aipass_desktop_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# This is a desktop-only library linked by main.rs. Exporting the entire Rust
+# API as a DLL exceeds PE's 65,535-export limit in Windows debug builds.
+crate-type = ["rlib"]
 
 [[bin]]
 name = "aipass-desktop"

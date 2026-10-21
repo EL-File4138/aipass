@@ -12,6 +12,7 @@ pub(super) fn fixture() -> (tempfile::TempDir, Arc<AgentState>, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     fs::create_dir_all(&home).unwrap();
+    crate::server::tests::install_test_tools(&home);
     let state = crate::server::tests::sync_test_state(dir.path().join("vault"));
     let vault = Vault::create(&state.vault_dir, &SecretString::new("fixture-password"))
         .unwrap()

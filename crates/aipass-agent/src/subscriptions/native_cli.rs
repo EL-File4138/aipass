@@ -14,6 +14,10 @@ impl Drop for Running {
         if matches!(self.child.try_wait(), Ok(Some(_))) {
             return;
         }
+        #[cfg(windows)]
+        if let Some(pid) = self.pid {
+            crate::windows_process::terminate_tree(pid);
+        }
         #[cfg(unix)]
         if let Some(pid) = self
             .pid
@@ -26,6 +30,8 @@ impl Drop for Running {
 }
 pub(super) fn command(exe: &std::path::Path, c: &Context) -> Command {
     let mut command = Command::new(exe);
+    #[cfg(windows)]
+    command.creation_flags(crate::windows_process::CREATE_NO_WINDOW);
     command
         .env_clear()
         .kill_on_drop(true)

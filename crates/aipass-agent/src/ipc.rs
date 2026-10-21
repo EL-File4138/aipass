@@ -1,9 +1,14 @@
+pub mod framing;
+#[cfg(windows)]
+mod windows;
 use crate::paths::{agent_runtime_dir, namespace_for_vault_dir};
 use aipass_agent_protocol::SensitiveString;
 use anyhow::Result;
+#[cfg(not(windows))]
+use interprocess::local_socket::GenericFilePath;
 #[cfg(target_os = "windows")]
 use interprocess::local_socket::GenericNamespaced;
-use interprocess::local_socket::{prelude::*, GenericFilePath, Listener, ListenerOptions, Stream};
+use interprocess::local_socket::{prelude::*, Listener, ListenerOptions, Stream};
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use interprocess::os::unix::local_socket::ListenerOptionsExt;
 use std::fs::{self, OpenOptions};
@@ -14,6 +19,25 @@ use std::path::Path;
 use uuid::Uuid;
 
 const MAX_AUTH_TOKEN_BYTES: u64 = 4096;
+
+#[cfg(not(windows))]
+pub type PrivateListener = Listener;
+
+/// Windows named-pipe instances can share a name across server processes.
+/// Retain an exclusive profile-local file for the entire listener lifetime.
+#[cfg(windows)]
+pub struct PrivateListener {
+    listener: Listener,
+    _claim: std::fs::File,
+}
+
+#[cfg(windows)]
+impl std::ops::Deref for PrivateListener {
+    type Target = Listener;
+    fn deref(&self) -> &Listener {
+        &self.listener
+    }
+}
 
 pub(crate) fn wait_for_connection(listener: &Listener) -> std::io::Result<()> {
     #[cfg(unix)]
@@ -44,7 +68,9 @@ pub fn connect(vault_dir: impl AsRef<Path>) -> Result<Stream> {
     #[cfg(target_os = "windows")]
     {
         let name = format!("dev.aipass.agent.{namespace}").to_ns_name::<GenericNamespaced>()?;
-        Ok(Stream::connect(name)?)
+        let stream = Stream::connect(name)?;
+        verify_pipe_owner(&stream)?;
+        Ok(stream)
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -55,12 +81,13 @@ pub fn connect(vault_dir: impl AsRef<Path>) -> Result<Stream> {
     }
 }
 
-pub fn listen(vault_dir: impl AsRef<Path>) -> Result<Listener> {
+pub fn listen(vault_dir: impl AsRef<Path>) -> Result<PrivateListener> {
     let namespace = namespace_for_vault_dir(vault_dir)?;
     #[cfg(target_os = "windows")]
     {
-        let name = format!("dev.aipass.agent.{namespace}").to_ns_name::<GenericNamespaced>()?;
-        Ok(ListenerOptions::new().name(name).create_sync()?)
+        let claim = format!("dev.aipass.agent.{namespace}");
+        let name = claim.as_str().to_ns_name::<GenericNamespaced>()?;
+        private_pipe_listener(name, &claim)
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -68,6 +95,31 @@ pub fn listen(vault_dir: impl AsRef<Path>) -> Result<Listener> {
         let path = agent_runtime_dir()?.join(format!("{namespace}.sock"));
         listen_at_path(&path)
     }
+}
+
+/// Both the Agent and desktop singleton must restrict their pipes to the owner.
+/// A default pipe descriptor also permits reads by Everyone and anonymous users.
+#[cfg(windows)]
+pub fn private_pipe_listener(
+    name: interprocess::local_socket::Name<'_>,
+    claim_name: &str,
+) -> Result<PrivateListener> {
+    use interprocess::os::windows::local_socket::ListenerOptionsExt;
+    let descriptor = windows::security_descriptor()?;
+    let claim = windows::claim_listener(claim_name)?;
+    let listener = ListenerOptions::new()
+        .name(name)
+        .security_descriptor(descriptor)
+        .create_sync()?;
+    Ok(PrivateListener {
+        listener,
+        _claim: claim,
+    })
+}
+
+#[cfg(windows)]
+pub fn verify_pipe_owner(stream: &Stream) -> Result<()> {
+    windows::verify_owner(stream)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -209,6 +261,29 @@ fn secure_existing_auth_token(_: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_listener_has_one_owner_and_can_rebind_after_release() {
+        let dir = tempdir().unwrap();
+        let first = listen(dir.path()).unwrap();
+        let second = listen(dir.path());
+        assert!(
+            second.is_err(),
+            "two Windows servers claimed the same namespace"
+        );
+        assert_eq!(
+            second
+                .err()
+                .unwrap()
+                .downcast_ref::<std::io::Error>()
+                .unwrap()
+                .kind(),
+            ErrorKind::AddrInUse
+        );
+        drop(first);
+        let _replacement = listen(dir.path()).unwrap();
+    }
 
     #[test]
     fn oversized_auth_tokens_are_rejected() {

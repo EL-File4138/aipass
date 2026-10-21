@@ -1,7 +1,11 @@
-use std::fs::{self, File};
+use std::fs;
+#[cfg(unix)]
+use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
 use tempfile::NamedTempFile;
+
+pub mod portable_path;
 
 pub fn atomic_write_bytes(path: impl AsRef<Path>, bytes: &[u8]) -> io::Result<()> {
     let path = path.as_ref();

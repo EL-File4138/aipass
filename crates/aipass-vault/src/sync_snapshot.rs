@@ -510,6 +510,39 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    fn encrypted_windows_backups_restore_on_every_platform() {
+        let dir = tempdir().unwrap();
+        let source = vault(dir.path());
+        let password = SecretString::new("export");
+        let mut export = source
+            .export_encrypted_with_kdf(&password, KdfParams::with_random_salt(1024, 1, 1))
+            .unwrap();
+        let key = derive_master_key(&password, &export.kdf).unwrap();
+        let aad = export_aad(export.vault_id, export.created_at);
+        let decoded = decrypt_bytes(key.as_bytes(), aad.as_bytes(), &export.payload).unwrap();
+        let mut payload: serde_json::Value = serde_json::from_slice(&decoded).unwrap();
+        for file in payload["files"].as_array_mut().unwrap() {
+            let path = file["relativePath"].as_str().unwrap();
+            assert!(!path.contains('\\'), "new exports must have portable paths");
+            file["relativePath"] = path.replace('/', "\\").into();
+        }
+        export.payload = encrypt_bytes(
+            key.as_bytes(),
+            aad.as_bytes(),
+            &serde_json::to_vec(&payload).unwrap(),
+        )
+        .unwrap();
+        let target = tempdir().unwrap();
+        Vault::import_encrypted(target.path(), &password, &export).unwrap();
+        let restored = Vault::open(target.path(), &SecretString::new("master")).unwrap();
+        assert_eq!(restored.vault_id(), source.vault_id());
+        assert_eq!(
+            restored.sync_revision().unwrap(),
+            source.sync_revision().unwrap()
+        );
+    }
+
+    #[test]
     fn sync_v2_omits_audit_history_without_deleting_local_audit() {
         let dir = tempdir().unwrap();
         let mut vault = vault(dir.path());
@@ -551,7 +584,12 @@ mod tests {
         Vault::open(dir.path(), &SecretString::new("master")).unwrap();
     }
 
-    thread_local! { static FAIL_AFTER: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) }; }
+    // Clippy 1.99 inspects the fallback TLS expansion on Windows GNU and
+    // incorrectly flags this already-const initializer. Native gates still lint it.
+    thread_local! {
+        #[cfg_attr(all(windows, target_env = "gnu"), allow(clippy::missing_const_for_thread_local))]
+        static FAIL_AFTER: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    }
     pub(super) fn fail_snapshot_write() -> Result<(), VaultError> {
         FAIL_AFTER.with(|counter| match counter.get() {
             Some(0) => {
@@ -896,12 +934,11 @@ mod tests {
             .export_encrypted_with_kdf(&password, KdfParams::with_random_salt(1024, 1, 1))
             .unwrap();
         let key = derive_master_key(&password, &export.kdf).unwrap();
-        let payload = VaultExportPayload {
-            files: vec![VaultExportFile {
-                relative_path: "../outside".into(),
-                bytes_b64: STANDARD_NO_PAD.encode(b"bad"),
-            }],
-        };
+        // Construct hostile wire data directly: the normal serializer also
+        // refuses to emit a non-portable path.
+        let payload = serde_json::json!({"files":[{
+            "relativePath":"..\\outside", "bytesB64": STANDARD_NO_PAD.encode(b"bad")
+        }]});
         export.payload = encrypt_bytes(
             key.as_bytes(),
             export_aad(export.vault_id, export.created_at).as_bytes(),

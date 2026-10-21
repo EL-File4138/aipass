@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
+import { pnpmCommand } from "./pnpm-command.mjs";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,8 +16,7 @@ run("pnpm", [
   "--debug",
   "--features",
   "custom-protocol",
-  "--bundles",
-  "app",
+  ...(process.platform === "darwin" ? ["--bundles", "app"] : ["--no-bundle"]),
   "--ci",
   "--config",
   "src-tauri/tauri.dev.conf.json"
@@ -37,5 +37,5 @@ if (process.platform === "darwin") {
 }
 
 function run(command, args) {
-  execFileSync(command, args, { cwd: repoRoot, stdio: "inherit", env: process.env });
+  execFileSync(...(command === "pnpm" ? pnpmCommand(args) : [command, args]), { cwd: repoRoot, stdio: "inherit", env: process.env });
 }

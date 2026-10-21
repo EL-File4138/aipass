@@ -61,7 +61,7 @@ fn proxy_endpoint_matches_each_client_sdk_contract() {
     );
     assert_eq!(
         proxy_endpoint_for_tool(&ToolId::Cursor, ProxyProtocol::AnthropicMessages, bind),
-        "http://127.0.0.1:8787/v1/messages"
+        "http://127.0.0.1:8787/v1"
     );
 }
 
@@ -80,6 +80,41 @@ fn proxy_tool_capabilities_distinguish_endpoint_and_protocol_limits() {
     );
     assert!(ensure_proxy_tool_protocol(&ToolId::Cursor, ProxyProtocol::AnthropicMessages).is_ok());
     assert!(ensure_proxy_tool_protocol(&ToolId::Cursor, ProxyProtocol::OpenAiResponses).is_ok());
+    for protocol in [
+        ProxyProtocol::OpenAiResponses,
+        ProxyProtocol::OpenAiChatCompletions,
+        ProxyProtocol::AnthropicMessages,
+    ] {
+        assert!(ensure_proxy_tool_protocol(&ToolId::Qoder, protocol).is_ok());
+        assert!(ensure_proxy_tool_protocol(&ToolId::MuseCode, protocol).is_err());
+    }
+}
+
+#[test]
+fn bearer_anthropic_credentials_need_a_route_when_the_tool_writer_uses_api_keys() {
+    let mut entry = favicon_test_entry();
+    entry.interface_type = InterfaceType::AnthropicMessages;
+    assert!(ensure_tool_credential(&ToolConfigTool::ClaudeCode, &entry).is_ok());
+    for tool in [
+        ToolConfigTool::OpenCode,
+        ToolConfigTool::Pi,
+        ToolConfigTool::Grok,
+        ToolConfigTool::KimiCode,
+        ToolConfigTool::Zed,
+        ToolConfigTool::DeepseekHarness,
+        ToolConfigTool::HermesAgent,
+        ToolConfigTool::CommandCode,
+        ToolConfigTool::VscodeChat,
+        ToolConfigTool::Cline,
+        ToolConfigTool::Trae,
+        ToolConfigTool::Qoder,
+        ToolConfigTool::Zcode,
+    ] {
+        assert!(ensure_tool_credential(&tool, &entry).is_err());
+        let mut api_key = entry.clone();
+        api_key.auth_scheme = AuthScheme::XApiKey;
+        assert!(ensure_tool_credential(&tool, &api_key).is_ok());
+    }
 }
 
 struct EnvRestore {
@@ -364,6 +399,9 @@ fn tool_configuration_binds_the_selected_key_and_its_overrides() {
         "multiple keys require selection"
     );
     request.secret_id = Some(second.clone());
+    request.tool = ToolConfigTool::Cursor;
+    assert!(build_tool_config_plan(vault, &request, true).is_err());
+    request.tool = ToolConfigTool::ClaudeCode;
     let (entry, _, content) = build_tool_config_plan(vault, &request, true).unwrap();
     assert_eq!(entry.auth_scheme, AuthScheme::XApiKey);
     assert!(content.contains("fixture-anthropic-key"));
@@ -987,4 +1025,51 @@ fn provider_probe_shares_responses_endpoint_and_credentials_with_the_proxy() {
     assert_eq!(websocket.supported, Some(false));
     assert_eq!(websocket.status, Some(404));
     server.join().unwrap();
+}
+
+pub(crate) fn install_test_tools(home: &Path) {
+    for name in [
+        "codex",
+        "claude",
+        "gemini",
+        "opencode",
+        "grok",
+        "pi",
+        "cursor-agent-local",
+        "kimi",
+        "zed",
+        "dsh",
+        "agy",
+        "muse",
+        "hermes",
+        "command-code",
+        "codebuddy",
+        "workbuddy",
+    ] {
+        let bin = if name == "grok" {
+            home.join(".grok/bin")
+        } else {
+            home.join(".local/bin")
+        };
+        std::fs::create_dir_all(&bin).unwrap();
+        let path = bin.join(if cfg!(windows) {
+            format!("{name}.exe")
+        } else {
+            name.into()
+        });
+        std::fs::write(
+            &path,
+            if cfg!(windows) {
+                "MZfixture"
+            } else {
+                "#!/bin/sh\n"
+            },
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+    }
 }

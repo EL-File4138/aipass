@@ -11,7 +11,7 @@ export function agentCredentialChoices(entries: ProviderEntry[], tool: ToolConfi
       (tool === "claude-code" && entry.providerId === "anthropic")
     );
     if (!native && entry.credentialKind !== "api") return [];
-    const effective = { ...entry, defaultModel: secret.defaultModel ?? entry.defaultModel,
+    const effective = { ...entry, endpoint: secret.endpoint ?? entry.endpoints.find(e => e.kind === "api")?.url, defaultModel: secret.defaultModel ?? entry.defaultModel,
       interfaceType: secretInterfaceType(secret, entry.interfaceType),
       authScheme: secretAuthScheme(secret, entry.interfaceType, entry.authScheme) };
     if (!native && !supportsIntegration(tool, effective)) return [];
@@ -19,7 +19,7 @@ export function agentCredentialChoices(entries: ProviderEntry[], tool: ToolConfi
     const duplicate = entry.secretRefs.filter(s => (s.label.trim() || s.id) === detail).length > 1;
     const label = entry.secretRefs.length > 1 ? `${entry.title} (${detail}${duplicate ? ` / ${secret.id}` : ""})` : entry.title;
     return [{ value: `${entry.id}:${secret.id}`, label,
-      request: { tool, id: entry.id, secretId: secret.id, mode: native ? "official" : "plaintext",
+      request: { tool, id: entry.id, secretId: secret.id, mode: native ? "official" : ["zed", "antigravity-cli", "muse-code", "hermes-agent", "command-code"].includes(tool) ? "helper" : "plaintext",
         ...(tool === "codex" && !native ? { codexApiKeyMode: "auth_json" as const } : {}) } }];
   }));
   return choices.map(choice => choices.filter(c => c.label === choice.label).length > 1

@@ -299,7 +299,7 @@
   "integration.backupNote": "写入前会自动备份原有文件。",
   "integration.plaintextNote": "此模式会将 API 密钥以明文写入工具的本地配置。工具及能够访问该文件的人都可以读取密钥。",
   "integration.helperNote": "此模式允许工具在保险库解锁时向 AIPass 请求密钥。工具会在运行时获得明文密钥。",
-  "integration.envNote": "启动工具前，请在终端 source 本次生成的 .env 文件；它会在保险库解锁时读取所选凭据，工具可在运行时访问明文。",
+  "integration.envNote": "启动工具前，使用下方命令加载辅助文件，从已解锁的保险库读取所选密钥。",
   "integration.officialNote": "此模式使用工具的原生登录凭据，凭据由该工具存储和管理。",
   "integration.proxyNote": "此配置会写入本地代理令牌。工具通过 AIPass 发送请求，提供商密钥保留在保险库中。",
   "settings.syncSettingsSaved": "同步设置已保存。",
@@ -1316,5 +1316,18 @@
   "settings.credentialClickAction": "点击凭据",
   "settings.credentialClickReveal": "显示",
   "settings.credentialClickCopy": "复制",
-  "settings.confirmSecretCopy": "复制凭据前确认"
+  "settings.confirmSecretCopy": "复制凭据前确认",
+  "integration.setupAction": "配置引导",
+  "integration.setupProtocol": "API 格式",
+  "integration.setupEndpoint": "接口地址",
+  "integration.setupModel": "模型",
+  "integration.setupCopied": "已复制",
+  "integration.setupCopyKey": "复制密钥",
+  "integration.setup.vscode-chat": "聊天模型 → 管理模型 → 添加模型 → Custom Endpoint。填写下方参数，保存后选择该模型。",
+  "integration.setup.cline": "Cline 设置 → API Provider → OpenAI Compatible 或 Anthropic。填写下方参数并保存；CLI 使用 cline auth。",
+  "integration.setup.trae": "设置 → 模型 → 添加模型 → 自定义模型。选择下方 API 格式，填写参数，保存后选择该模型。",
+  "integration.setup.qoder": "前往设置 → 模型；Qoder CLI 使用 /model → Custom。BYOK、服务商和自定义 URL 以当前套餐及向导目录为准。",
+  "integration.modelCatalogRequired": "需要 Meta 模型目录接口",
+  "integration.setup.zcode": "设置 → 模型服务商 → 添加服务商。选择 OpenAI 或 Anthropic，填写下方参数，添加模型 ID 并启用。",
+  "integration.setup.jetbrains-copilot": "Copilot 模型选择 → Model management → Add a custom endpoint → OpenAI compatible。填写参数并选择模型；缺少该选项时先更新插件。组织策略可能限制 BYOK。"
 }

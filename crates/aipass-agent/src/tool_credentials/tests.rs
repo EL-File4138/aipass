@@ -13,6 +13,7 @@ fn fixture() -> (tempfile::TempDir, Arc<AgentState>, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     fs::create_dir_all(&home).unwrap();
+    crate::server::tests::install_test_tools(&home);
     let state = crate::server::tests::sync_test_state(dir.path().join("vault"));
     let vault = Vault::create(&state.vault_dir, &SecretString::new("fixture-password"))
         .unwrap()
@@ -450,4 +451,188 @@ fn selected_provider_is_reported_before_dormant_keys() {
     let keys = reader::read(&home, &ToolConfigTool::Cursor).unwrap();
     assert_eq!(keys[0].interface, InterfaceType::AnthropicMessages);
     assert_eq!(keys[0].auth, AuthScheme::XApiKey);
+    // The current runtime takes a versioned base, so retain AIPass protocol
+    // metadata when importing a previously configured local proxy credential.
+    let mut cursor = aipass_config_writers::ToolEntry {
+        supports_websockets: None,
+        id: Uuid::new_v4(),
+        secret_id: None,
+        title: "Cursor route".into(),
+        provider_id: None,
+        endpoint: Some("http://127.0.0.1:8787/v1".into()),
+        interface_type: InterfaceType::AnthropicMessages,
+        auth_scheme: AuthScheme::XApiKey,
+        env_key: "AIPASS_PROXY_TOKEN".into(),
+        default_model: Some("fixture-model".into()),
+        api_key: Some("private-cursor-route".into()),
+    };
+    let (_, content) =
+        aipass_config_writers::plan_cursor_local_proxy_plaintext(&home, &cursor).unwrap();
+    write(&home.join(".aipass/tools/cursor-agent-local.env"), &content);
+    let keys = reader::read(&home, &ToolConfigTool::Cursor).unwrap();
+    assert_eq!(keys[0].interface, InterfaceType::AnthropicMessages);
+    assert_eq!(keys[0].endpoint, "http://127.0.0.1:8787/v1");
+    assert_eq!(keys[0].key.as_str(), "private-cursor-route");
+    cursor.interface_type = InterfaceType::OpenAiCompatible;
+    cursor.auth_scheme = AuthScheme::Bearer;
+    let (_, content) = aipass_config_writers::plan_cursor_local_plaintext(&home, &cursor).unwrap();
+    write(&home.join(".aipass/tools/cursor-agent-local.env"), &content);
+    let keys = reader::read(&home, &ToolConfigTool::Cursor).unwrap();
+    assert_eq!(keys[0].interface, InterfaceType::OpenAiCompatible);
+}
+
+#[test]
+fn additional_agents_import_outgoing_keys_and_reject_stale_previews() {
+    for tool in [ToolConfigTool::KimiCode, ToolConfigTool::DeepseekHarness] {
+        let (_dir, state, home) = fixture();
+        let (config, original) = match tool {
+            ToolConfigTool::KimiCode => (home.join(".kimi-code/config.toml"),
+                "default_model = 'original'\n[models.original]\nprovider = 'old'\nmodel = 'old-model'\n[providers.old]\ntype = 'openai'\nbase_url = 'https://old.test/v1'\napi_key = 'old-fixture-key'\n"),
+            _ => (home.join(".dsh/profiles/web/cordis.patch.yml"),
+                "- id: llm-pi-ai\n  config:\n    providers:\n      original:\n        api: openai-completions\n        apiKeyEnv: ORIGINAL_KEY\n        baseURL: https://old.test/v1\n        models:\n          - id: old-model\n"),
+        };
+        assert!(reader::paths(&home, &tool)
+            .iter()
+            .all(|path| path.starts_with(&home)));
+        write(&config, original);
+        if tool == ToolConfigTool::DeepseekHarness {
+            write(
+                &home.join(".dsh/.credentials.yaml"),
+                "version: 1\nrefs:\n  ORIGINAL_KEY: old-fixture-key\n",
+            );
+        }
+        let id = with_vault(&state, false, |v| {
+            Ok(api(v, "https://new.test/v1", "new-fixture-key"))
+        })
+        .unwrap();
+        let mut r = request(id, tool.clone());
+        preview(&state, &mut r);
+        write(&config, &format!("{original}\n# external edit\n"));
+        let failed = crate::server::handle_request(
+            &state,
+            AgentRequest::ToolConfigManagedApply { request: r.clone() },
+        );
+        assert!(!failed.ok);
+        assert!(fs::read_to_string(&config)
+            .unwrap()
+            .contains("# external edit"));
+        preview(&state, &mut r);
+        let applied = crate::server::handle_request(
+            &state,
+            AgentRequest::ToolConfigManagedApply { request: r },
+        );
+        assert!(applied.ok, "{:?}", applied.message);
+        with_vault(&state, false, |v| {
+            let imported = v
+                .list_provider_summaries()
+                .unwrap()
+                .into_iter()
+                .find(|e| e.tags.iter().any(|t| t == "agent-import"))
+                .unwrap();
+            assert_eq!(
+                v.reveal_secret_by_id(imported.id, &imported.secret_refs[0].id)
+                    .unwrap(),
+                "old-fixture-key"
+            );
+            Ok(())
+        })
+        .unwrap();
+        assert!(fs::read_to_string(&config)
+            .unwrap()
+            .contains("https://new.test/v1"));
+    }
+}
+
+#[test]
+fn zed_import_reads_shell_quoted_keys_without_executing_them() {
+    let (_dir, _state, home) = fixture();
+    write(
+        &home.join(".config/zed/settings.json"),
+        r#"{"language_models":{"openai_compatible":{"aipass":{"api_url":"https://fixture.test/v1"}}}}"#,
+    );
+    write(
+        &home.join(".aipass/tools/zed.env"),
+        "export AIPASS_API_KEY='fixture'\\''$(echo literal)'\n",
+    );
+    let keys = reader::read(&home, &ToolConfigTool::Zed).unwrap();
+    assert_eq!(keys[0].key.as_str(), "fixture'$(echo literal)");
+}
+
+#[test]
+fn tencent_byok_switch_imports_the_outgoing_model_key_before_replacing_it() {
+    let (_dir, state, home) = fixture();
+    write(
+        &home.join(".codebuddy/models.json"),
+        r#"{"models":[{"id":"test-model","apiKey":"outgoing-editor-key","url":"https://old.test/v1/chat/completions"}]}"#,
+    );
+    let id = with_vault(&state, false, |v| {
+        Ok(api(v, "https://new.test/v1", "selected-editor-key"))
+    })
+    .unwrap();
+    let mut r = request(id, ToolConfigTool::Workbuddy);
+    preview(&state, &mut r);
+    let result =
+        crate::server::handle_request(&state, AgentRequest::ToolConfigManagedApply { request: r });
+    assert!(result.ok, "{:?}", result.message);
+    with_vault(&state, false, |v| {
+        let imported = v
+            .list_provider_summaries()
+            .unwrap()
+            .into_iter()
+            .find(|e| e.tags.iter().any(|t| t == "agent-import"))
+            .unwrap();
+        assert_eq!(
+            v.reveal_secret_by_id(imported.id, &imported.secret_refs[0].id)
+                .unwrap(),
+            "outgoing-editor-key"
+        );
+        Ok(())
+    })
+    .unwrap();
+    let models = fs::read_to_string(home.join(".codebuddy/models.json")).unwrap();
+    assert!(models.contains("selected-editor-key"));
+    assert!(!models.contains("outgoing-editor-key"));
+}
+
+#[test]
+fn guarded_shell_credential_references_are_skipped_without_execution() {
+    let home = tempfile::tempdir().unwrap();
+    let path = home.path().join(".aipass/tools/cursor-agent-local.env");
+    write(&path, "unset CURSOR_LOCAL_AGENT_API_KEY\nCURSOR_LOCAL_AGENT_API_KEY=\"$(exit 73)\" || return $?\nexport CURSOR_LOCAL_AGENT_API_KEY\nexport CURSOR_LOCAL_AGENT_BASE_URL='http://127.0.0.1:8787/v1'\n# AIPASS_CURSOR_API_TYPE=anthropic_messages\n");
+    assert!(reader::read(home.path(), &ToolConfigTool::Cursor)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn powershell_reader_imports_only_literal_values_without_executing_expressions() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("zed.ps1");
+    write(
+        &path,
+        "\u{feff}# PowerShell helper\r\n$env:AIPASS_API_KEY = 'prefix O''Brien 中文 `$()'\r\n",
+    );
+    let values = reader::env(&path).unwrap();
+    assert_eq!(values.0["AIPASS_API_KEY"], "prefix O'Brien 中文 `$()");
+    write(&path, "$env:AIPASS_API_KEY = [string]$aipassValue\r\n");
+    assert!(reader::env(&path).unwrap().0["AIPASS_API_KEY"].is_null());
+}
+
+#[test]
+fn removing_an_installed_agent_after_preview_rejects_the_write() {
+    let (_dir, state, home) = fixture();
+    let id = with_vault(&state, false, |v| {
+        Ok(api(v, "https://fixture.test/v1", "fixture-key"))
+    })
+    .unwrap();
+    let mut r = request(id, ToolConfigTool::KimiCode);
+    preview(&state, &mut r);
+    let binary = home
+        .join(".local/bin")
+        .join(if cfg!(windows) { "kimi.exe" } else { "kimi" });
+    fs::remove_file(binary).unwrap();
+    let err = apply(&state, r).unwrap_err();
+    assert_eq!(err.code, AgentErrorCode::ValidationFailed);
+    assert!(err.message.contains("installed"));
+    assert!(!home.join(".kimi-code/config.toml").exists());
 }

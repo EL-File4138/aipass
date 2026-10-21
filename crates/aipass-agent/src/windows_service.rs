@@ -47,6 +47,10 @@ mod imp {
 
     define_windows_service!(ffi_service_main, service_main);
 
+    fn is_missing(error: &windows_service::Error) -> bool {
+        matches!(error, windows_service::Error::Winapi(error) if error.raw_os_error() == Some(1060))
+    }
+
     pub(super) fn run_dispatcher(service_name: String, options: ServerOptions) -> Result<()> {
         let _ = SERVICE_RUNTIME.set(ServiceRuntimeConfig {
             service_name: service_name.clone(),
@@ -142,6 +146,13 @@ mod imp {
 
     fn send_lock_request(vault_dir: &Path, reason: LockReason) -> Result<()> {
         let client = AgentClient::for_vault(vault_dir.to_path_buf())?;
+        let policy = client
+            .request::<aipass_agent_protocol::SessionPolicy>(&AgentRequest::SessionPolicyGet)?;
+        if matches!(reason, LockReason::SystemSleep) && !policy.lock_on_sleep
+            || matches!(reason, LockReason::ScreenLock) && !policy.lock_on_screen_lock
+        {
+            return Ok(());
+        }
         for _ in 0..20 {
             match client.request::<serde_json::Value>(&AgentRequest::SessionLock {
                 reason: reason.clone(),
@@ -205,7 +216,9 @@ mod imp {
         };
         let _ = service.set_description("AIPass background agent");
         if !matches!(service.query_status()?.current_state, ServiceState::Running) {
-            let _ = service.start(&[] as &[&str]);
+            service
+                .start(&[] as &[&str])
+                .context("Windows registered the Agent service but could not start it")?;
         }
         query(vault_dir)
     }
@@ -224,19 +237,43 @@ mod imp {
     }
 
     pub(super) fn stop(vault_dir: &Path) -> Result<()> {
+        stop_direct_agent(vault_dir)?;
         let service_name = agent_service_name(vault_dir)?;
         let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
-        let service = manager.open_service(
+        let service = match manager.open_service(
             &service_name,
             ServiceAccess::STOP | ServiceAccess::QUERY_STATUS,
-        )?;
+        ) {
+            Ok(service) => service,
+            Err(error) if is_missing(&error) => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
         if !matches!(service.query_status()?.current_state, ServiceState::Stopped) {
             let _ = service.stop()?;
         }
         Ok(())
     }
 
+    fn stop_direct_agent(vault_dir: &Path) -> Result<()> {
+        // Desktop normally launches the Agent directly without SCM registration.
+        // Stop that process too, before the installer replaces its executable.
+        let client = AgentClient::for_vault(vault_dir.to_path_buf())?;
+        if client.request_raw(&AgentRequest::SessionStatus).is_ok() {
+            client.shutdown()?;
+            let deadline = std::time::Instant::now() + Duration::from_secs(8);
+            while client.request_raw(&AgentRequest::SessionStatus).is_ok() {
+                anyhow::ensure!(
+                    std::time::Instant::now() < deadline,
+                    "Agent did not stop before uninstall"
+                );
+                thread::sleep(Duration::from_millis(100));
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn uninstall(vault_dir: &Path) -> Result<WindowsServiceStatus> {
+        stop_direct_agent(vault_dir)?;
         let service_name = agent_service_name(vault_dir)?;
         let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
         let service = match manager.open_service(
@@ -244,7 +281,7 @@ mod imp {
             ServiceAccess::DELETE | ServiceAccess::QUERY_STATUS | ServiceAccess::STOP,
         ) {
             Ok(service) => service,
-            Err(_) => {
+            Err(error) if is_missing(&error) => {
                 return Ok(WindowsServiceStatus {
                     service_name,
                     registered: false,
@@ -252,6 +289,7 @@ mod imp {
                     state: None,
                 });
             }
+            Err(error) => return Err(error.into()),
         };
         if !matches!(service.query_status()?.current_state, ServiceState::Stopped) {
             let _ = service.stop();
@@ -278,12 +316,13 @@ mod imp {
                     state: Some(format!("{:?}", status.current_state).to_lowercase()),
                 })
             }
-            Err(_) => Ok(WindowsServiceStatus {
+            Err(error) if is_missing(&error) => Ok(WindowsServiceStatus {
                 service_name,
                 registered: false,
                 running: false,
                 state: None,
             }),
+            Err(error) => Err(error.into()),
         }
     }
 }

@@ -1,4 +1,6 @@
-use aipass_agent_protocol::{read_frame, write_frame};
+use aipass_agent::ipc::framing::{read_frame_with_deadline, write_frame_with_deadline};
+#[cfg(windows)]
+use aipass_agent::ipc::PrivateListener as Listener;
 use anyhow::{Context, Result};
 #[cfg(not(target_os = "windows"))]
 use directories::ProjectDirs;
@@ -6,7 +8,11 @@ use directories::ProjectDirs;
 use interprocess::local_socket::GenericFilePath;
 #[cfg(target_os = "windows")]
 use interprocess::local_socket::GenericNamespaced;
-use interprocess::local_socket::{prelude::*, Listener, ListenerOptions, Stream};
+#[cfg(not(windows))]
+use interprocess::local_socket::Listener;
+#[cfg(not(windows))]
+use interprocess::local_socket::ListenerOptions;
+use interprocess::local_socket::{prelude::*, Stream};
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use interprocess::os::unix::local_socket::ListenerOptionsExt;
 use semver::Version;
@@ -71,6 +77,7 @@ enum SingletonAction {
 #[serde(rename_all = "camelCase")]
 enum SingletonCommand {
     Quit,
+    Status,
 }
 
 pub(crate) fn acquire(
@@ -133,26 +140,33 @@ pub(crate) fn spawn_server(app: AppHandle, singleton: DesktopSingleton, current_
 }
 
 fn handle_connection(mut stream: Stream, app: AppHandle, current_version: &str) -> Result<()> {
-    let request: SingletonRequest =
-        read_frame(&mut stream).context("failed to read desktop singleton request")?;
+    stream.set_nonblocking(true)?;
+    let request: SingletonRequest = read_frame_with_deadline(&mut stream, Duration::from_secs(5))
+        .context("failed to read desktop singleton request")?;
     let _ = crate::logging::log_event("desktop.singleton.request", &[("target", &request.target)]);
 
-    if request.command == Some(SingletonCommand::Quit) {
-        let _ = crate::logging::log_event("desktop.singleton.quit_request", &[]);
-        write_frame(
+    if matches!(
+        request.command,
+        Some(SingletonCommand::Quit | SingletonCommand::Status)
+    ) {
+        write_frame_with_deadline(
             &mut stream,
             &SingletonResponse {
                 version: current_version.to_string(),
                 action: SingletonAction::UseExisting,
             },
+            Duration::from_secs(5),
         )
         .context("failed to send desktop singleton response")?;
 
-        thread::spawn(move || {
-            thread::sleep(REPLACEMENT_EXIT_DELAY);
-            crate::ALLOW_PROCESS_EXIT.store(true, std::sync::atomic::Ordering::SeqCst);
-            app.exit(0);
-        });
+        if request.command == Some(SingletonCommand::Quit) {
+            let _ = crate::logging::log_event("desktop.singleton.quit_request", &[]);
+            thread::spawn(move || {
+                thread::sleep(REPLACEMENT_EXIT_DELAY);
+                crate::ALLOW_PROCESS_EXIT.store(true, std::sync::atomic::Ordering::SeqCst);
+                app.exit(0);
+            });
+        }
         return Ok(());
     }
 
@@ -162,18 +176,23 @@ fn handle_connection(mut stream: Stream, app: AppHandle, current_version: &str) 
         SingletonAction::UseExisting
     };
 
-    write_frame(
+    write_frame_with_deadline(
         &mut stream,
         &SingletonResponse {
             version: current_version.to_string(),
             action,
         },
+        Duration::from_secs(5),
     )
     .context("failed to send desktop singleton response")?;
 
     match action {
         SingletonAction::UseExisting => {
-            crate::activate_window_target(&app, &request.target);
+            // An Agent/login companion launch must not hide a window that the
+            // user already opened in the resident desktop.
+            if request.target != "tray" {
+                crate::activate_window_target(&app, &request.target);
+            }
             let urls = request
                 .deep_link_urls
                 .iter()
@@ -198,9 +217,11 @@ fn request_existing_instance(
     current_version: &str,
 ) -> Result<SingletonDecision> {
     let mut stream = connect_existing_instance()?;
-    write_frame(&mut stream, request).context("failed to send desktop singleton request")?;
-    let response: SingletonResponse =
-        read_frame(&mut stream).context("failed to read desktop singleton response")?;
+    stream.set_nonblocking(true)?;
+    write_frame_with_deadline(&mut stream, request, Duration::from_secs(5))
+        .context("failed to send desktop singleton request")?;
+    let response: SingletonResponse = read_frame_with_deadline(&mut stream, Duration::from_secs(5))
+        .context("failed to read desktop singleton response")?;
 
     match response.action {
         SingletonAction::UseExisting => {
@@ -250,8 +271,10 @@ fn wait_for_replacement_listener() -> Result<Listener> {
 #[cfg(target_os = "windows")]
 fn connect_existing_instance() -> Result<Stream> {
     let name =
-        desktop_singleton_name(current_desktop_instance()).to_ns_name::<GenericNamespaced>()?;
-    Ok(Stream::connect(name)?)
+        desktop_singleton_name(current_desktop_instance())?.to_ns_name::<GenericNamespaced>()?;
+    let stream = Stream::connect(name)?;
+    aipass_agent::ipc::verify_pipe_owner(&stream)?;
+    Ok(stream)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -262,9 +285,9 @@ fn connect_existing_instance() -> Result<Stream> {
 
 #[cfg(target_os = "windows")]
 fn listen_for_instances() -> Result<Listener> {
-    let name =
-        desktop_singleton_name(current_desktop_instance()).to_ns_name::<GenericNamespaced>()?;
-    Ok(ListenerOptions::new().name(name).create_sync()?)
+    let claim = desktop_singleton_name(current_desktop_instance())?;
+    let name = claim.as_str().to_ns_name::<GenericNamespaced>()?;
+    aipass_agent::ipc::private_pipe_listener(name, &claim)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -333,6 +356,7 @@ fn current_desktop_instance() -> DesktopInstanceKind {
     }
 }
 
+#[cfg(any(not(windows), test))]
 fn singleton_socket_name(instance: DesktopInstanceKind) -> &'static str {
     match instance {
         DesktopInstanceKind::Release => "desktop-tray.sock",
@@ -341,28 +365,25 @@ fn singleton_socket_name(instance: DesktopInstanceKind) -> &'static str {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) fn should_install_tray_autostart() -> bool {
     should_install_tray_autostart_for(current_desktop_instance())
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn should_install_tray_autostart_for(instance: DesktopInstanceKind) -> bool {
     // Packaged builds (release and packaged development) register the tray for
     // auto-start on launch; only the live dev server stays unregistered.
-    matches!(
-        instance,
-        DesktopInstanceKind::Release | DesktopInstanceKind::PackagedDevelopment
-    )
+    instance == DesktopInstanceKind::Release
+        || (!cfg!(windows) && instance == DesktopInstanceKind::PackagedDevelopment)
 }
 
 #[cfg(target_os = "windows")]
-fn desktop_singleton_name(instance: DesktopInstanceKind) -> &'static str {
-    match instance {
+fn desktop_singleton_name(instance: DesktopInstanceKind) -> Result<String> {
+    let kind = match instance {
         DesktopInstanceKind::Release => "dev.aipass.desktop.tray",
         DesktopInstanceKind::PackagedDevelopment => "dev.aipass.desktop.dev-bundle",
         DesktopInstanceKind::LiveDevelopment => "dev.aipass.desktop.dev-server",
-    }
+    };
+    aipass_agent::desktop::windows_singleton_name(kind)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -450,9 +471,10 @@ mod tests {
         assert!(should_install_tray_autostart_for(
             DesktopInstanceKind::Release
         ));
-        assert!(should_install_tray_autostart_for(
-            DesktopInstanceKind::PackagedDevelopment
-        ));
+        assert_eq!(
+            should_install_tray_autostart_for(DesktopInstanceKind::PackagedDevelopment),
+            !cfg!(windows)
+        );
         assert!(!should_install_tray_autostart_for(
             DesktopInstanceKind::LiveDevelopment
         ));
@@ -463,6 +485,11 @@ mod tests {
         let legacy: SingletonRequest =
             serde_json::from_str(r#"{"version":"1.0.0","target":"tray"}"#).unwrap();
         assert_eq!(legacy.command, None);
+
+        let status: SingletonRequest =
+            serde_json::from_str(r#"{"version":"0.0.0","target":"tray","command":"status"}"#)
+                .unwrap();
+        assert_eq!(status.command, Some(SingletonCommand::Status));
 
         let quit: SingletonRequest =
             serde_json::from_str(r#"{"version":"0.0.0","target":"tray","command":"quit"}"#)

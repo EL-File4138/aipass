@@ -50,6 +50,8 @@ struct Authorization {
 }
 
 thread_local! {
+    // Clippy 1.99 misreads the already-const Windows GNU fallback TLS.
+    #[cfg_attr(all(windows, target_env = "gnu"), allow(clippy::missing_const_for_thread_local))]
     static REQUEST: RefCell<Option<Authorization>> = const { RefCell::new(None) };
 }
 

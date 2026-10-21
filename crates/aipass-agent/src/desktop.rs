@@ -9,18 +9,38 @@ pub const TRAY_WINDOW_TARGET: &str = "tray";
 pub const RELEASE_DEEP_LINK_SCHEME: &str = "aipass";
 pub const DEVELOPMENT_DEEP_LINK_SCHEME: &str = "aipass-dev";
 
+/// One desktop per profile/instance kind. Used by both the desktop singleton
+/// and Windows login lifecycle; keep fixture namespaces identical.
+#[cfg(windows)]
+pub fn windows_singleton_name(kind: &str) -> Result<String> {
+    let profile = directories::BaseDirs::new().context("cannot determine Windows profile")?;
+    let namespace = crate::namespace_for_vault_dir(profile.home_dir())?;
+    let fixture = std::env::var_os("AIPASS_DESKTOP_RUNTIME_DIR")
+        .map(crate::namespace_for_vault_dir)
+        .transpose()?;
+    Ok(format!(
+        "{kind}.{namespace}.{}",
+        fixture.as_deref().unwrap_or("default")
+    ))
+}
+
 pub fn open_desktop_window(target: &str, vault_dir: &Path) -> Result<()> {
     if should_open_desktop_url(target, vault_dir) && open_desktop_url(target).is_ok() {
         return Ok(());
     }
 
     // This path preserves the launch target and custom vault environment.
-    Command::new(desktop_binary())
+    let mut command = Command::new(desktop_binary());
+    command
         .env(WINDOW_TARGET_ENV, target)
         .env(VAULT_DIR_ENV, vault_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    crate::windows_process::spawn(&command).context("failed to open desktop companion")?;
+    #[cfg(not(windows))]
+    command
         .spawn()
         .context("failed to open desktop companion")?;
     Ok(())
@@ -156,10 +176,10 @@ fn push_unique(candidates: &mut Vec<PathBuf>, path: PathBuf) {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        desktop_deep_link_scheme, wait_for_url_opener, DEVELOPMENT_DEEP_LINK_SCHEME,
-        URL_OPENER_VERDICT_TIMEOUT,
-    };
+    use super::{desktop_deep_link_scheme, DEVELOPMENT_DEEP_LINK_SCHEME};
+    #[cfg(unix)]
+    use super::{wait_for_url_opener, URL_OPENER_VERDICT_TIMEOUT};
+    #[cfg(unix)]
     use std::process::{Command, Stdio};
 
     #[test]
@@ -167,6 +187,7 @@ mod tests {
         assert_eq!(desktop_deep_link_scheme(), DEVELOPMENT_DEEP_LINK_SCHEME);
     }
 
+    #[cfg(unix)]
     fn spawn(program: &str, args: &[&str]) -> std::process::Child {
         Command::new(program)
             .args(args)

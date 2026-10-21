@@ -13,6 +13,13 @@ pub fn endpoint_url(endpoints: &[ProviderEndpoint]) -> Option<String> {
     endpoints.iter().find_map(|endpoint| endpoint.url.clone())
 }
 
+/// Anthropic SDKs append `/v1/messages`; preserve gateway prefixes while
+/// removing a redundant terminal API version from a shared credential base.
+pub fn anthropic_sdk_base_url(endpoint: &str) -> String {
+    let endpoint = endpoint.trim_end_matches('/');
+    endpoint.strip_suffix("/v1").unwrap_or(endpoint).to_string()
+}
+
 pub fn opencode_config_path(home: &Path) -> PathBuf {
     let directory = xdg_directory(home, "XDG_CONFIG_HOME", ".config").join("opencode");
     ["opencode.jsonc", "opencode.json", "config.json"]
@@ -31,6 +38,31 @@ pub fn xdg_config_home(home: &Path) -> PathBuf {
 }
 pub fn xdg_data_home(home: &Path) -> PathBuf {
     xdg_directory(home, "XDG_DATA_HOME", ".local/share")
+}
+
+pub fn grok_config_dir(home: &Path) -> PathBuf {
+    tool_directory(home, "GROK_HOME", ".grok")
+}
+
+pub fn pi_config_dir(home: &Path) -> PathBuf {
+    tool_directory(home, "PI_CODING_AGENT_DIR", ".pi/agent")
+}
+
+fn tool_directory(home: &Path, variable: &str, fallback: &str) -> PathBuf {
+    std::env::var_os(variable)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            let path = PathBuf::from(value);
+            if path == Path::new("~") {
+                home.to_path_buf()
+            } else if let Ok(relative) = path.strip_prefix("~") {
+                home.join(relative)
+            } else {
+                path
+            }
+        })
+        .filter(|path| path.is_absolute())
+        .unwrap_or_else(|| home.join(fallback))
 }
 
 fn xdg_directory(home: &Path, variable: &str, fallback: &str) -> PathBuf {
@@ -313,6 +345,20 @@ pub(crate) fn dotenv_quote(value: &str) -> String {
     format!("\"{escaped}\"")
 }
 
+/// Native Windows agents resolve their profile through USERPROFILE, which may
+/// differ from a HOME inherited from Git Bash or MSYS.
+pub fn user_home_dir() -> Option<PathBuf> {
+    let keys = if cfg!(windows) {
+        ["USERPROFILE", "HOME"]
+    } else {
+        ["HOME", "USERPROFILE"]
+    };
+    keys.into_iter()
+        .filter_map(std::env::var_os)
+        .map(PathBuf::from)
+        .find(|p| p.is_absolute())
+}
+
 #[cfg(test)]
 mod diff_tests {
     #[test]
@@ -335,8 +381,12 @@ mod diff_tests {
 
     #[test]
     fn inherited_xdg_defaults_follow_an_independent_home() {
-        let process_home = Path::new("/process-home");
-        let independent = Path::new("/independent-home");
+        let root = tempfile::tempdir().unwrap();
+        let process_home_path = root.path().join("process-home");
+        let independent_path = root.path().join("independent-home");
+        let custom_path = root.path().join("custom-xdg");
+        let process_home = process_home_path.as_path();
+        let independent = independent_path.as_path();
         for fallback in [".config", ".local/share"] {
             let default = process_home.join(fallback);
             assert_eq!(
@@ -350,11 +400,11 @@ mod diff_tests {
             assert_eq!(
                 resolve_xdg_directory(
                     independent,
-                    Some(Path::new("/custom-xdg")),
+                    Some(&custom_path),
                     Some(process_home),
                     fallback
                 ),
-                Path::new("/custom-xdg")
+                custom_path
             );
         }
     }
