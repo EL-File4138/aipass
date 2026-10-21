@@ -18,7 +18,7 @@ logging -> acquire desktop singleton -> build Tauri/plugins -> setup
         -> ensure agent/autostart asynchronously -> frontend reports ready -> reveal target
 ```
 
-`AIPASS_WINDOW_TARGET` selects `main`, `server`, or `tray`. The initial window is intentionally hidden in Tauri configuration and is revealed after the frontend calls the desktop-ready command. Do not make agent readiness block Tauri setup or window creation.
+`AIPASS_WINDOW_TARGET` selects `main`, `server`, or `tray`. Windows desktop login entries use `--login-start --vault <absolute path> --login-version <version>`; `launch_options` sets the equivalent environment before threads start. The current version starts tray; replayed older or legacy login arguments reveal main. An explicit target overrides login mode. This also handles NSIS/Explorer updater restarts that replay argv but lose inherited environment. The initial window is intentionally hidden in Tauri configuration and is revealed after the frontend calls the desktop-ready command. Do not make agent readiness block Tauri setup or window creation.
 
 The singleton implementation distinguishes release, packaged-development, and live-development instances. Keep their socket names and autostart behavior separate so a dev session does not replace a release tray process.
 
@@ -51,6 +51,46 @@ Bundle updates normally replace binaries at stable paths inside `AIPass.app`. If
 During an update, suspend tray supervision without terminating the desktop that owns the installer. `suspend_tray_autostart` clears the kill-child flag and unloads a tray LaunchAgent with `AbandonProcessGroup`; stop/uninstall operations also send Quit and must never be used here. Failed installs restore supervision while keeping the window and tray alive. A stuck old installer can retain its cached package and repeat the exit on every launch.
 
 ## IPC And Paths
+
+### Windows login and process ownership
+
+`startup.rs` owns desktop readiness and login registration. Packaged Windows
+release builds register a per-vault `REG_SZ` value in HKCU's `Run` key. This
+starts the hidden tray at user login, and the desktop starts its sibling Agent.
+Windows development builds do not overwrite release login entries, including
+explicit repair. Tray repair
+does not install an SCM service or request elevation.
+
+Standalone `aipass agent install/start/stop/uninstall` uses a separate per-user
+Agent Run entry. The headless Agent uses the Windows GUI subsystem and
+`--login-start` suppresses a desktop companion. Run entries have no restart
+supervisor: explicit quit and updater shutdown do not immediately respawn them.
+The legacy explicit SCM APIs remain separate and require service permissions.
+
+The Windows updater exits from inside the pinned Tauri plugin's install call.
+Use its before-exit callback for owned clipboard cleanup; do not rely on code
+after install or a Tauri exit event. Preserve the versioned login argv behavior
+when changing updater launch handling. Signed Windows upgrade/restart still
+requires separate native acceptance.
+
+Keep Run values literal, idempotent, correctly quoted and within the documented
+260 UTF-16-unit limit. Respect Windows-disabled startup state; normal ensure
+must not rewrite an unchanged entry or alter StartupApproved. The NSIS cleanup
+entry point quits only a desktop whose retained process handle resolves to the
+exact uninstalling executable, removes matching login entries for custom vaults,
+and shuts down their authenticated Agents. Do not remove another installation's
+entries or kill by executable basename.
+
+Windows listeners hold an exclusive profile-local file for their entire
+lifetime: named pipes themselves permit multiple server owners. Shutdown retains
+the process handle from the same authenticated request and waits for actual
+process exit. Never open and discard a second pipe merely to inspect its peer.
+Agent/desktop background spawns use CreateProcess with handle inheritance
+disabled; null stdio alone does not prevent inheriting Node/browser pipe handles.
+
+Canonicalize the longest existing Windows ancestor and normalize verbatim drive
+and UNC prefixes before hashing vault paths. Creating a new nested vault must
+not change the namespace used by its running Agent and clients.
 
 - Vault canonicalization, namespace, service name, socket, and runtime token paths are centralized in `crates/aipass-agent/src/paths.rs` and `ipc.rs`.
 - `AIPASS_VAULT_DIR` overrides the desktop vault location.

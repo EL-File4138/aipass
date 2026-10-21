@@ -148,6 +148,13 @@ Newest entries last within each section.
 - **Guardrail**: distinguish protocol compatibility from configuration prerequisites; treat whitespace-only models as missing in the UI and writer. Cover both OpenAI backends, catalog visibility and disabled controls.
 - **Watch points**: provider and route quick integration, `integrations.test.ts`, `ProviderDetailPane.test.ts`, and Grok config writer tests.
 
+### Quick integration and Agent management must share installed-tool capabilities
+- **Symptom**: quick integration listed uninstalled tools and omitted Kimi Code, Zed, DeepSeek Harness and Antigravity CLI.
+- **Root cause**: `IntegrationCard.svelte` sorted missing tools instead of filtering; configuration-directory presence was treated as installation, and the Rust catalog/writers contained only seven targets.
+- **Fix**: share `installedIntegrationTools` between both entry points; add typed targets, executable discovery, credential readers and Rust writers. Group each new writer's backups in one discoverable directory so rollback restores every file across directories.
+- **Guardrail**: test no detections, stale configuration without a binary, refresh, model prerequisites, every supported proxy protocol, and native-only rejection. Preserve source credentials and fingerprint all affected files before managed writes. Redact YAML refs and grant records before diffs; quote sourced shell values literally. Separate public config writers from UI-only BYOK guides, preserve account/edition limits, and never report a guide as an automatic switch. Detect editor extensions through their vendor manifest and installed entry point. Require the matching host IDE, reject obsolete extensions and dangling npm shims, and require Cursor Local itself. Recheck installation in the Rust write entry point. Raise the Agent protocol when adding tool IDs or write guarantees that older residents cannot implement. Generate shell helpers for the native OS, respect Windows USERPROFILE/APPDATA, and test actual PowerShell execution with non-ASCII paths and metacharacters.
+- **Watch points**: `integrations`, `IntegrationCard`, `AgentManagementPage`, protocol/Tauri/CLI target mappings, `additional_tools`, `tool_credentials::additional`, backup grouping and `docs/agent-integrations.md`.
+
 ### Local diagnostics stopped at rotation limits and runtime boundaries
 - **Symptom**: component logs stopped after reaching the daily size cap; proxy failures disappeared after stopping/restarting; failed probes and sync could look successful at the IPC layer.
 - **Root cause**: `logging.rs` returned on overflow, `proxy::RuntimeStats` retained only in-memory errors, and request logging relied on transport success and serialized requests to discover their event names.
@@ -1096,6 +1103,22 @@ Newest entries last within each section.
 - **Guardrail**: Keep Bash/Read/Write off. A caller function named WebSearch grants no native capability. Honor disabled/forced caller tools, preserve account identity, bound hidden search rounds, and reject unsupported search constraints. Run `cargo test -p aipass-agent claude_bridge` and `cargo test -p aipass-proxy search`.
 - **Watch points**: `claude_bridge/{native_tools,stream}`, proxy `search/{wire,gateway,history,mcp}`, HTTP and adapted WebSocket forwarding, configuration refresh and vault lock.
 
+## Tool integration
+
+### Cursor IDE, regular CLI and Local runtime have different BYOK contracts
+- **Symptom**: Cursor Local's Anthropic integration requested `/v1/messages/messages`; config-only tests passed while the official runtime failed the endpoint contract.
+- **Root cause**: `plan.rs::cursor_local_endpoint` and `server/tools.rs::proxy_endpoint_for_tool` passed a full Messages URL to a runtime that appends `/messages`. Ordinary Anthropic model catalogs also lack Local's `api_types` discovery extension.
+- **Fix**: Use a versioned base for Local proxy routes, rely on AIPass `/models` protocol metadata, and offer direct Local integration only for OpenAI-compatible credentials. Keep the writer in `plan/cursor.rs`.
+- **Guardrail**: Distinguish IDE BYOK, Cursor account API keys and the separately distributed Local executable. Verify the actual model-request URL, authentication, streamed output and process exit with the official binary. Do not infer runtime or Linux success from generated text or fixture CLI imports.
+- **Watch points**: desktop integration availability, Rust direct/proxy validation, config writer and credential reader, `tests/unix_integrations.rs`, `scripts/verify-cursor-local.mjs`, official runtime version and `/models` `api_types`.
+
+### Vendor configuration text is not an executable integration contract
+- **Symptom**: Pi 0.73.1 sent `$NAME` as a literal key; Muse 1.4.11-R6667.1 exited on a missing `/muse-code/models` even with a configured model. Pi also requested `/v1/v1/messages`; Zed, Kimi and Harness use SDKs that append the version themselves. Grok and Pi wrote to the wrong directory when their home overrides were set.
+- **Root cause**: newer source documentation was treated as the released Pi contract; generic Responses support was treated as sufficient for Muse; readers, writers and discovery hardcoded separate paths.
+- **Fix**: use Pi's cross-version `!command` credential reference; restrict Muse quick integration to its native Meta endpoint and reject local routes until its catalog protocol exists; share Grok/Pi directory resolution across detection, writing and outgoing imports; normalize versioned Anthropic bases in SDK writers while preserving gateway prefixes.
+- **Guardrail**: test published vendor code/binaries, not just generated JSON. Skip command substitutions before parsing helper values, including guarded `|| return` assignments; do not execute them during credential import. Execute helpers under a clean shell, test home overrides and rollback of every auxiliary file, and keep manual editor guides distinct from automatic writes. Require explicit auth-header handling: bearer-only Anthropic gateways use a proxy unless the writer supports bearer tokens. Protocol availability must agree in UI and Rust; Qoder desktop now supports all three proxy APIs.
+- **Watch points**: `plan.rs`, `utils.rs`, credential readers, `byok_tools.rs`, desktop integration catalog, `server/tools.rs`, `tests/unix_integrations.rs`; Linux CI results apply only to their tested source SHA.
+
 ## Credential clipboard
 
 ### Frontend timers and blind clears left credentials exposed or deleted user content
@@ -1104,3 +1127,49 @@ Newest entries last within each section.
 - **Fix**: native `secret_clipboard` owns clipboard lifetime, bounded retry backoff, SHA-256 ownership digests instead of retained plaintext, confirmation before API-key reads, and lock/exit invalidation. All desktop sensitive-copy entry points reuse it.
 - **Guardrail**: clear only after a successful matching read; preserve newer clipboard content, keep previous cleanup after a failed copy, and invalidate pending confirmation/Agent responses on lock. Never abandon cleanup after transient OS failures; retain only a digest and retry with bounded backoff until content changes or clearing succeeds. Cover these paths in `secret_clipboard/tests.rs`.
 - **Watch points**: provider API keys, recovery kit, server tokens and panel access codes; UI preferences defaults/migration; native clipboard-history exclusion hints are best effort.
+
+
+### Windows compatibility includes IPC, serialized paths and script launchers
+- **Symptom**: Windows clients rejected every Agent request while Unix tests passed; portable backups used host-specific path separators; Node build helpers could not execute pnpm.cmd; Native Messaging registration polluted JSON stdout.
+- **Root cause**: Interprocess named pipes explicitly reject socket timeout APIs. PathBuf serde retained Windows separators. Node execFile cannot launch CMD shims. reg.exe was inherited onto CLI stdout. The desktop singleton also used a machine-wide fixed pipe name and default pipe ACLs.
+- **Fix**: Use nonblocking deadline framing for Windows clients and the desktop singleton, explicit user-SID pipe ownership/ACLs, client-side owner verification before credentials are sent, and per-profile singleton names. Canonicalize encrypted export/sync metadata to slash-separated relative paths and reject both styles of traversal on every OS. Invoke pnpm's JavaScript entry point or native executable without a shell, and capture registry output. A standalone Windows CLI may launch its sibling Agent without SCM registration. Refresh copied CLI companions together. Direct Agents receive Windows session/power notifications and query session-local input idle time. Empty nonblocking pipe reads must use PeekNamedPipe because interprocess/std map ERROR_NO_DATA to EOF; retry zero-byte writes as backpressure. Windows cancellation terminates vendor shim descendants. Development process cleanup matches exact development paths, never every production process with the same basename.
+- **Guardrail**: Require native Windows workspace tests plus an installed NSIS main/tray/CLI/Native Messaging/uninstall smoke. Keep installer registration tests on disposable runners; preserve existing Native Messaging registry values in standalone CLI tests. macOS tests and PowerShell syntax checks are not Windows runtime evidence. Signed upgrade/restart, multi-user pipe ACL denial and real lock/suspend events remain separate native acceptance checks.
+- **Watch points**: ipc/framing.rs, client.rs, singleton.rs, power/windows.rs, storage/portable_path.rs, VaultExportFile, pnpm-command.mjs, verify-windows-runtime.mjs and Windows CI.
+
+### Windows login startup needs real per-user registration and stable namespaces
+- **Symptom**: Windows tray login APIs always returned unregistered; normal repair required SCM privileges. A new nested vault could hash to a different pipe after its directory was created. CrossOver requests above the default pipe buffer never progressed.
+- **Root cause**: `autostart/windows.rs` was a tray stub and delegated Agent autostart to SCM. `paths.rs` mixed ordinary nonexistent paths with verbatim canonical Windows paths. PIPE_NOWAIT could return zero for an oversized write forever, so retrying the same payload did not help. Login argv also survived updater restart.
+- **Fix**: Register quoted literal HKCU Run entries, keep release/dev separate even during repair, launch the hidden tray/GUI-subsystem Agent without elevation, and clean only the uninstalling executable's entries and processes. Normalize Windows ancestors/prefixes before hashing. Fragment writes after zero progress while retaining deadlines and auth. Hold an exclusive profile-local listener file because named-pipe creation permits competing servers. Capture shutdown's process handle on its authenticated connection, wait for actual exit, and disable inherited handles on background spawns; null stdio alone leaked Node's output handles into the resident Agent. Version desktop login argv so a new executable reveals main even when NSIS/Explorer loses the explicit main-mode environment. Use the Windows updater's before-exit hook because install exits internally. Split desktop startup and tray lifecycle ownership out of the oversized roots.
+- **Guardrail**: Test Run registry idempotence/removal, Unicode and metacharacter argv, pre/post-creation namespace equality, bidirectional frames above pipe-buffer size, CLI Agent install/stop/start/uninstall, close/reopen, quit and both login/manual update restart. Never count CrossOver as native Windows boot, Explorer, user isolation or lock/suspend acceptance. Preserve binary hashes and failure logs.
+- **Watch points**: autostart/windows*, paths.rs, ipc/framing.rs, Agent main.rs, desktop launch_options/startup/tray_lifecycle/singleton/updates, NSIS hooks and verify-cli-runtime.mjs.
+
+
+### Local listener discovery must not consume model fixture requests
+- **Symptom**: Credential-reload tests sporadically returned 502 and image tests captured `/` instead of `/v1/images/edits`.
+- **Evidence**: A disposable loopback observer received `GET / HTTP/1.1` with `User-Agent: LocalStack/1.0` from the running local service scanner.
+- **Fix**: Reuse probe-aware accepts in Agent proxy fixtures and keep unauthenticated root discovery out of image fixture request counters. Preserve assertions for authenticated root and every API-path request.
+- **Guardrail**: Inject discovery before the intended request in a regression test and prove authenticated/API traffic is still captured. Do not stop unrelated apps, retry until green, or relax production proxy behavior to repair test isolation.
+- **Watch points**: proxy_service/tests.rs, proxy_service/tests/lifecycle.rs, proxy_service/tests/routing.rs and proxy/tests/image_api.rs.
+
+
+### Extension detection must pair each extension with its own host
+- **Symptom**: retained Cline files from VS Code Insiders appeared installed when only stable VS Code remained, or a sandbox extension was paired with a native host.
+- **Root cause**: `detect.rs` checked any VS Code host separately from any Cline extension directory.
+- **Fix**: pair Stable, Insiders and Flatpak extension roots with their respective host; exclude Flatpak wrappers from native host discovery.
+- **Guardrail**: test a real extension entry point with only a different host edition installed, no hosts, obsolete metadata, and the matching host. Never use settings or extension leftovers as installation evidence.
+- **Watch points**: config-writers `detect.rs`, `installed_apps.rs`, quick integration and Agent management discovery.
+
+### New Unix vaults need stable canonical names before creation
+- **Symptom**: first launch through a symlinked directory could start an Agent on a pipe/socket name that later clients no longer used.
+- **Root cause**: `paths.rs::canonical_unix_vault` canonicalized only the immediate parent, falling back to unresolved aliases when multiple parent directories were missing.
+- **Fix**: canonicalize the longest existing ancestor, resolve only the missing suffix, and return filesystem errors rather than silently inventing another namespace.
+- **Guardrail**: compare namespaces before/after creating a nested vault under a symlink; preserve existing symlink-plus-parent semantics and normalize parent components only in the missing suffix. Exercise both first launch and reconnection.
+- **Watch points**: canonical_vault_dir, namespace_for_vault_dir, AgentClient configuration, Agent launch and service registration.
+
+
+### Uninstall cannot decode an older status as an absent Agent
+- **Symptom**: Windows stop/uninstall skipped an older resident after a protocol bump, leaving the executable running during cleanup.
+- **Root cause**: `autostart/windows.rs::stop_agent` used a typed SessionStatus request; its protocol-mismatch error was treated as absence.
+- **Fix**: inspect the raw response version and reuse the authenticated older-Agent retirement handshake before waiting for exit.
+- **Guardrail**: run a real named-pipe regression that returns an older status, verifies the same token on legacy shutdown and confirms cleanup completes. Restrict legacy retries to shutdown, never credential or provider mutations.
+- **Watch points**: autostart/windows.rs, AgentClient::shutdown_older_agent, Agent protocol changes, NSIS cleanup.

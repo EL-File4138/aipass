@@ -53,7 +53,7 @@
 - Archive, restore, permanent delete.
 - Settings drawer with auto-lock, clipboard clear seconds, master password change, epoch rotation, encrypted vault export/import, sync, device list/revoke, safe tool config modes, and native-host status/repair.
 - Local/iCloud folder sync and WebDAV sync UI.
-- Agent management above Local Proxy, with installed/configured tool discovery, current credential summaries, compatible per-secret choices and a guarded import-before-switch confirmation. Supported tool writers are Codex, Claude Code, Gemini CLI, OpenCode, Grok Build, Pi and Cursor Agent Local; direct subscription switching is available for Codex and Claude Code. Rust owns encrypted original snapshots and non-overwriting vault imports; unsupported or failed imports stop the switch.
+- Agent management above Local Proxy, with installed/configured tool discovery, current credential summaries, compatible per-secret choices and a guarded import-before-switch confirmation. Supported tool writers are Codex, Claude Code, Gemini CLI, OpenCode, Grok Build, Pi, Cursor Agent Local, Kimi Code, Zed, DeepSeek Harness, Antigravity CLI, Muse Code, Hermes Agent, Command Code, CodeBuddy and WorkBuddy, with guided BYOK setup for VS Code Chat, Cline, TRAE, Qoder, ZCode and JetBrains Copilot (see `docs/agent-integrations.md` for protocol and launch requirements); direct subscription switching is available for Codex and Claude Code. Rust owns encrypted original snapshots and non-overwriting vault imports; unsupported or failed imports stop the switch.
 
 ## Implemented CLI Details
 
@@ -122,7 +122,7 @@ Additional CLI smoke covered:
 The repository now has CI and release workflow coverage for the automatable release artifacts:
 
 - Required CI runs Rust fmt/clippy/test/build and Node license audit/lint/typecheck/test/build.
-- The `Release` workflow builds desktop bundles on macOS/Linux/Windows.
+- The `Release` workflow builds desktop bundles on macOS/Linux. Windows NSIS build/install/startup/uninstall coverage is configured in branch CI; Windows desktop publication and production signing remain pending.
 - The `Release` workflow packages standalone CLI and native-host binaries on macOS/Linux/Windows.
 - The `Release` workflow produces `aipass-edge-extension.zip` for Microsoft Edge Add-ons submission (the same MV3 package can be submitted to Chrome Web Store).
 - Edge Add-ons listing copy, privacy disclosures, certification notes, and image assets live under `apps/extension/store/`.
