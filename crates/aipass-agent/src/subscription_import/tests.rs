@@ -892,3 +892,97 @@ fn legacy_devin_import_upgrades_the_same_source_without_changing_entry_ids() {
     assert_eq!(repeated.status, SubscriptionImportStatus::Existing);
     assert_eq!(repeated.entry_id, Some(id));
 }
+
+#[test]
+fn discovery_retains_scoped_and_local_custom_sources_without_borrowing_another_vaults_grant() {
+    let temp = tempfile::tempdir().unwrap();
+    let password = SecretString::new("fixture-password");
+    let vault = aipass_vault::Vault::create(temp.path().join("a"), &password)
+        .unwrap()
+        .vault;
+    let device = crate::subscriptions::cli_accounts::device().unwrap();
+    let devin_source = source("devin", &temp.path().join("custom-devin"), "");
+    let workbuddy_source = source("workbuddy", &temp.path().join("custom-workbuddy"), "");
+    let devin = crate::subscriptions::devin::identity::resolved(
+        &json!({"type":"api","key":"fixture-key","nativeSource":devin_source,"nativeDevice":device}),
+        &json!({"userStatus":{"userId":"alice","teamId":"team-a","planStatus":{"planInfo":{"devinInfo":{"orgId":"org-a"}}}}}),
+    ).unwrap();
+    crate::community::register_cli(&vault, "devin", devin).unwrap();
+    let local = crate::community::register_cli(&vault, "workbuddy",
+        json!({"type":"oauth","accountId":"alice","access":"fixture-access","refresh":"fixture-refresh","nativeSource":workbuddy_source,"nativeDevice":device})).unwrap();
+    let found = sources::snapshot(&vault).unwrap();
+    assert!(found.sources.iter().any(|s| s == &devin_source));
+    assert!(found.sources.iter().any(|s| s == &workbuddy_source));
+    assert!(found.revisions.contains_key(&local));
+    let destination = temp.path().join("b");
+    aipass_vault::VaultSyncSnapshot::parse(
+        &vault.export_sync_snapshot_with_parents(Vec::new()).unwrap(),
+    )
+    .unwrap()
+    .bootstrap(&destination)
+    .unwrap();
+    let restored = aipass_vault::Vault::open(&destination, &password).unwrap();
+    let found = sources::snapshot(&restored).unwrap();
+    assert!(found.sources.iter().any(|s| s == &devin_source));
+    assert!(!found.sources.iter().any(|s| s == &workbuddy_source));
+}
+
+#[test]
+fn imports_reject_late_local_reconnects_and_report_local_binding_changes() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = state(&temp.path().join("vault"));
+    let source = source("workbuddy", &temp.path().join("custom"), "");
+    let device = crate::subscriptions::cli_accounts::device().unwrap();
+    let auth = |token: &str, native: bool| {
+        let mut value = json!({"type":"oauth","accountId":"alice","access":token,"refresh":format!("{token}-refresh")});
+        if native {
+            value["nativeDevice"] = json!(device);
+            value["nativeSource"] = json!(source);
+        }
+        value
+    };
+    let id = crate::session::with_vault(&state, false, |v| {
+        crate::community::register_cli(v, "workbuddy", auth("first", false))
+    })
+    .unwrap();
+    let mut revisions = crate::session::with_vault(&state, false, sources::snapshot)
+        .unwrap()
+        .revisions;
+    let before = summaries(&state).remove(0).updated_at;
+    crate::session::with_vault(&state, false, |v| {
+        crate::community::bind_cli(v, id, "workbuddy", auth("reconnected", false))
+    })
+    .unwrap();
+    assert_eq!(summaries(&state).remove(0).updated_at, before);
+    let result = persist::commit(
+        &state,
+        session_id(&state).unwrap(),
+        source.clone(),
+        reader::Account::Auth(SensitiveString::new(auth("stale-import", true).to_string())),
+        &mut revisions,
+        &mut HashMap::new(),
+    );
+    assert_eq!(result.error_code.as_deref(), Some("account_changed"));
+    crate::session::with_vault(&state, false, |v| {
+        let marker = v.reveal_secret(id).map_err(map_vault_error)?;
+        assert!(crate::community::read(v, id, &marker)?
+            .expose()
+            .contains("reconnected-refresh"));
+        Ok(())
+    })
+    .unwrap();
+    let mut revisions = crate::session::with_vault(&state, false, sources::snapshot)
+        .unwrap()
+        .revisions;
+    let result = persist::commit(
+        &state,
+        session_id(&state).unwrap(),
+        source.clone(),
+        reader::Account::Auth(SensitiveString::new(auth("fresh-import", true).to_string())),
+        &mut revisions,
+        &mut HashMap::new(),
+    );
+    assert_eq!(result.status, SubscriptionImportStatus::Updated);
+    assert_eq!(result.entry_id, Some(id));
+    assert_eq!(summaries(&state).remove(0).updated_at, before);
+}

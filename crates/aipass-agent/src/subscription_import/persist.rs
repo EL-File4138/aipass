@@ -6,7 +6,7 @@ pub(super) fn commit(
     session: Uuid,
     source: SubscriptionImportSource,
     account: Account,
-    revisions: &mut HashMap<Uuid, time::OffsetDateTime>,
+    revisions: &mut HashMap<Uuid, sources::Revision>,
     seen: &mut HashMap<(String, String), Uuid>,
 ) -> SubscriptionImportResult {
     let identity = match &account {
@@ -62,7 +62,7 @@ pub(super) fn commit(
             return Ok((*id, SubscriptionImportStatus::Existing));
         }
         if let Some(entry) = existing {
-            if revisions.get(&entry.id) != Some(&entry.updated_at) {
+            if revisions.get(&entry.id) != Some(&sources::Revision::read(&info.vault, entry)?) {
                 return Err(ServiceError::new(
                     AgentErrorCode::Conflict,
                     "account changed during discovery",
@@ -95,12 +95,13 @@ pub(super) fn commit(
             .into_iter()
             .find(|e| e.id == id)
             .ok_or_else(|| validation("account commit missing"))?;
+        let revision = sources::Revision::read(&info.vault, &updated)?;
         let status = match existing {
             None => SubscriptionImportStatus::Imported,
-            Some(old) if old.updated_at == updated.updated_at => SubscriptionImportStatus::Existing,
+            Some(_) if revisions.get(&id) == Some(&revision) => SubscriptionImportStatus::Existing,
             _ => SubscriptionImportStatus::Updated,
         };
-        revisions.insert(id, updated.updated_at);
+        revisions.insert(id, revision);
         seen.insert(key, id);
         let mut proxy = state.proxy.lock().unwrap_or_else(|p| p.into_inner());
         if proxy.refresh_provider_credentials(&info.vault, id).is_err() {

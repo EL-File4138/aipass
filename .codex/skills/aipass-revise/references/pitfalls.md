@@ -1055,6 +1055,13 @@ Newest entries last within each section.
 - **Guardrail**: preserve entry/secret IDs and routes, reject stale writes and organization changes, and test same-source migration plus repeat import. Missing scope must not deduplicate by email. Never relax ordinary save ownership checks to make a migration pass.
 - **Watch points**: Devin identity/login/fresh/quota, `community/{account,scope}`, subscription import persistence, vault subscription bindings, active proxy generation and older-reader compatibility.
 
+### Import discovery must track device-local authorization revisions
+- **Symptom**: custom Devin and managed OAuth sources vanished from rescans; an in-flight import could overwrite a newer local reconnect and report its local change as unchanged.
+- **Root cause**: `subscription_import/sources.rs` read only v1 extensions; `persist.rs` compared only synchronized entry timestamps, which local reconnect deliberately preserves.
+- **Fix**: resolve stored v2 and this vault's local v3 bindings without network access, and compare a digest of the current binding as well as the entry timestamp before committing. Use the same revision to classify updates.
+- **Guardrail**: preserve custom-source discovery through format upgrades, require this device's source authority, reject late local reconnect/refresh writes, and test restored vaults without borrowed local grants. Both regressions must fail against the old implementation.
+- **Watch points**: import snapshots, CAS persistence, encrypted local bindings, native source references and import result status.
+
 ### Packaged subscription fixtures must follow the current IPC and identity contract
 - **Symptom**: Linux packaged runtime rejected capability probes after a protocol upgrade; synthetic Devin imports could no longer prove their organization.
 - **Root cause**: `scripts/verify-linux-native-clis.mjs` hardcoded protocol 18 and assumed a JWT alone established Devin ownership.

@@ -70,7 +70,44 @@ pub(super) fn normalize(
 
 pub(super) struct Snapshot {
     pub sources: Vec<SubscriptionImportSource>,
-    pub revisions: HashMap<Uuid, time::OffsetDateTime>,
+    pub revisions: HashMap<Uuid, Revision>,
+}
+
+#[derive(PartialEq, Eq, Clone)]
+pub(super) struct Revision {
+    updated_at: time::OffsetDateTime,
+    runtime: Option<[u8; 32]>,
+}
+impl Revision {
+    pub(super) fn read(
+        vault: &aipass_vault::Vault,
+        entry: &aipass_vault::EntrySummary,
+    ) -> ServiceResult<Self> {
+        use sha2::{Digest, Sha256};
+        Ok(Self {
+            updated_at: entry.updated_at,
+            // Local reconnect/rotation intentionally leaves synchronized entry
+            // timestamps unchanged. Still reject an import captured before it.
+            runtime: community_binding(vault, entry.id)?
+                .map(|raw| Sha256::digest(raw.expose().as_bytes()).into()),
+        })
+    }
+}
+fn community_binding(
+    vault: &aipass_vault::Vault,
+    id: Uuid,
+) -> ServiceResult<Option<aipass_crypto::SecretString>> {
+    crate::community::stored(vault, id)?
+        .map(|raw| {
+            let marker = vault.reveal_secret(id).map_err(map_vault_error)?;
+            // Hydrate this device's v3 binding without network access. A legacy
+            // grant can still identify a source for explicit import; an unbound
+            // v3 descriptor contains no device/source authority.
+            Ok(crate::community::read(vault, id, &marker)
+                .map(|live| aipass_crypto::SecretString::new(live.expose()))
+                .unwrap_or(raw))
+        })
+        .transpose()
 }
 
 pub(super) fn snapshot(vault: &aipass_vault::Vault) -> ServiceResult<Snapshot> {
@@ -78,20 +115,21 @@ pub(super) fn snapshot(vault: &aipass_vault::Vault) -> ServiceResult<Snapshot> {
     let mut revisions = HashMap::new();
     let device = crate::subscriptions::cli_accounts::device().map_err(validation)?;
     for entry in vault.list_provider_summaries().map_err(map_vault_error)? {
-        revisions.insert(entry.id, entry.updated_at);
+        revisions.insert(entry.id, Revision::read(vault, &entry)?);
         if entry.archived_at.is_some() {
             continue;
         }
-        for key in ["claude_cli_home", "community_account_v1"] {
-            if let Some(raw) = vault
-                .provider_runtime_extension(entry.id, key)
-                .map_err(map_vault_error)?
-            {
+        let claude = vault
+            .provider_runtime_extension(entry.id, "claude_cli_home")
+            .map_err(map_vault_error)?;
+        let community = community_binding(vault, entry.id)?;
+        for (raw, wrapped) in [(claude, false), (community, true)] {
+            if let Some(raw) = raw {
                 let mut value = reader::PrivateAuth(
                     serde_json::from_str(raw.expose())
                         .map_err(|_| validation("invalid account binding"))?,
                 );
-                let auth = reader::PrivateAuth(if key == "community_account_v1" {
+                let auth = reader::PrivateAuth(if wrapped {
                     serde_json::from_str(value.0["auth"].as_str().unwrap_or("null"))
                         .map_err(|_| validation("invalid account reference"))?
                 } else {
