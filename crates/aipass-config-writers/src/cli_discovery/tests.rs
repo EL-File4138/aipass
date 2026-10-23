@@ -207,9 +207,11 @@ fn npm_grok_and_command_code_shims_require_existing_vendor_entry_points() {
         assert!(tool_executables_in(&[root.path().into()], &tool, None).is_empty());
         std::fs::create_dir_all(root.path().join(&target).parent().unwrap()).unwrap();
         std::fs::write(root.path().join(&target), "fixture").unwrap();
+        let found = tool_executables_in(&[root.path().into()], &tool, None);
+        assert_eq!(found.len(), 1);
         assert_eq!(
-            tool_executables_in(&[root.path().into()], &tool, None),
-            vec![path]
+            found[0].canonicalize().unwrap(),
+            path.canonicalize().unwrap()
         );
     }
 }

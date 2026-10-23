@@ -58,7 +58,7 @@ fn kimi_preserves_preferences_and_selects_a_protocol_specific_model() {
     assert!(!plan.preview.contains("old-private-key"));
     assert!(plan.extra_writes[0]
         .content
-        .contains("--secret-id 'selected-key'"));
+        .contains(&entry.credential_command()));
     assert!(std::fs::read_to_string(target)
         .unwrap()
         .contains("telemetry = false"));
@@ -69,6 +69,7 @@ fn zed_keeps_keys_out_of_settings_and_removes_the_previous_protocol_slot() {
     let dir = tempdir().unwrap();
     let entry = entry();
     let target = zed_config_path(dir.path());
+    assert!(target.starts_with(dir.path()));
     write(
         &target,
         r#"{"theme":"Original","language_models":{"anthropic_compatible":{"aipass":{"api_url":"https://old.test"},"keep":{"api_url":"https://keep.test"}}}}"#,
@@ -97,7 +98,7 @@ fn zed_keeps_keys_out_of_settings_and_removes_the_previous_protocol_slot() {
     assert!(!content.contains("private-fixture-key"));
     assert!(plan.extra_writes[0]
         .content
-        .contains("export AIPASS_API_KEY="));
+        .contains(&env_literal("AIPASS_API_KEY", "private-fixture-key")));
 }
 
 #[test]
@@ -192,7 +193,7 @@ fn antigravity_selects_gemini_and_requires_a_sourced_environment() {
     assert_eq!(root["theme"], "dark");
     assert!(plan.extra_writes[0]
         .content
-        .contains("GEMINI_API_KEY=\"$(aipass get"));
+        .contains(&crate::env_helper::env_credential(&entry, "GEMINI_API_KEY")));
     assert!(plan.extra_writes[0].content.contains("https://gemini.test"));
     assert!(!plan.extra_writes[0].content.contains("/v1beta"));
 }
@@ -201,7 +202,9 @@ fn antigravity_selects_gemini_and_requires_a_sourced_environment() {
 fn invalid_existing_configuration_and_missing_models_fail_before_writes() {
     let dir = tempdir().unwrap();
     let mut entry = entry();
-    write(&zed_config_path(dir.path()), "[]");
+    let target = zed_config_path(dir.path());
+    assert!(target.starts_with(dir.path()));
+    write(&target, "[]");
     assert!(plan_additional_tool(dir.path(), ToolId::Zed, &entry, true, None).is_err());
     entry.default_model = Some("  ".into());
     assert!(plan_additional_tool(dir.path(), ToolId::KimiCode, &entry, true, None).is_err());
@@ -225,13 +228,24 @@ fn sourced_environment_treats_shell_metacharacters_as_literal_credentials() {
     let (plan, _) = plan_additional_tool(dir.path(), ToolId::Zed, &entry, true, None).unwrap();
     let helper = &plan.extra_writes[0];
     write(&helper.target_path, &helper.content);
-    let result = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(". \"$1\"; printf '%s' \"$AIPASS_API_KEY\"")
-        .arg("fixture")
-        .arg(&helper.target_path)
-        .output()
-        .unwrap();
+    let result = if cfg!(windows) {
+        std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command"])
+            .arg(format!(
+                ". {}; [Console]::Out.Write($env:AIPASS_API_KEY)",
+                crate::env_helper::shell_quote(helper.target_path.to_str().unwrap())
+            ))
+            .output()
+            .unwrap()
+    } else {
+        std::process::Command::new("sh")
+            .arg("-c")
+            .arg(". \"$1\"; printf '%s' \"$AIPASS_API_KEY\"")
+            .arg("fixture")
+            .arg(&helper.target_path)
+            .output()
+            .unwrap()
+    };
     assert!(result.status.success());
     assert_eq!(String::from_utf8(result.stdout).unwrap(), key);
     assert!(!marker.exists());

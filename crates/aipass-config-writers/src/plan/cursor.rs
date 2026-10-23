@@ -116,7 +116,10 @@ mod tests {
         ] {
             entry.endpoint = Some(base.into());
             let (plan, content) = plan_cursor_local_proxy_plaintext(home.path(), &entry).unwrap();
-            assert!(content.contains("CURSOR_LOCAL_AGENT_BASE_URL='http://127.0.0.1:8787/v1'"));
+            assert!(content.contains(&crate::env_helper::env_literal(
+                "CURSOR_LOCAL_AGENT_BASE_URL",
+                "http://127.0.0.1:8787/v1"
+            )));
             assert!(!plan.preview.contains("cursor-proxy-fixture-key"));
             assert!(content.contains("AIPASS_CURSOR_API_TYPE=anthropic_messages"));
             assert!(plan_cursor_local(home.path(), &entry).is_err());

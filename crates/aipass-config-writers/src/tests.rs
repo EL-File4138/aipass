@@ -1027,9 +1027,18 @@ fn cursor_local_writer_targets_the_official_local_runtime() {
     let mut entry = entry(InterfaceType::OpenAiCompatible, AuthScheme::Bearer);
     entry.endpoint = Some("http://127.0.0.1:8787/v1".to_string());
     let (_plan, content) = plan_cursor_local(dir.path(), &entry).unwrap();
-    assert!(content.contains("CURSOR_LOCAL_AGENT_BASE_URL='http://127.0.0.1:8787/v1'"));
-    assert!(content.contains("CURSOR_LOCAL_AGENT_API_KEY=\"$(aipass get "));
-    assert!(content.contains("CURSOR_ENABLE_AUTHLESS='1'"));
+    assert!(content.contains(&crate::env_helper::env_literal(
+        "CURSOR_LOCAL_AGENT_BASE_URL",
+        "http://127.0.0.1:8787/v1"
+    )));
+    assert!(content.contains(&crate::env_helper::env_credential(
+        &entry,
+        "CURSOR_LOCAL_AGENT_API_KEY"
+    )));
+    assert!(content.contains(&crate::env_helper::env_literal(
+        "CURSOR_ENABLE_AUTHLESS",
+        "1"
+    )));
 }
 
 #[test]
@@ -1039,8 +1048,14 @@ fn cursor_local_plaintext_redacts_api_key_and_accepts_chat_completions() {
     entry.endpoint = Some("http://127.0.0.1:8787/v1".to_string());
     entry.api_key = Some("cursor-local-secret".to_string());
     let (plan, content) = plan_cursor_local_plaintext(dir.path(), &entry).unwrap();
-    assert!(content.contains("CURSOR_LOCAL_AGENT_BASE_URL='http://127.0.0.1:8787/v1'"));
-    assert!(content.contains("CURSOR_LOCAL_AGENT_API_KEY='cursor-local-secret'"));
+    assert!(content.contains(&crate::env_helper::env_literal(
+        "CURSOR_LOCAL_AGENT_BASE_URL",
+        "http://127.0.0.1:8787/v1"
+    )));
+    assert!(content.contains(&crate::env_helper::env_literal(
+        "CURSOR_LOCAL_AGENT_API_KEY",
+        "cursor-local-secret"
+    )));
     assert!(!plan.preview.contains("cursor-local-secret"));
 }
 

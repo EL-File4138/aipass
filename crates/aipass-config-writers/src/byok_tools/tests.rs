@@ -35,7 +35,9 @@ fn muse_pins_response_endpoint_and_keeps_helper_keys_out_of_settings() {
     );
     assert!(!content.contains("private-fixture"));
     assert!(plan.extra_writes[0].content.contains("META_API_KEY"));
-    assert!(plan.extra_writes[0].content.contains("--secret-id 'key'"));
+    assert!(plan.extra_writes[0]
+        .content
+        .contains(&entry.credential_command()));
 }
 
 #[test]
@@ -58,7 +60,9 @@ fn hermes_preserves_preferences_and_selects_exact_api_and_credential() {
     assert_eq!(root["agent"]["max_turns"], 3);
     assert_eq!(root["model"]["api_mode"], "codex_responses");
     assert_eq!(root["model"]["api_key"], "${AIPASS_HERMES_API_KEY}");
-    assert!(plan.extra_writes[0].content.contains("aipass get"));
+    assert!(plan.extra_writes[0]
+        .content
+        .contains(&entry.credential_command()));
 }
 
 #[test]
@@ -81,10 +85,10 @@ fn command_code_uses_credential_helper_and_keeps_native_auth_untouched() {
         .next()
         .unwrap();
     assert_eq!(provider["api"], "openai-responses");
-    assert!(provider["apiKey"]
-        .as_str()
-        .unwrap()
-        .starts_with("!aipass get"));
+    assert_eq!(
+        provider["apiKey"],
+        format!("!{}", entry.credential_command())
+    );
     assert!(!content.contains("private-fixture"));
     assert_eq!(plan.extra_writes.len(), 1);
     assert!(plan.extra_writes[0].target_path.ends_with("settings.json"));
