@@ -37,11 +37,13 @@ pub fn zed_config_path(home: &Path) -> PathBuf {
     }
     #[cfg(windows)]
     {
-        std::env::var_os("APPDATA")
-            .map(PathBuf::from)
-            .filter(|p| p.is_absolute())
-            .unwrap_or_else(|| home.join("AppData/Roaming"))
-            .join("Zed/settings.json")
+        crate::utils::resolve_profile_directory(
+            home,
+            std::env::var_os("APPDATA").map(PathBuf::from).as_deref(),
+            crate::user_home_dir().as_deref(),
+            "AppData/Roaming",
+        )
+        .join("Zed/settings.json")
     }
     #[cfg(not(windows))]
     crate::xdg_config_home(home).join("zed/settings.json")

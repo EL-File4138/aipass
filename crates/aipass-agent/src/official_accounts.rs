@@ -605,9 +605,10 @@ mod tests {
             &vault.reveal_secret(a.entry_id.unwrap()).unwrap(),
         )
         .unwrap();
-        assert!(reference
-            .expose()
-            .contains(&ambient.to_string_lossy().to_string()));
+        let reference: serde_json::Value = serde_json::from_str(reference.expose()).unwrap();
+        let auth: serde_json::Value =
+            serde_json::from_str(reference["auth"].as_str().unwrap()).unwrap();
+        assert_eq!(auth["nativeHome"], ambient.to_str().unwrap());
         let (dir, vault, a) = setup();
         let handoff = dir.path().join("foreign");
         native(&handoff, &a, "workspace-b", "foreign-access");

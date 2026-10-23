@@ -416,11 +416,24 @@ fn tool_configuration_binds_the_selected_key_and_its_overrides() {
     request.mode = ToolConfigMode::Helper;
     let (_, preview_plan, preview_content) = build_tool_config_plan(vault, &request, true).unwrap();
     let files = tool_config_preview_files(&preview_plan, &preview_content);
-    let command = format!("aipass get {id} --secret-id '{second}' --reveal");
+    let command = ToolEntry {
+        id,
+        secret_id: Some(second.clone()),
+        title: entry.title.clone(),
+        provider_id: None,
+        endpoint: None,
+        interface_type: entry.interface_type.clone(),
+        auth_scheme: entry.auth_scheme.clone(),
+        env_key: String::new(),
+        default_model: None,
+        api_key: None,
+        supports_websockets: None,
+    }
+    .credential_command();
     let config: serde_json::Value = serde_json::from_str(&files[0].content).unwrap();
     assert_eq!(config["apiKeyHelper"], command);
     assert_eq!(config["env"]["ANTHROPIC_MODEL"], "fixture-claude");
-    assert!(files[0].diff.contains(&second));
+    assert!(files[0].diff.contains(&command));
     assert!(!files[0].content.contains("fixture-anthropic-key"));
     assert!(!preview_plan.target_path.exists());
     let (_, apply_plan, apply_content) = build_tool_config_plan(vault, &request, false).unwrap();
@@ -475,7 +488,7 @@ fn tool_configuration_binds_the_selected_key_and_its_overrides() {
     let (_, plan, content) = build_tool_config_plan(vault, &request, true).unwrap();
     assert!(content.contains("fixture-claude"));
     let helper = &plan.extra_writes.last().unwrap().content;
-    assert!(helper.contains(&format!("--secret-id '{second}' --reveal")));
+    assert!(helper.contains(&command));
     assert!(!helper.contains("--field api_key"));
     assert!(!helper.contains("fixture-anthropic-key"));
     vault.remove_secret(id, &second).unwrap();

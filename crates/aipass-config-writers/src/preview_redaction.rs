@@ -26,11 +26,42 @@ fn sensitive(key: &str) -> bool {
         || matches!(key.as_str(), "auth" | "key" | "refs" | "records")
 }
 fn helper(key: &str, value: &str) -> bool {
+    use base64::Engine;
     static COMMAND: LazyLock<regex::Regex> = LazyLock::new(|| {
-        regex::Regex::new(r"^aipass get [0-9a-f-]{36}(?: --secret-id '[0-9a-f-]{36}')? --reveal$")
+        regex::Regex::new(r"^aipass get [0-9a-f-]{36}(?: --secret-id '[0-9a-f-]{36}'| --field api_key)? --reveal$")
             .unwrap()
     });
-    key == "apiKeyHelper" && COMMAND.is_match(value)
+    if key != "apiKeyHelper" {
+        return false;
+    }
+    if COMMAND.is_match(value) {
+        return true;
+    }
+    let Some(encoded) =
+        value.strip_prefix("powershell.exe -NoProfile -NonInteractive -EncodedCommand ")
+    else {
+        return false;
+    };
+    if encoded.len() > 2048 {
+        return false;
+    }
+    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded) else {
+        return false;
+    };
+    if bytes.len() % 2 != 0 {
+        return false;
+    }
+    let units = bytes
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect::<Vec<_>>();
+    let Ok(script) = String::from_utf16(&units) else {
+        return false;
+    };
+    script
+        .strip_prefix("$ErrorActionPreference = 'Stop'; & ")
+        .and_then(|s| s.strip_suffix("; exit $LASTEXITCODE"))
+        .is_some_and(|command| COMMAND.is_match(command))
 }
 fn json(value: &mut Value) {
     match value {
@@ -130,6 +161,54 @@ pub fn redact_config(content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_helper_previews_preserve_only_exact_generated_commands() {
+        let entry = crate::ToolEntry {
+            id: uuid::Uuid::new_v4(),
+            secret_id: Some(uuid::Uuid::new_v4().to_string()),
+            title: "fixture".into(),
+            provider_id: None,
+            endpoint: None,
+            interface_type: aipass_provider_registry::InterfaceType::AnthropicMessages,
+            auth_scheme: aipass_provider_registry::AuthScheme::XApiKey,
+            env_key: "API_KEY".into(),
+            default_model: None,
+            api_key: None,
+            supports_websockets: None,
+        };
+        for secret in [None, entry.secret_id.clone()] {
+            let entry = crate::ToolEntry {
+                secret_id: secret,
+                ..entry.clone()
+            };
+            for windows in [false, true] {
+                let command = entry.credential_command_for(windows);
+                let raw = serde_json::json!({"apiKeyHelper":command}).to_string();
+                let preview: Value = serde_json::from_str(&redact_config(&raw)).unwrap();
+                assert_eq!(preview["apiKeyHelper"], command);
+                assert!(!helper(
+                    "apiKeyHelper",
+                    &format!("{command}; echo private-secret")
+                ));
+            }
+        }
+        use base64::Engine;
+        let script = "$ErrorActionPreference = 'Stop'; & echo private-secret; exit $LASTEXITCODE";
+        let encoded = base64::engine::general_purpose::STANDARD.encode(
+            script
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect::<Vec<_>>(),
+        );
+        assert!(!helper(
+            "apiKeyHelper",
+            &format!("powershell.exe -NoProfile -NonInteractive -EncodedCommand {encoded}")
+        ));
+        assert!(!helper(
+            "apiKeyHelper",
+            "powershell.exe -NoProfile -NonInteractive -EncodedCommand invalid"
+        ));
+    }
     #[test]
     fn structured_tokens_are_redacted_regardless_of_literal_shape() {
         for raw in [

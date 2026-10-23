@@ -66,7 +66,7 @@ fn tool_directory(home: &Path, variable: &str, fallback: &str) -> PathBuf {
 }
 
 fn xdg_directory(home: &Path, variable: &str, fallback: &str) -> PathBuf {
-    resolve_xdg_directory(
+    resolve_profile_directory(
         home,
         std::env::var_os(variable).map(PathBuf::from).as_deref(),
         std::env::var_os("HOME").map(PathBuf::from).as_deref(),
@@ -74,13 +74,13 @@ fn xdg_directory(home: &Path, variable: &str, fallback: &str) -> PathBuf {
     )
 }
 
-fn resolve_xdg_directory(
+pub(crate) fn resolve_profile_directory(
     home: &Path,
     configured: Option<&Path>,
     process_home: Option<&Path>,
     fallback: &str,
 ) -> PathBuf {
-    // A default inherited XDG path belongs to the process home. Rebase it
+    // A default inherited profile path belongs to the process home. Rebase it
     // when operating on an independent home; retain explicit custom paths.
     configured
         .filter(|path| path.is_absolute())
@@ -363,10 +363,10 @@ pub fn user_home_dir() -> Option<PathBuf> {
 mod diff_tests {
     #[test]
     fn xdg_empty_and_relative_directories_use_the_vendor_home() {
-        for fallback in [".config", ".local/share"] {
+        for fallback in [".config", ".local/share", "AppData/Roaming"] {
             for configured in ["", "relative", "../another-home"] {
                 assert_eq!(
-                    super::resolve_xdg_directory(
+                    super::resolve_profile_directory(
                         std::path::Path::new("/vendor-home"),
                         Some(std::path::Path::new(configured)),
                         Some(std::path::Path::new("/process-home")),
@@ -387,18 +387,28 @@ mod diff_tests {
         let custom_path = root.path().join("custom-xdg");
         let process_home = process_home_path.as_path();
         let independent = independent_path.as_path();
-        for fallback in [".config", ".local/share"] {
+        for fallback in [".config", ".local/share", "AppData/Roaming"] {
             let default = process_home.join(fallback);
             assert_eq!(
-                resolve_xdg_directory(independent, Some(&default), Some(process_home), fallback),
+                resolve_profile_directory(
+                    independent,
+                    Some(&default),
+                    Some(process_home),
+                    fallback
+                ),
                 independent.join(fallback)
             );
             assert_eq!(
-                resolve_xdg_directory(process_home, Some(&default), Some(process_home), fallback),
+                resolve_profile_directory(
+                    process_home,
+                    Some(&default),
+                    Some(process_home),
+                    fallback
+                ),
                 default
             );
             assert_eq!(
-                resolve_xdg_directory(
+                resolve_profile_directory(
                     independent,
                     Some(&custom_path),
                     Some(process_home),

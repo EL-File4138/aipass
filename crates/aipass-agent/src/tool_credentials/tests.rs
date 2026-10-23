@@ -447,7 +447,18 @@ fn selected_provider_is_reported_before_dormant_keys() {
     let keys = reader::read(&home, &ToolConfigTool::OpenCode).unwrap();
     assert_eq!(keys[0].interface, InterfaceType::Gemini);
     assert_eq!(keys[0].auth, AuthScheme::GoogleApiKey);
-    write(&home.join(".aipass/tools/cursor-agent-local.env"), "CURSOR_LOCAL_AGENT_API_KEY='private-cursor'\nCURSOR_LOCAL_AGENT_BASE_URL='https://cursor.test/v1/messages'\n");
+    let helper = aipass_config_writers::helper_path(&home, "cursor-agent-local");
+    write(
+        &helper,
+        &format!(
+            "{}{}",
+            aipass_config_writers::env_literal("CURSOR_LOCAL_AGENT_API_KEY", "private-cursor"),
+            aipass_config_writers::env_literal(
+                "CURSOR_LOCAL_AGENT_BASE_URL",
+                "https://cursor.test/v1/messages"
+            )
+        ),
+    );
     let keys = reader::read(&home, &ToolConfigTool::Cursor).unwrap();
     assert_eq!(keys[0].interface, InterfaceType::AnthropicMessages);
     assert_eq!(keys[0].auth, AuthScheme::XApiKey);
@@ -468,7 +479,7 @@ fn selected_provider_is_reported_before_dormant_keys() {
     };
     let (_, content) =
         aipass_config_writers::plan_cursor_local_proxy_plaintext(&home, &cursor).unwrap();
-    write(&home.join(".aipass/tools/cursor-agent-local.env"), &content);
+    write(&helper, &content);
     let keys = reader::read(&home, &ToolConfigTool::Cursor).unwrap();
     assert_eq!(keys[0].interface, InterfaceType::AnthropicMessages);
     assert_eq!(keys[0].endpoint, "http://127.0.0.1:8787/v1");
@@ -476,7 +487,7 @@ fn selected_provider_is_reported_before_dormant_keys() {
     cursor.interface_type = InterfaceType::OpenAiCompatible;
     cursor.auth_scheme = AuthScheme::Bearer;
     let (_, content) = aipass_config_writers::plan_cursor_local_plaintext(&home, &cursor).unwrap();
-    write(&home.join(".aipass/tools/cursor-agent-local.env"), &content);
+    write(&helper, &content);
     let keys = reader::read(&home, &ToolConfigTool::Cursor).unwrap();
     assert_eq!(keys[0].interface, InterfaceType::OpenAiCompatible);
 }
@@ -546,13 +557,18 @@ fn additional_agents_import_outgoing_keys_and_reject_stale_previews() {
 #[test]
 fn zed_import_reads_shell_quoted_keys_without_executing_them() {
     let (_dir, _state, home) = fixture();
+    let config = aipass_config_writers::zed_config_path(&home);
+    assert!(
+        config.starts_with(&home),
+        "fixture must remain in its own home"
+    );
     write(
-        &home.join(".config/zed/settings.json"),
+        &config,
         r#"{"language_models":{"openai_compatible":{"aipass":{"api_url":"https://fixture.test/v1"}}}}"#,
     );
     write(
-        &home.join(".aipass/tools/zed.env"),
-        "export AIPASS_API_KEY='fixture'\\''$(echo literal)'\n",
+        &aipass_config_writers::helper_path(&home, "zed"),
+        &aipass_config_writers::env_literal("AIPASS_API_KEY", "fixture'$(echo literal)"),
     );
     let keys = reader::read(&home, &ToolConfigTool::Zed).unwrap();
     assert_eq!(keys[0].key.as_str(), "fixture'$(echo literal)");
