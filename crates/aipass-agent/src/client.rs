@@ -557,8 +557,8 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn windows_named_pipe_client_authenticates_and_has_a_bounded_read() {
-        use interprocess::local_socket::traits::{Listener as _, Stream as _};
+    fn windows_named_pipe_client_authenticates_large_responses() {
+        use interprocess::local_socket::traits::Listener as _;
         let dir = tempfile::tempdir().unwrap();
         let client = AgentClient::for_vault(dir.path().join("vault")).unwrap();
         let token = ipc::load_or_create_auth_token(&client.config.vault_dir).unwrap();
@@ -587,8 +587,19 @@ mod tests {
         assert_eq!(response["marker"], "windows");
         assert_eq!(response["large"].as_str().unwrap().len(), 512 * 1024);
         server.join().unwrap();
-        let listener = ipc::listen(&client.config.vault_dir).unwrap();
-        let mut stream = ipc::connect(&client.config.vault_dir).unwrap();
+        ipc::clear_auth_token(&client.config.vault_dir).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_silent_named_pipe_times_out() {
+        use interprocess::local_socket::traits::{Listener as _, Stream as _};
+        // Interprocess closes written pipe handles on a background flush pool.
+        // Use a fresh namespace so this timeout check does not race that cleanup.
+        let dir = tempfile::tempdir().unwrap();
+        let vault_dir = dir.path().join("vault");
+        let listener = ipc::listen(&vault_dir).unwrap();
+        let mut stream = ipc::connect(&vault_dir).unwrap();
         let _held = listener.accept().unwrap();
         stream.set_nonblocking(true).unwrap();
         let error = ipc::framing::read_frame_with_deadline::<AgentResponse>(
@@ -600,7 +611,6 @@ mod tests {
             timeout_aware_error(error).code,
             Some(AgentErrorCode::ServiceUnavailable)
         );
-        ipc::clear_auth_token(&client.config.vault_dir).unwrap();
     }
 
     /// A socket that accepts a connection and then never answers is exactly
