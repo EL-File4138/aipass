@@ -1,5 +1,6 @@
 //! Cloud key gateways, distinct from local Ollama and fixed-price plans.
 use super::*;
+mod quota;
 pub(super) const PROVIDERS: &[&str] = &["ollama-cloud", "kilo-gateway"];
 fn base(c: &Context) -> &'static str {
     if c.provider == "ollama-cloud" {
@@ -124,9 +125,12 @@ pub(super) async fn models(c: &Context) -> Result<Value> {
     catalog(&c.provider, &v)
 }
 pub(super) async fn usage(c: &Context) -> Result<Value> {
-    Ok(
-        json!({"plan":if c.provider=="ollama-cloud" {"Ollama Cloud"} else {"Kilo Gateway"},"windows":[],"quotaUnavailable":true}),
-    )
+    if c.provider == "ollama-cloud" {
+        let value =
+            json_request(signed(c, c.client.get("https://ollama.com/api/balance"))?).await?;
+        return quota::ollama(&value);
+    }
+    Ok(json!({"plan":"Kilo Gateway","windows":[],"quotaUnavailable":true}))
 }
 pub(super) async fn generate(c: &mut Context, _: &Value, body: Value) -> Result<()> {
     c.pipe(

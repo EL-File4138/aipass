@@ -6,6 +6,7 @@ pub mod connect;
 pub mod cursor;
 pub mod devin;
 pub mod grok;
+pub mod kimi;
 pub mod kiro;
 pub mod qoder;
 pub mod trae;
@@ -20,8 +21,9 @@ pub trait ProviderStream {
     /// Whether generation produced content, even if a later event in the same
     /// network chunk made `push` fail. Such attempts must never be replayed.
     fn has_output(&self) -> bool;
-    /// A status only for an explicit upstream refusal. Malformed/truncated
-    /// replies leave the submitted generation's outcome unknown.
+    /// A status only for an explicit upstream refusal or a completed reply
+    /// with no content. Malformed/truncated replies leave the submitted
+    /// generation's outcome unknown.
     fn failure_status(&self) -> Option<u16> {
         None
     }
@@ -180,11 +182,18 @@ pub fn factory_request(wire: &str, body: &mut Value) -> Result<(), String> {
                 Value::Array(a) => a.clone(),
                 _ => return Err("unsupported Factory system content".into()),
             };
-            blocks.retain(|b| {
-                !b["text"].as_str().is_some_and(|s| {
-                    s.trim().is_empty() || s.starts_with("x-anthropic-billing-header: cc_version=")
-                })
-            });
+            for block in &mut blocks {
+                if let Some(text) = block["text"]
+                    .as_str()
+                    .filter(|s| s.starts_with("x-anthropic-billing-header: cc_version="))
+                {
+                    // The client may join its billing line and real instructions
+                    // in one text block. Only the billing line is transport metadata.
+                    block["text"] =
+                        json!(text.split_once('\n').map(|(_, rest)| rest).unwrap_or(""));
+                }
+            }
+            blocks.retain(|b| !b["text"].as_str().is_some_and(|s| s.trim().is_empty()));
             for block in &mut blocks {
                 if ["You are Claude Code, Anthropic's official CLI for Claude.","You are Claude Code, Anthropic's official CLI for Claude, running within the Claude Agent SDK.","You are a Claude agent, built on Anthropic's Claude Agent SDK."].contains(&block["text"].as_str().unwrap_or("")) { block["text"]=json!(DROID); }
             }
@@ -329,6 +338,19 @@ mod tests {
         let normalized = v.clone();
         factory_request("anthropic", &mut v).unwrap();
         assert_eq!(v, normalized);
+    }
+    #[test]
+    fn factory_billing_header_removal_keeps_instructions_in_the_same_block() {
+        for system in [
+            json!("x-anthropic-billing-header: cc_version=2.1; cc_entrypoint=cli\nFollow the project instructions.\nKeep this second line."),
+            json!([{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1; cc_entrypoint=cli\nFollow the project instructions.\nKeep this second line.","cache_control":{"type":"ephemeral"}}]),
+        ] {
+            let mut body=json!({"system":system,"messages":[{"role":"user","content":"hi"}]});
+            factory_request("anthropic",&mut body).unwrap();
+            assert_eq!(body["system"][1]["text"],"Follow the project instructions.\nKeep this second line.");
+            assert!(!body["system"].to_string().contains("billing-header"));
+            if system.is_array() { assert_eq!(body["system"][1]["cache_control"],system[0]["cache_control"]); }
+        }
     }
     #[test]
     fn workbuddy_forces_wire_stream_without_replacing_instructions() {

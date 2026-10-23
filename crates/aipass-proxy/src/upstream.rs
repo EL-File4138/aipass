@@ -146,7 +146,7 @@ pub(crate) const SESSION_AFFINITY_TTL: Duration = Duration::from_secs(30 * 60);
 pub(crate) const MAX_SESSION_AFFINITY_ENTRIES: usize = 4_096;
 pub(crate) const MAX_SESSION_AFFINITY_KEY_BYTES: usize = 512;
 
-pub(crate) const SESSION_AFFINITY_HEADERS: [&str; 11] = [
+pub(crate) const SESSION_AFFINITY_HEADERS: [&str; 13] = [
     "x-aipass-session-id",
     "x-aipass-session",
     "x-session-id",
@@ -158,6 +158,8 @@ pub(crate) const SESSION_AFFINITY_HEADERS: [&str; 11] = [
     "session-id",
     "session_id",
     "prompt-cache-key",
+    "x-deepseek-harness-session-id",
+    "x-conversation-id",
 ];
 
 pub(crate) const SESSION_AFFINITY_FIELDS: [&str; 10] = [

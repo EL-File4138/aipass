@@ -228,6 +228,9 @@ pub(crate) async fn force_refresh(c: &mut Context) -> Result<()> {
 }
 
 async fn fresh_inner(c: &mut Context, force: bool, cached: bool) -> Result<()> {
+    if c.provider == "grok" {
+        return grok::fresh(c, force).await;
+    }
     c.native_token = None;
     check_device(&c.auth)?;
     let provider = c.provider.clone();
@@ -261,10 +264,6 @@ async fn fresh_inner(c: &mut Context, force: bool, cached: bool) -> Result<()> {
                     false,
                 )
                 .await?;
-            }
-            "grok" => {
-                cmd.arg("models");
-                native_cli::run(cmd, 30).await?;
             }
             "gemini-cli" => {
                 cmd.arg("--acp");

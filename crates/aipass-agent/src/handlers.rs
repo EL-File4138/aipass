@@ -66,10 +66,8 @@ fn dispatch_request(
         | AgentRequest::OAuthLoginPoll { .. }
         | AgentRequest::OAuthLoginCancel { .. }) => subscriptions::handle(state, request),
         AgentRequest::CommunityAccountRead { entry_id, marker } => {
-            with_vault(state, false, |vault| {
-                crate::community::read(vault, entry_id, marker.expose())
-            })
-            .map(AgentResponse::success)
+            crate::community::read_runtime(state, entry_id, marker.expose())
+                .map(AgentResponse::success)
         }
         AgentRequest::CommunityAccountWrite {
             entry_id,

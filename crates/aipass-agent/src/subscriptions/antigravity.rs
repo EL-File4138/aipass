@@ -79,12 +79,15 @@ pub(super) async fn fresh(c: &mut Context) -> Result<()> {
     if c.auth["expires"].as_u64().unwrap_or(0) <= now() + 120000 {
         let _guard = c.refresh_guard()?;
         let v = crate::subscription_import::reader::PrivateAuth(
-            json_request(c.client.post(TOKEN).form(&[
-                ("grant_type", "refresh_token"),
-                ("client_id", CLIENT),
-                ("client_secret", CLIENT_KEY),
-                ("refresh_token", s(&c.auth, "refresh")),
-            ]))
+            c.refresh_json(
+                "refresh",
+                c.client.post(TOKEN).form(&[
+                    ("grant_type", "refresh_token"),
+                    ("client_id", CLIENT),
+                    ("client_secret", CLIENT_KEY),
+                    ("refresh_token", s(&c.auth, "refresh")),
+                ]),
+            )
             .await?,
         );
         c.save(device::token(&v.0, &c.auth)?).await?;

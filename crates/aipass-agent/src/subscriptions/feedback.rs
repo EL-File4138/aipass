@@ -247,6 +247,19 @@ impl Context {
         Ok(())
     }
     pub(super) async fn refused(&mut self, body: &[u8]) -> Result<()> {
+        if self.provider == "grok" {
+            let refused = self.credential_mark()?;
+            // A 401 may precede the CLI's advertised expiry. Recover future
+            // requests, without replaying the current generation.
+            if cli_accounts::recover_grok(self).await.is_ok() {
+                return Ok(());
+            }
+            if explicit_revocation(body) {
+                self.feedback.revoked = Some(refused);
+                self.save_feedback().await?;
+            }
+            return Ok(());
+        }
         if !explicit_revocation(body) {
             return Ok(());
         }

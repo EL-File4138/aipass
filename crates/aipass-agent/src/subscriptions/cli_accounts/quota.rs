@@ -7,22 +7,41 @@ pub(super) fn copilot_usage(v: &Value, models: &Value) -> Result<Value> {
             .or_else(|| v.as_str()?.parse().ok())
             .filter(|n| n.is_finite())
     }
+    let managed = matches!(
+        v["copilot_plan"]
+            .as_str()
+            .unwrap_or("")
+            .to_ascii_lowercase()
+            .as_str(),
+        "business" | "enterprise"
+    );
     let windows = v["quota_snapshots"]
         .as_object()
         .into_iter()
         .flatten()
         .filter_map(|(name, q)| {
-            if q["unlimited"] == true {
-                return None;
-            }
-            let used = if let Some(percent) =
-                number(&q["percent_remaining"]).filter(|n| (0.0..=100.0).contains(n))
-            {
-                100.0 - percent
+            let premium = name == "premium_interactions" || name == "premium";
+            let cap = number(&q["entitlement"]);
+            let used = if q["unlimited"] == true {
+                // GitHub marks an organization's pooled allowance unlimited
+                // even when the seat can no longer use that pool.
+                if premium && q["has_quota"] == false {
+                    100.0
+                } else {
+                    return None;
+                }
             } else {
-                let cap = number(&q["entitlement"]).filter(|n| *n > 0.0)?;
-                let left = number(&q["quota_remaining"]).filter(|n| *n >= 0.0)?;
-                100.0 * (1.0 - left / cap)
+                if cap.is_some_and(|n| n <= 0.0) {
+                    return None;
+                }
+                // Token billing rounds percent_remaining. Counts retain the
+                // actual reading (e.g. 0.1 of 20000, rather than 0.1%).
+                if let Some((cap, left)) = cap.zip(number(&q["quota_remaining"])) {
+                    100.0 * (1.0 - left / cap)
+                } else {
+                    100.0 - number(&q["percent_remaining"])
+                        .filter(|n| (0.0..=100.0).contains(n))?
+                }
             };
             let reset = number(&q["quota_reset_at"])
                 .filter(|t| *t > 0.0)
@@ -31,10 +50,14 @@ pub(super) fn copilot_usage(v: &Value, models: &Value) -> Result<Value> {
                     t.format(&time::format_description::well_known::Rfc3339)
                         .ok()
                 })
-                .or_else(|| v["quota_reset_date_utc"].as_str().map(str::to_owned));
+                .or_else(|| device::date(&v["quota_reset_date_utc"]))
+                .or_else(|| {
+                    let date = v["quota_reset_date"].as_str()?;
+                    device::date(&json!(format!("{date}T00:00:00Z")))
+                });
             let mut window =
-                json!({"name":name,"used":used.max(0.0),"resetsAt":reset,"aside":true});
-            if name.contains("premium") {
+                json!({"name":name,"used":used.clamp(0.0,100.0),"span":2592000,"resetsAt":reset,"aside":name != "chat"});
+            if premium {
                 let scoped = models
                     .as_object()
                     .into_iter()
@@ -48,7 +71,7 @@ pub(super) fn copilot_usage(v: &Value, models: &Value) -> Result<Value> {
                 // An unknown billing multiplier cannot exhaust unrelated free models.
                 if !scoped.is_empty() {
                     window["models"] = json!(scoped);
-                    window["aside"] = json!(false);
+                    window["aside"] = json!(q["overage_permitted"] == true && !managed);
                 }
             }
             Some(window)
@@ -58,6 +81,19 @@ pub(super) fn copilot_usage(v: &Value, models: &Value) -> Result<Value> {
         return Err("Copilot returned no allowance data".into());
     }
     Ok(json!({"plan":v["copilot_plan"],"windows":windows}))
+}
+
+pub(super) fn gemini_usage(v: &Value) -> Result<Value> {
+    let windows = v["buckets"].as_array().into_iter().flatten().filter_map(|b| {
+        let model = b["modelId"].as_str().filter(|s| !s.trim().is_empty())?;
+        let remaining = device::percent(&b["remainingFraction"])
+            .filter(|n| (0.0..=1.0).contains(n))?;
+        Some(json!({"name":model,"models":[model],"used":100.0*(1.0-remaining),"resetsAt":device::date(&b["resetTime"])}))
+    }).collect::<Vec<_>>();
+    if windows.is_empty() {
+        return Err("Gemini returned no allowance data".into());
+    }
+    Ok(json!({"windows":windows}))
 }
 
 pub(super) fn codex_usage(value: &Value) -> Result<Value> {
@@ -110,3 +146,6 @@ pub(super) fn codex_usage(value: &Value) -> Result<Value> {
         json!({"plan":base["planType"],"balance":balance,"windows":windows,"resetCredits":value["rateLimitResetCredits"]}),
     )
 }
+
+#[cfg(test)]
+mod tests;

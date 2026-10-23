@@ -206,11 +206,7 @@ pub(super) async fn project(c: &Context) -> Result<String> {
 pub(crate) async fn usage(c: &mut Context) -> Result<Value> {
     if c.provider == "gemini-cli" {
         let v = google(c, "retrieveUserQuota", json!({"project":project(c).await?})).await?;
-        let windows = v["buckets"].as_array().into_iter().flatten().filter_map(|b|b["remainingFraction"].as_f64().map(|f|json!({"name":b["modelId"],"models":[b["modelId"]],"used":100.0*(1.0-f),"resetsAt":b["resetTime"]}))).collect::<Vec<_>>();
-        if windows.is_empty() {
-            return Err("Gemini returned no allowance data".into());
-        }
-        return Ok(json!({"windows":windows}));
+        return super::quota::gemini_usage(&v);
     }
     if c.provider == "copilot" {
         let v = json_request(copilot_user_request(c)?).await?;

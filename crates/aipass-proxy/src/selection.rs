@@ -503,3 +503,27 @@ pub(crate) fn status_affects_circuit(status: StatusCode) -> bool {
                 | StatusCode::TOO_MANY_REQUESTS
         )
 }
+
+#[cfg(test)]
+mod native_session_tests {
+    use super::*;
+    #[test]
+    fn harness_and_workbuddy_sessions_keep_existing_header_precedence() {
+        for name in ["x-deepseek-harness-session-id", "x-conversation-id"] {
+            let mut headers = HeaderMap::new();
+            headers.insert(name, "native-session".parse().unwrap());
+            let metadata: RequestMetadata =
+                serde_json::from_value(serde_json::json!({"prompt_cache_key":"body-fallback"}))
+                    .unwrap();
+            assert_eq!(
+                session_affinity_key(&headers, Some(&metadata)).as_deref(),
+                Some("native-session")
+            );
+            headers.insert("x-aipass-session-id", "explicit-session".parse().unwrap());
+            assert_eq!(
+                session_affinity_key(&headers, Some(&metadata)).as_deref(),
+                Some("explicit-session")
+            );
+        }
+    }
+}

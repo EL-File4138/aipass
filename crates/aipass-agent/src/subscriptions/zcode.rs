@@ -661,14 +661,7 @@ pub(super) async fn usage(c: &mut Context) -> Result<Value> {
             .as_u64()
             .unwrap_or(if unit == 3 { 5 } else { 1 })
             .max(1);
-        let span = n * match unit {
-            1 => 60,
-            3 => 3600,
-            4 => 86400,
-            5 => 2592000,
-            6 => 604800,
-            _ => 0,
-        };
+        let span = quota_span(unit, n);
         let total = number(&x["usage"]);
         let used = if let Some(t) = total.filter(|t| *t > 0.0) {
             number(&x["remaining"])
@@ -682,6 +675,20 @@ pub(super) async fn usage(c: &mut Context) -> Result<Value> {
     }
     Ok(json!({"plan":format!("GLM Coding {}",s(&d,"level")),"windows":windows}))
 }
+fn quota_span(unit: u64, count: u64) -> u64 {
+    // Zhipu has returned both number=1 and number=7 for a single week.
+    if unit == 6 {
+        return 604800;
+    }
+    count.saturating_mul(match unit {
+        1 => 60,
+        3 => 3600,
+        4 => 86400,
+        5 => 2592000,
+        _ => 0,
+    })
+}
+
 fn iso_ms(ms: f64) -> Value {
     if ms <= 0.0 {
         return Value::Null;
@@ -781,4 +788,15 @@ fn os_version() -> String {
     #[cfg(not(unix))]
     let release = String::from("unknown");
     format!("{} {release} {arch}", vendor_platform())
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+    #[test]
+    fn weekly_quota_is_one_week_for_both_vendor_number_encodings() {
+        assert_eq!(quota_span(6, 1), 604800);
+        assert_eq!(quota_span(6, 7), 604800);
+        assert_eq!(quota_span(3, 5), 18000);
+    }
 }

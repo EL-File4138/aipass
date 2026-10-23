@@ -211,7 +211,12 @@ pub(super) async fn usage(c: &Context) -> Result<Value> {
     if !go(c) {
         return Ok(json!({"plan":"OpenCode Zen","windows":[],"quotaUnavailable":true}));
     }
-    let value = json_request(signed(c, c.client.get(format!("{}/v1/usage", root(c))))?).await?;
+    // Inference moved to /inference/go; billing remains on the Zen API.
+    let value = json_request(signed(
+        c,
+        c.client.get("https://opencode.ai/zen/go/v1/usage"),
+    )?)
+    .await?;
     let windows = super::plan_quota::opencode(&value, &c.models)?;
     Ok(json!({"plan":"OpenCode Go","windows":windows}))
 }

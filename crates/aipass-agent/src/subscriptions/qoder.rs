@@ -1,5 +1,9 @@
 use super::*;
+mod login;
+mod task;
 use aes::cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyIvInit};
+use aipass_proxy_conversion::providers::qoder::CLIENT_VERSION;
+pub(super) use login::login;
 use rsa::{pkcs8::DecodePublicKey, Pkcs1v15Encrypt, RsaPublicKey};
 use sha2::{Digest, Sha256};
 const CHAT_PATH:&str="/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1";
@@ -42,7 +46,7 @@ fn cosy(c: &Context, url: &str, body: &str, req: RequestBuilder) -> Result<Reque
         rsa.encrypt(&mut rand_core::OsRng, Pkcs1v15Encrypt, key)
             .map_err(|_| "Qoder key wrapping failed")?,
     );
-    let payload=STANDARD.encode(json!({"version":"v1","requestId":hex_id(),"info":info,"cosyVersion":"1.1.49","ideVersion":""}).to_string());
+    let payload=STANDARD.encode(json!({"version":"v1","requestId":hex_id(),"info":info,"cosyVersion":CLIENT_VERSION,"ideVersion":""}).to_string());
     let path = url::Url::parse(url)
         .map_err(|_| "invalid Qoder URL")?
         .path()
@@ -87,7 +91,7 @@ fn cosy(c: &Context, url: &str, body: &str, req: RequestBuilder) -> Result<Reque
                 .map(str::to_owned)
                 .unwrap_or_else(|| c.auth["uid"].to_string()),
         )
-        .header("Cosy-Version", "1.1.49")
+        .header("Cosy-Version", CLIENT_VERSION)
         .header("Login-Version", "v2"))
 }
 fn device_expiry(v: &Value) -> u64 {
@@ -99,92 +103,24 @@ fn device_expiry(v: &Value) -> u64 {
         .map(|t| t.unix_timestamp().max(0) as u64 * 1000)
         .unwrap_or_else(|| expires_after(&v["expires_in"], 86400, 1000))
 }
-pub(super) async fn login(c: &mut Context, _: usize) -> Result<Value> {
-    let (web, api, _, client) = site(c);
-    let verifier = format!("{}{}", hex_id(), hex_id());
-    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-    let nonce = uuid::Uuid::new_v4().to_string();
-    let machine = uuid::Uuid::new_v4().to_string();
-    let mut url = url::Url::parse(&format!("{web}/device/selectAccounts")).unwrap();
-    url.query_pairs_mut().extend_pairs([
-        ("challenge", challenge.as_str()),
-        ("challenge_method", "S256"),
-        ("nonce", &nonce),
-        ("machine_id", &machine),
-        ("client_id", client),
-    ]);
-    if c.provider == "qoder" {
-        url.query_pairs_mut()
-            .append_pair("redirect_uri", "qoder-app://");
-    }
-    c.challenge(
-        url.as_str(),
-        "Sign in to Qoder and authorize this device.",
-        false,
-    )
-    .await?;
-    let deadline = now() + 900000;
-    while now() < deadline {
-        let result = raw_json(
-            c.client
-                .get(format!("{api}/api/v1/deviceToken/poll"))
-                .query(&[
-                    ("nonce", nonce.as_str()),
-                    ("verifier", &verifier),
-                    ("challenge_method", "S256"),
-                ]),
-        )
-        .await;
-        if let Ok((200, dt)) = result {
-            if !s(&dt, "token").is_empty() {
-                let (status, jt) = raw_json(
-                    c.client
-                        .post(format!("{api}/api/v1/me/jobToken"))
-                        .bearer_auth(s(&dt, "token"))
-                        .json(&json!({"clientId":client})),
-                )
-                .await?;
-                let device =
-                    status != 200 && c.provider == "qoder-cn" && (400..500).contains(&status);
-                if status != 200 && !device {
-                    return Err(format!("Qoder job token returned HTTP {status}"));
-                }
-                let chat = if device { &dt } else { &jt };
-                if s(chat, "token").is_empty() {
-                    return Err("Qoder returned no chat token".into());
-                }
-                let who = json_request(
-                    c.client
-                        .get(format!("{api}/api/v1/userinfo"))
-                        .bearer_auth(s(&dt, "token")),
-                )
-                .await
-                .unwrap_or(json!({}));
-                return Ok(
-                    json!({"type":"oauth","access":chat["token"],"refresh":chat["refresh_token"],"expires":if device{device_expiry(chat)}else{expires_after(&chat["expires_in"],86400000,1)},"deviceChat":device,"accountId":dt["user_id"],"uid":dt["user_id"],"email":who["email"],"name":who["name"].as_str().or(dt["user_name"].as_str()).unwrap_or(""),"machineId":machine,"deviceToken":dt["token"],"deviceRefresh":dt["refresh_token"]}),
-                );
-            }
-        }
-        tokio::time::sleep(Duration::from_secs(2)).await;
-    }
-    Err("Qoder sign-in timed out".into())
-}
 pub(super) async fn fresh(c: &mut Context) -> Result<()> {
     if c.auth["expires"].as_u64().unwrap_or(0) > now() + 300000 {
         return Ok(());
     }
     let device = c.auth["deviceChat"] == true;
     let _refresh = c.refresh_guard()?;
-    let v = json_request(
-        c.client
-            .post(format!(
-                "{}/api/v1/{}/refresh",
-                site(c).1,
-                if device { "deviceToken" } else { "jobToken" }
-            ))
-            .json(&json!({"refresh_token":c.auth["refresh"]})),
-    )
-    .await?;
+    let v = c
+        .refresh_json(
+            "refresh",
+            c.client
+                .post(format!(
+                    "{}/api/v1/{}/refresh",
+                    site(c).1,
+                    if device { "deviceToken" } else { "jobToken" }
+                ))
+                .json(&json!({"refresh_token":c.auth["refresh"]})),
+        )
+        .await?;
     let token = v["token"]
         .as_str()
         .or(v["device_token"].as_str())
@@ -268,12 +204,14 @@ pub(super) async fn usage(c: &mut Context) -> Result<Value> {
         .await?;
         if attempt == 0 && [401, 403].contains(&status) {
             let _refresh = c.refresh_guard()?;
-            let dt = json_request(
-                c.client
-                    .post(format!("{api}/api/v1/deviceToken/refresh"))
-                    .json(&json!({"refresh_token":c.auth["deviceRefresh"]})),
-            )
-            .await?;
+            let dt = c
+                .refresh_json(
+                    "deviceRefresh",
+                    c.client
+                        .post(format!("{api}/api/v1/deviceToken/refresh"))
+                        .json(&json!({"refresh_token":c.auth["deviceRefresh"]})),
+                )
+                .await?;
             let mut next = c.auth.clone();
             next["deviceToken"] = dt["token"]
                 .as_str()
@@ -343,7 +281,7 @@ pub(super) async fn usage(c: &mut Context) -> Result<Value> {
     )
 }
 pub(super) async fn generate(c: &mut Context, m: &Value, body: Value) -> Result<()> {
-    use aipass_proxy_conversion::providers::qoder::{encode_body, request, QoderStream};
+    use aipass_proxy_conversion::providers::qoder::{encode_body, QoderStream};
     let mut config = m["qoder_config"].clone();
     if !config.is_object() {
         let live = models(c).await?;
@@ -352,7 +290,8 @@ pub(super) async fn generate(c: &mut Context, m: &Value, body: Value) -> Result<
     if !config.is_object() {
         return Err("Qoder model is unknown or disabled".into());
     }
-    let body_text = request(&body, &config, &c.session, now())?.to_string();
+    let task = task::Task::for_request(c, &body)?;
+    let body_text = task.request(&body, &config)?.to_string();
     let wire = encode_body(body_text.as_bytes());
     let url = format!("{}{CHAT_PATH}", site(c).2);
     let response = send(
@@ -365,5 +304,10 @@ pub(super) async fn generate(c: &mut Context, m: &Value, body: Value) -> Result<
     )
     .await?;
     let mut converter = QoderStream::new(s(&body, "model"), &format!("chatcmpl-{}", hex_id()));
-    c.converted(response, &mut converter).await
+    let result = c.converted(response, &mut converter).await;
+    if result.is_ok() && aipass_proxy_conversion::providers::ProviderStream::has_output(&converter)
+    {
+        task.answered();
+    }
+    result
 }

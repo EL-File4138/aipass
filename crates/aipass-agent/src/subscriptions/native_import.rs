@@ -182,14 +182,23 @@ pub(crate) async fn read(
         .connect_timeout(Duration::from_secs(15))
         .read_timeout(Duration::from_secs(30));
     builder = aipass_proxy::apply_upstream_proxy(builder, outbound)?;
+    let client = builder
+        .build()
+        .map_err(|_| "cannot create import transport")?;
+    read_with_client(source, outbound, client).await
+}
+
+pub(crate) async fn read_with_client(
+    source: &SubscriptionImportSource,
+    outbound: &UpstreamProxyConfig,
+    client: Client,
+) -> Result<SensitiveString> {
     let (_input, rx) = mpsc::channel(1);
     let (tx, _output) = mpsc::channel(1);
     let (_cancel, cancelled) = watch::channel(false);
     let (refreshing, _) = watch::channel(false);
     let mut c = Context {
-        client: builder
-            .build()
-            .map_err(|_| "cannot create import transport")?,
+        client,
         outbound: Some(outbound.clone()),
         input: rx,
         output: tx,
@@ -241,31 +250,6 @@ pub(crate) async fn read(
                 s(&state, "project")
             ));
         }
-    }
-    // Existing stable claims are sufficient; identity-only requests never refresh grants.
-    if crate::community::identity(auth).is_none() && source.provider == "devin" {
-        let server = auth["metadata"]["server"]
-            .as_str()
-            .unwrap_or("https://server.codeium.com");
-        let u = url::Url::parse(server).map_err(|_| "invalid Devin server")?;
-        if u.scheme() != "https" || !u.username().is_empty() || u.password().is_some() {
-            return Err("invalid Devin server".into());
-        }
-        let v = json_request(
-            c.client
-                .post(format!(
-                    "{}/exa.seat_management_pb.SeatManagementService/GetUserStatus",
-                    server.trim_end_matches('/')
-                ))
-                .header("Connect-Protocol-Version", "1")
-                .json(&json!({"metadata":{"apiKey":auth["key"],"ideName":"devin-cli"}})),
-        )
-        .await?;
-        auth["accountId"] = v["userStatus"]["userId"]
-            .as_str()
-            .or(v["userStatus"]["email"].as_str())
-            .map(|s| json!(s))
-            .unwrap_or(Value::Null);
     }
     if crate::community::identity(auth).is_none() && source.provider == "kiro" {
         c.auth = auth.clone();

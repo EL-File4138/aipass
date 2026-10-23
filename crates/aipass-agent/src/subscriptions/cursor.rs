@@ -1,4 +1,5 @@
 use super::*;
+mod quota;
 use aipass_proxy_conversion::providers::cursor as codec;
 use sha2::{Digest, Sha256};
 const API: &str = "https://api2.cursor.sh";
@@ -363,72 +364,12 @@ pub(super) async fn usage(c: &mut Context) -> Result<Value> {
         c.token()?,
     )
     .await?;
-    let u = &v["planUsage"];
-    if !u.is_object() {
-        return Ok(json!({"plan":c.auth["plan"],"windows":[]}));
-    }
-    let bucket: std::collections::BTreeSet<_> = v["autoBucketModels"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(pool_base)
-        .collect();
-    let mut candidates = vec!["auto".to_owned()];
-    candidates.extend(
-        c.models
-            .as_object()
-            .into_iter()
-            .flat_map(|m| m.keys().cloned()),
-    );
-    candidates.extend(
-        v["autoBucketModels"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .map(str::to_owned),
-    );
-    let pool: std::collections::BTreeSet<_> = candidates
-        .into_iter()
-        .filter(|id| {
-            let p = pool_base(id);
-            p == "auto"
-                || p == "default"
-                || p.starts_with("composer")
-                || ["grok-4.5", "grok-4.6", "grok-4.7"].contains(&p.as_str())
-                || bucket.contains(&p)
-        })
-        .collect();
-    let ms = v["billingCycleEnd"]
-        .as_str()
-        .and_then(|s| s.parse::<i64>().ok())
-        .or(v["billingCycleEnd"].as_i64());
-    let reset = ms
-        .and_then(|ms| time::OffsetDateTime::from_unix_timestamp(ms / 1000).ok())
-        .and_then(|t| {
-            t.format(&time::format_description::well_known::Rfc3339)
-                .ok()
-        });
-    let mut windows = vec![];
-    for (name, key, aside) in [
-        ("Cursor Models", "autoPercentUsed", false),
-        ("Other Models", "apiPercentUsed", false),
-        ("Total", "totalPercentUsed", true),
-    ] {
-        if let Some(n) = u[key].as_f64() {
-            let mut w = json!({"name":name,"used":n,"resetsAt":reset,"aside":aside});
-            if name == "Cursor Models" {
-                w["models"] = json!(pool);
-            }
-            if name == "Other Models" {
-                w["notModels"] = json!(pool);
-            }
-            windows.push(w);
-        }
-    }
-    Ok(json!({"plan":c.auth["plan"],"windows":windows}))
+    let hard = unary(c, "aiserver.v1.DashboardService/GetHardLimit", c.token()?)
+        .await
+        .ok();
+    quota::normalize(&v, hard.as_ref(), &c.models, &c.auth["plan"])
 }
+
 async fn agent_url_transport(client: &Client, token: &str) -> String {
     if let Ok(v) = json_request(
         headers(

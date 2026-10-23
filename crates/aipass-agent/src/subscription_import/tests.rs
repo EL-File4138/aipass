@@ -599,18 +599,38 @@ async fn refused_file_access_reports_permissions_instead_of_missing_login() {
 async fn devin_and_commandcode_read_explicit_directories_without_interactive_login() {
     let temp = tempfile::tempdir().unwrap();
     let token = "x.eyJzdWIiOiJhbGljZSJ9.x";
+    let (client, server, served) = crate::subscriptions::tests::https_fixture(
+        json!({"userStatus":{"userId":"alice","email":"alice@example.test","teamId":"team-a","planStatus":{"planInfo":{"devinInfo":{"orgId":"org-a"}}}}})
+    ).await;
     std::fs::write(
         temp.path().join("credentials.toml"),
-        format!("windsurf_api_key = '{token}'\n"),
+        format!("windsurf_api_key = '{token}'\napi_server_url = '{server}'\n"),
     )
     .unwrap();
+    let devin = crate::subscriptions::native_import::read_with_client(
+        &source("devin", &temp.path().canonicalize().unwrap(), ""),
+        &Default::default(),
+        client,
+    )
+    .await
+    .unwrap();
+    let devin = reader::PrivateAuth(serde_json::from_str(devin.expose()).unwrap());
+    assert!(crate::community::identity(&devin.0)
+        .unwrap()
+        .starts_with("devin:v2:"));
+    assert_eq!(devin.0["devinScope"]["org"], "org-a");
+    assert_eq!(
+        devin.0["nativeSource"]["root"],
+        temp.path().canonicalize().unwrap().to_str().unwrap()
+    );
+    assert!(served.await.unwrap().contains(token));
     std::fs::write(
         temp.path().join("auth.json"),
         json!({"apiKey":"fixture-private-key","userId":"bob","email":"bob@example.test"})
             .to_string(),
     )
     .unwrap();
-    for (provider, expected) in [("devin", "alice"), ("commandcode-plan", "bob@example.test")] {
+    for (provider, expected) in [("commandcode-plan", "bob@example.test")] {
         let s = source(provider, temp.path(), "");
         let reader::Account::Auth(auth) = read(&s).await else {
             panic!()
@@ -816,4 +836,59 @@ async fn zcode_keeps_site_and_team_scopes_and_records_its_actual_native_method()
     assert!(names.contains(&"alice::bigmodel::::".into()));
     assert!(names.contains(&"alice::zai::org-a::project-a".into()));
     assert!(names.contains(&"bob::zai::::".into()));
+}
+
+#[test]
+fn legacy_devin_import_upgrades_the_same_source_without_changing_entry_ids() {
+    let temp = tempfile::tempdir().unwrap();
+    let state = state(&temp.path().join("vault"));
+    let s = source("devin", temp.path(), "");
+    let old = json!({"type":"api","key":"fixture-devin-key","accountId":"alice",
+        "nativeSource":s,"nativeDevice":"fixture-device"});
+    let id = crate::session::with_vault(&state, true, |v| {
+        let id = crate::community::register_cli(v, "devin", old.clone())?;
+        let raw = crate::community::stored(v, id)?.unwrap();
+        v.set_provider_runtime_extension(id, "community_account_v1", Some(&raw))
+            .map_err(map_vault_error)?;
+        v.set_provider_runtime_extension(id, "community_account_v2", None)
+            .map_err(map_vault_error)?;
+        Ok(id)
+    })
+    .unwrap();
+    let before = summaries(&state).remove(0);
+    let auth = crate::subscriptions::devin::identity::resolved(
+        &old,
+        &json!({"userStatus":{"userId":"alice","email":"alice@example.test",
+        "planStatus":{"planInfo":{"devinInfo":{"orgId":"org-a"}}}}}),
+    )
+    .unwrap();
+    let mut revisions = crate::session::with_vault(&state, false, sources::snapshot)
+        .unwrap()
+        .revisions;
+    let result = persist::commit(
+        &state,
+        session_id(&state).unwrap(),
+        s.clone(),
+        reader::Account::Auth(SensitiveString::new(auth.to_string())),
+        &mut revisions,
+        &mut HashMap::new(),
+    );
+    assert_eq!(result.status, SubscriptionImportStatus::Updated);
+    assert_eq!(result.entry_id, Some(id));
+    let after = summaries(&state).remove(0);
+    assert_eq!(before.secret_refs[0].id, after.secret_refs[0].id);
+    assert_eq!(
+        after.account_identity.as_deref(),
+        auth["accountId"].as_str()
+    );
+    let repeated = persist::commit(
+        &state,
+        session_id(&state).unwrap(),
+        s,
+        reader::Account::Auth(SensitiveString::new(auth.to_string())),
+        &mut revisions,
+        &mut HashMap::new(),
+    );
+    assert_eq!(repeated.status, SubscriptionImportStatus::Existing);
+    assert_eq!(repeated.entry_id, Some(id));
 }

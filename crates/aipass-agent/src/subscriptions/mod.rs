@@ -35,7 +35,7 @@ use allowance::timestamp;
 pub(crate) mod cli_accounts;
 mod commandcode;
 pub(crate) mod cursor;
-mod devin;
+pub(crate) mod devin;
 mod factory;
 pub(crate) mod feedback;
 mod grok;
@@ -47,8 +47,9 @@ mod mimo;
 mod native_cli;
 pub(crate) mod native_import;
 mod qoder;
+mod renewal;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 mod workbuddy;
 mod zcode;
 mod zed;
@@ -64,7 +65,9 @@ impl Operation {
     pub fn send(&self, value: &Value) -> Result<()> {
         // A canceled caller still owes the durable credential ACK. All other
         // messages stop immediately, so no generation starts after cancellation.
-        if self.canceled.load(Ordering::Acquire) && value["type"] != "ack" {
+        if self.canceled.load(Ordering::Acquire)
+            && !matches!(value["type"].as_str(), Some("ack" | "reloaded"))
+        {
             return Err("subscription operation cancelled".into());
         }
         self.input
@@ -226,6 +229,7 @@ impl Context {
         Ok(())
     }
     async fn save(&mut self, mut auth: Value) -> Result<()> {
+        renewal::retain_rejections(&self.auth, &mut auth);
         if auth["nativeSource"].is_null() && !self.auth["nativeSource"].is_null() {
             auth["nativeSource"] = self.auth["nativeSource"].clone();
             auth["nativeDevice"] = self.auth["nativeDevice"].clone();
@@ -352,6 +356,8 @@ impl Context {
                 .iter()
                 .cloned()
                 .map(|mut p| {
+                    p["localAuthorization"] =
+                        json!(crate::community::supports_local_authorization(s(&p, "id")));
                     p.as_object_mut().unwrap().remove("models");
                     p
                 })
@@ -402,7 +408,14 @@ impl Context {
             .as_str()
             .filter(|v| !v.is_empty())
             .map(str::to_owned)
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            .unwrap_or_else(|| {
+                if matches!(self.provider.as_str(), "qoder" | "qoder-cn") {
+                    // Qoder derives a stable fallback from the request's opening.
+                    String::new()
+                } else {
+                    uuid::Uuid::new_v4().to_string()
+                }
+            });
         if initial["op"] == "login" {
             let method = initial["method"].as_u64().ok_or("invalid sign-in method")? as usize;
             let descriptor = config["methods"]

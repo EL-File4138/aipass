@@ -1,5 +1,6 @@
 use super::connect::*;
 use serde_json::{json, Value};
+pub mod models;
 fn double(id: u32, value: f64) -> Vec<u8> {
     [varint((id as u64) << 3 | 1), value.to_le_bytes().to_vec()].concat()
 }
@@ -401,6 +402,10 @@ impl DevinStream {
         if !self.ended {
             return Err("Devin reply ended without Connect completion".into());
         }
+        if !self.chat.begun {
+            self.status = Some(502);
+            return Err("Devin completed without text, reasoning or tool calls".into());
+        }
         if self.tool.is_some() {
             self.arguments.finish()?;
         }
@@ -471,6 +476,7 @@ mod tests {
     #[test]
     fn malformed_token_usage_returns_error_without_overflow() {
         let mut s = DevinStream::new("m", "id");
+        s.push(&frame(0, &string(3, "hello"))).unwrap();
         s.push(&frame(
             0,
             &bytes(7, &[uint(2, u64::MAX), uint(3, 1)].concat()),
@@ -499,5 +505,23 @@ mod tests {
         let out = String::from_utf8(s.finish().unwrap().concat()).unwrap();
         assert!(out.contains("\"prompt_tokens\":17"));
         assert!(out.contains("\"cached_tokens\":7"));
+    }
+
+    #[test]
+    fn completed_usage_only_reply_is_not_an_empty_success() {
+        use super::super::ProviderStream;
+        for payload in [Vec::new(), bytes(7, &[uint(2, 120), uint(3, 0)].concat())] {
+            let mut stream = DevinStream::new("model", "id");
+            assert!(stream.push(&frame(0, &payload)).unwrap().is_empty());
+            assert!(stream.push(&frame(2, b"{}")).unwrap().is_empty());
+            assert!(stream.finish().is_err());
+            assert!(!stream.has_output());
+            assert_eq!(stream.failure_status(), Some(502));
+        }
+        // Interrupted generation is still an unknown outcome, never a replay signal.
+        let mut stream = DevinStream::new("model", "id");
+        stream.push(&frame(0, &bytes(7, &uint(2, 120)))).unwrap();
+        assert!(stream.finish().is_err());
+        assert_eq!(stream.failure_status(), None);
     }
 }

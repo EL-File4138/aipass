@@ -146,7 +146,8 @@ pub(super) async fn usage(c: &Context) -> Result<Value> {
         json!({"plan":"Kimi Work","windows":[{"name":"Membership","used":(used*100.).clamp(0.,100.)}]}),
     )
 }
-pub(super) async fn generate(c: &mut Context, _model: &Value, body: Value) -> Result<()> {
+pub(super) async fn generate(c: &mut Context, _model: &Value, mut body: Value) -> Result<()> {
+    aipass_proxy_conversion::providers::kimi::normalize_tools(&mut body)?;
     c.pipe(
         send(
             c.client

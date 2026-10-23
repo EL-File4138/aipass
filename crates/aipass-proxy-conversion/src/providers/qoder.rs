@@ -3,6 +3,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
 const ALPHABET: &[u8] = b"_doRTgHZBKcGVjlvpC,@aFSx#DPuNJme&i*MzLOEn)sUrthbf%Y^w.(kIQyXqWA!";
 const NORMAL: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+pub const CLIENT_VERSION: &str = "1.1.69";
 pub fn encode_body(bytes: &[u8]) -> String {
     let s: Vec<u8> = STANDARD
         .encode(bytes)
@@ -175,7 +176,24 @@ pub fn request(chat: &Value, config: &Value, session: &str, now: u64) -> Result<
     if let Some(n) = config["max_input_tokens"].as_u64().filter(|n| *n > 0) {
         params["context_length"] = json!(n);
     }
-    let mut body = json!({"parameters":params,"business":{"product":"app","version":"1.1.49","type":"agent","id":session,"name":"AIPass session","begin_at":now,"stage":"start"},"agent_id":"agent_common","task_id":"common","session_type":"app","model_config":config,"system":[sys],"messages":turns});
+    for turn in &mut turns {
+        if turn["role"] == "user" {
+            turn["contents"] = turn["content"].clone();
+        }
+    }
+    if let Some(last) = turns.last_mut().filter(|m| m["role"] == "user") {
+        if let Some(block) = last["content"].as_array_mut().and_then(|blocks| {
+            blocks
+                .iter_mut()
+                .rev()
+                .find(|b| matches!(b["type"].as_str(), Some("text" | "image_url")))
+        }) {
+            block["cache_control"] = json!({"type":"ephemeral"});
+        }
+        last["contents"] = last["content"].clone();
+    }
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let mut body = json!({"request_id":request_id,"chat_record_id":request_id,"session_id":session,"parameters":params,"business":{"product":"app","version":CLIENT_VERSION,"type":"agent","id":session,"name":"AIPass session","begin_at":now,"stage":"start"},"agent_id":"agent_common","task_id":"common","session_type":"app","model_config":config,"system":[sys],"messages":turns});
     if !tools.is_empty() {
         body["tools"] = json!(tools);
     }
@@ -412,6 +430,23 @@ impl super::ProviderStream for QoderStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cache_marks_follow_the_native_user_turn_and_never_move_onto_tool_results() {
+        let chat = json!({"messages":[{"role":"user","content":"first"},{"role":"assistant","content":"answer"},{"role":"user","content":[{"type":"text","text":"second"},{"type":"image_url","image_url":{"url":"data:image/png;base64,eA=="}}]}]});
+        let body = request(&chat, &json!({}), "session", 123).unwrap();
+        assert_eq!(
+            body["messages"][1]["contents"],
+            body["messages"][1]["content"]
+        );
+        assert!(body["messages"][1]["content"][0]["cache_control"].is_null());
+        let last = body["messages"].as_array().unwrap().last().unwrap();
+        assert_eq!(last["contents"], last["content"]);
+        assert_eq!(last["content"][1]["cache_control"]["type"], "ephemeral");
+        assert!(chat["messages"][2]["content"][1]["cache_control"].is_null());
+        let chat = json!({"messages":[{"role":"user","content":"first"},{"role":"assistant","tool_calls":[{"id":"call","type":"function","function":{"name":"read","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call","content":"result"}]});
+        let body = request(&chat, &json!({}), "session", 123).unwrap();
+        assert!(!body["messages"].to_string().contains("cache_control"));
+    }
     #[test]
     fn native_tool_calls_require_valid_shapes_and_complete_json() {
         let line = |tool: Value, reason: Value| {

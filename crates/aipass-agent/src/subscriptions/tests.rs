@@ -1,4 +1,72 @@
 use super::*;
+pub(crate) async fn https_fixture(
+    body: Value,
+) -> (Client, String, tokio::task::JoinHandle<String>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let client = Client::builder()
+        .no_proxy()
+        .add_root_certificate(reqwest::Certificate::from_der(certificate.cert.der()).unwrap())
+        .build()
+        .unwrap();
+    let config = rustls::ServerConfig::builder_with_provider(Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_no_client_auth()
+    .with_single_cert(
+        vec![certificate.cert.der().clone()],
+        rustls::pki_types::PrivatePkcs8KeyDer::from(certificate.signing_key.serialize_der()).into(),
+    )
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!(
+        "https://localhost:{}",
+        listener.local_addr().unwrap().port()
+    );
+    let handle = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_rustls::TlsAcceptor::from(Arc::new(config))
+            .accept(socket)
+            .await
+            .unwrap();
+        let mut bytes = Vec::new();
+        loop {
+            let mut chunk = [0; 4096];
+            let n = socket.read(&mut chunk).await.unwrap();
+            assert!(n > 0 && bytes.len() + n <= 64 * 1024);
+            bytes.extend_from_slice(&chunk[..n]);
+            let text = String::from_utf8_lossy(&bytes);
+            if let Some((headers, body)) = text.split_once("\r\n\r\n") {
+                let length = headers
+                    .lines()
+                    .find_map(|l| {
+                        l.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .and_then(|n| n.trim().parse::<usize>().ok())
+                    })
+                    .unwrap_or(0);
+                if body.len() >= length {
+                    break;
+                }
+            }
+        }
+        let body = body.to_string();
+        socket
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        String::from_utf8(bytes).unwrap()
+    });
+    (client, url, handle)
+}
 #[test]
 fn native_catalog_runs_without_node_or_any_path_executable() {
     let result = std::process::Command::new(std::env::current_exe().unwrap())
@@ -399,4 +467,36 @@ async fn submitted_generation_failures_do_not_become_retryable_http_rejections()
             "must not return a retryable HTTP status: {headers:?}"
         );
     }
+}
+
+#[tokio::test]
+async fn completed_devin_usage_only_response_returns_502_before_success_headers() {
+    use aipass_proxy_conversion::providers::{
+        connect::{bytes, frame, uint},
+        devin::DevinStream,
+    };
+    let body = [frame(0, &bytes(7, &uint(2, 120))), frame(2, b"{}")].concat();
+    let response = Response::from(hyper::Response::builder().status(200).body(body).unwrap());
+    let (mut c, input, mut output) = context(Client::new());
+    let operation = tokio::spawn(async move {
+        c.converted(response, &mut DevinStream::new("m", "id"))
+            .await
+    });
+    let mut statuses = vec![];
+    let mut ended = false;
+    while let Some(event) = output.recv().await {
+        if event["type"] == "headers" {
+            statuses.push(event["value"]["status"].clone());
+        }
+        ended |= event["type"] == "end";
+        if event.get("id").is_some() {
+            input
+                .send(json!({"type":"ack","id":event["id"],"ok":true}))
+                .await
+                .unwrap();
+        }
+    }
+    operation.await.unwrap().unwrap();
+    assert_eq!(statuses, vec![json!(502)]);
+    assert!(ended);
 }

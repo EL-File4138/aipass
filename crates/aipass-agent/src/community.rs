@@ -36,6 +36,7 @@ use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 const KEY: &str = "community_account_v1";
+const KEY_V2: &str = "community_account_v2";
 const MAX_FRAME: u64 = 8 * 1024 * 1024;
 const ACCOUNT_BUSY: &str = "community account is busy; retry after its current request";
 pub(crate) const PROVIDERS: &[&str] = &[
@@ -110,6 +111,7 @@ impl AuthRecovery {
     fn candidate(&mut self, id: Uuid, current: &Account) -> Option<Account> {
         let (before, next) = self.pending.get(&id)?;
         if current.generation == before.generation
+            && current.local_binding == before.local_binding
             && current.revision == before.revision
             && current.auth.expose() == before.auth.expose()
         {
@@ -241,7 +243,7 @@ impl CommunityBridge {
         }
         let committed = crate::AgentClient::for_vault(self.inner.vault_dir.clone())
             .map_err(|_| "Agent unavailable")?
-            .request::<()>(&AgentRequest::CommunityAccountWrite {
+            .request::<Value>(&AgentRequest::CommunityAccountWrite {
                 entry_id: id,
                 marker: SensitiveString::new(marker),
                 revision: account.revision,
@@ -254,6 +256,7 @@ impl CommunityBridge {
             // Read back the exact revision before acknowledging that outcome.
             let saved = self.load_raw(id, marker)?;
             if saved.generation != next.generation
+                || saved.local_binding != next.local_binding
                 || saved.revision != next.revision
                 || saved.auth.expose() != next.auth.expose()
                 || saved.models != next.models
@@ -299,6 +302,14 @@ impl CommunityBridge {
         if !PROVIDERS.contains(&input.provider.as_str()) {
             return Err("unknown community provider".into());
         }
+        if target.is_some() && input.entry_id.is_some() {
+            return Err("conflicting sign-in targets".into());
+        }
+        let reconnect = input
+            .entry_id
+            .map(|id| reconnect::Target::capture(state, id, &input.provider))
+            .transpose()
+            .map_err(|e| e.message)?;
         let mut logins = self
             .inner
             .logins
@@ -333,7 +344,7 @@ impl CommunityBridge {
         let bridge = self.clone();
         let state = Arc::downgrade(state);
         std::thread::spawn(move || {
-            let result = bridge.login_run(&state, ticket, worker, input, target);
+            let result = bridge.login_run(&state, ticket, worker, input, target, reconnect);
             if let Ok(mut logins) = bridge.inner.logins.lock() {
                 if let Some(login) = logins.get_mut(&ticket) {
                     if login.status.status == "pending" {
@@ -360,6 +371,7 @@ impl CommunityBridge {
         mut worker: Adapter,
         input: CommunityLoginInput,
         target: Option<Uuid>,
+        reconnect: Option<reconnect::Target>,
     ) -> Result<Uuid, String> {
         worker.process.send(&json!({"op":"login","provider":input.provider,"method":input.method,"inputs":input.inputs,"key":input.api_key,"nativeVerifyOnly":target.is_some()}))?;
         let mut auth = None;
@@ -395,6 +407,7 @@ impl CommunityBridge {
                     let account = Account {
                         provider: input.provider,
                         generation: Uuid::new_v4(),
+                        local_binding: None,
                         auth: auth.ok_or("sign-in returned no credentials")?,
                         models,
                         revision: 0,
@@ -403,6 +416,14 @@ impl CommunityBridge {
                         identity: frame["value"]["identity"].as_str().unwrap_or("").to_owned(),
                     };
                     let state = state.upgrade().ok_or("Agent stopped")?;
+                    let account_lock = reconnect
+                        .as_ref()
+                        .map(|t| self.account_lock(t.id()))
+                        .transpose()?;
+                    let _account_guard = account_lock
+                        .as_ref()
+                        .map(|l| l.try_lock().map_err(|_| ACCOUNT_BUSY))
+                        .transpose()?;
                     // Holding the ticket lock makes cancellation linearizable with persistence.
                     let mut logins = self
                         .inner
@@ -416,8 +437,10 @@ impl CommunityBridge {
                     {
                         return Err("sign-in cancelled".into());
                     }
-                    let id = with_vault(&state, false, |vault| {
-                        let id = if let Some(id) = target {
+                    let id = reconnect::with_session(&state, reconnect.as_ref(), |vault| {
+                        let id = if let Some(reconnect) = &reconnect {
+                            reconnect.commit(vault, account)?
+                        } else if let Some(id) = target {
                             if account.provider != "codex" {
                                 return Err(invalid("native reauthentication requires Codex"));
                             }
@@ -427,7 +450,7 @@ impl CommunityBridge {
                             id
                         } else if matches!(
                             account.provider.as_str(),
-                            "codex" | "grok" | "copilot" | "gemini-cli"
+                            "codex" | "grok" | "copilot" | "gemini-cli" | "devin"
                         ) {
                             let auth = serde_json::from_str(account.auth.expose())
                                 .map_err(ServiceError::internal)?;
@@ -586,6 +609,7 @@ impl CommunityBridge {
         let lock = self.account_lock(id)?;
         let _guard = lock.try_lock().map_err(|_| ACCOUNT_BUSY)?;
         let mut account = self.load(id, marker)?;
+        let marker = format!("aipass:community:{}", account.generation);
         let epoch = self
             .inner
             .recovery
@@ -600,8 +624,11 @@ impl CommunityBridge {
         loop {
             let frame = worker.next()?;
             match frame["type"].as_str() {
+                Some("reload") => {
+                    self.reread_for_worker(id, &marker, &mut account, &worker, &frame)?
+                }
                 Some("auth" | "models" | "feedback") => {
-                    let result = self.update(id, marker, &mut account, &frame, epoch);
+                    let result = self.update(id, &marker, &mut account, &frame, epoch);
                     worker.ack(&frame, result.is_ok())?;
                     if frame["type"] != "feedback" {
                         result?;
@@ -614,7 +641,7 @@ impl CommunityBridge {
     }
     fn generate(
         &self,
-        target: ResolvedTarget,
+        mut target: ResolvedTarget,
         mut payload: Value,
         session: Option<String>,
         protocol: aipass_proxy::Protocol,
@@ -635,6 +662,7 @@ impl CommunityBridge {
                 return Err("request cancelled".into());
             }
             let mut account = self.load(id, &target.api_key)?;
+            target.api_key = format!("aipass:community:{}", account.generation);
             let epoch = self
                 .inner
                 .recovery
@@ -655,7 +683,9 @@ impl CommunityBridge {
             initial["owner"] = json!(target.config.id);
             initial["binding"] = json!(format!(
                 "{:x}",
-                sha2::Sha256::digest(target.api_key.as_bytes())
+                sha2::Sha256::digest(
+                    format!("{}:{:?}", target.api_key, account.local_binding).as_bytes()
+                )
             ));
             worker.process.send(&initial)?;
             let mut receiver = Some(body_rx);
@@ -664,6 +694,9 @@ impl CommunityBridge {
             loop {
                 let frame = worker.next()?;
                 match frame["type"].as_str() {
+                    Some("reload") => {
+                        self.reread_for_worker(id, &target.api_key, &mut account, &worker, &frame)?
+                    }
                     Some("auth" | "models" | "feedback") => {
                         let result = self.update(id, &target.api_key, &mut account, &frame, epoch);
                         worker.ack(&frame, result.is_ok())?;
@@ -759,6 +792,12 @@ impl CommunityBridge {
 }
 
 mod account;
+mod device;
+pub(crate) use device::supports_local_authorization;
+mod reconnect;
+mod renewal;
+mod scope;
+pub(crate) use scope::read_runtime;
 mod backend;
 mod console;
 mod display;
@@ -768,7 +807,7 @@ pub(crate) use history::owner as history_owner;
 mod quota;
 pub(crate) use account::{
     bind_cli, ensure_owner, identity, identity_value, is_account, legacy_scope_matches, read,
-    register_cli, write,
+    register_cli, stored, write,
 };
 use account::{decode, invalid, persist, register_cli_with_models, Account};
 #[cfg(test)]

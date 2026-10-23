@@ -169,7 +169,7 @@ pub(super) async fn fresh(c: &mut Context) -> Result<()> {
     }
     let site = site(&c.provider)?;
     let _guard = c.refresh_guard()?;
-    let value=crate::subscription_import::reader::PrivateAuth(json_request(c.client.post(format!("{}/cloudide/api/v3/trae/oauth/ExchangeToken",site.auth)).json(&json!({"ClientID":CLIENT,"ClientSecret":"-","RefreshToken":c.auth["refresh"],"UserID":c.auth["metadata"]["userId"]}))).await?);
+    let value=crate::subscription_import::reader::PrivateAuth(c.refresh_json("refresh", c.client.post(format!("{}/cloudide/api/v3/trae/oauth/ExchangeToken",site.auth)).json(&json!({"ClientID":CLIENT,"ClientSecret":"-","RefreshToken":c.auth["refresh"],"UserID":c.auth["metadata"]["userId"]}))).await?);
     let jwt = if value.0["Result"].is_object() {
         &value.0["Result"]
     } else if value.0["result"].is_object() {

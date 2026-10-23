@@ -200,12 +200,14 @@ pub(super) async fn usage(c: &mut Context) -> Result<Value> {
         break;
     }
     let v = value.ok_or("Factory usage unavailable")?;
+    parse_usage(&v, &c.models)
+}
+fn parse_usage(v: &Value, models: &Value) -> Result<Value> {
     if !v["limits"]["standard"].is_object() {
         return Err("Factory account reported no limits".into());
     }
     let mut windows = Vec::new();
-    let core: Vec<_> = c
-        .models
+    let core: Vec<_> = models
         .as_object()
         .into_iter()
         .flatten()
@@ -237,12 +239,15 @@ pub(super) async fn usage(c: &mut Context) -> Result<Value> {
             }
         }
     }
-    if let Some(cents) = v["extraUsageBalanceCents"].as_f64() {
-        windows.push(
-            json!({"name":"Extra usage","display":format!("${:.2}",cents/100.0),"aside":true}),
-        );
+    // SubscriptionSnapshot carries balances separately; a display-only window
+    // loses its amount at that boundary and would render as unknown usage.
+    let balance = device::percent(&v["extraUsageBalanceCents"])
+        .filter(|n| *n >= 0.0)
+        .map(|n| format!("${:.2}", n / 100.0));
+    if windows.is_empty() && balance.is_none() {
+        return Err("Factory returned no allowance or balance data".into());
     }
-    Ok(json!({"windows":windows}))
+    Ok(json!({"windows":windows,"balance":balance}))
 }
 pub(super) fn normalize_models(models: &mut Value) {
     for (_, model) in models.as_object_mut().into_iter().flatten() {
@@ -369,6 +374,20 @@ fn generation(c: &Context, wire: &str, body: &Value) -> Result<RequestBuilder> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn extra_balance_survives_the_snapshot_boundary_including_explicit_zero() {
+        for (cents, expected) in [(250, "$2.50"), (0, "$0.00")] {
+            let out = parse_usage(
+                &json!({"limits":{"standard":{"fiveHour":{"usedPercent":100}}},
+                "extraUsageBalanceCents":cents,"extraUsageAllowed":true}),
+                &json!({"gpt-5":{}}),
+            )
+            .unwrap();
+            assert_eq!(out["balance"], expected);
+            assert_eq!(out["windows"].as_array().unwrap().len(), 1);
+            assert_eq!(out["windows"][0]["aside"], cents > 0);
+        }
+    }
     #[test]
     fn cached_openai_catalog_and_request_agree_about_sampling() {
         let mut models = json!({"gpt":{"wire":"responses","temperature":true,"variants":{"high":{}}},"claude":{"wire":"anthropic","temperature":true}});

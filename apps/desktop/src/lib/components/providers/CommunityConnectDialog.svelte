@@ -6,10 +6,11 @@
   import { t } from "../../stores/i18n";
   type Prompt = { retain?: boolean; key: string; type: string; message: string; messageKey?: string; placeholder?: string; options?: { label: string; value: string; labelKey?: string }[] };
   type Method = { index: number; type: string; label: string; labelKey?: string; hintKey?: string; native: boolean; prompts: Prompt[] };
-  type Provider = { id: string; name: string; nameKey?: string; methods: Method[] };
+  type Provider = { id: string; name: string; nameKey?: string; localAuthorization?: boolean; methods: Method[] };
   type Login = { ticket: string; status: string; url?: string; instructions?: string; userCode?: string; method?: string; entryId?: string; error?: string };
   export let invokeTauri: <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
   export let initialProvider = "";
+  export let entryId: string | undefined = undefined;
   export let onBack: (() => void) | undefined = undefined;
   export let onClose: () => void;
   export let onConnected: (id: string) => void | Promise<void>;
@@ -57,7 +58,7 @@
   onDestroy(() => { destroyed = true; epoch++; apiKey = ""; code = ""; if (timer) clearTimeout(timer); if (login?.status === "pending") void invokeTauri("community_login_cancel", { ticket: login.ticket }).catch(() => {}); for (const key of Object.keys(inputs)) delete inputs[key]; });
   async function load() {
     loading = true; error = "";
-    try { const result = await invokeTauri<Provider[]>("community_catalog"); if (!destroyed) { providers = result; providerId = result.some(p => p.id === initialProvider) ? initialProvider : result[0]?.id ?? ""; choose(); } }
+    try { const result = await invokeTauri<Provider[]>("community_catalog"); if (!destroyed) { providers = result.filter(p => !entryId || p.id === initialProvider); providerId = providers.some(p => p.id === initialProvider) ? initialProvider : providers[0]?.id ?? ""; choose(); } }
     catch (e) { if (!destroyed) error = String(e); }
     finally { if (!destroyed) loading = false; }
   }
@@ -90,7 +91,7 @@
     const values = { ...inputs };
     for (const prompt of method.prompts) if (prompt.type === "select" && !values[prompt.key]) values[prompt.key] = prompt.options?.[0]?.value ?? "";
     try {
-      const result = await invokeTauri<Login>("community_login_start", { input: { provider: providerId, method: methodIndex, inputs: values, apiKey: apiKey || null } });
+      const result = await invokeTauri<Login>("community_login_start", { input: { provider: providerId, method: methodIndex, inputs: values, apiKey: apiKey || null, ...(entryId ? { entryId } : {}) } });
       apiKey = ""; inputs = Object.fromEntries(method.prompts.filter(p => p.type === "select" || p.retain === true).map(p => [p.key, values[p.key]]));
       if (destroyed) { await invokeTauri("community_login_cancel", { ticket: result.ticket }); return; }
       login = result; void poll(result.ticket, requestEpoch);
@@ -123,7 +124,7 @@
         <div class="dialog-heading">
           <span class="heading-icon"><KeyRound size={18} /></span>
           <div>
-            <Dialog.Title class="provider-dialog-title">{$t(initialProvider ? "oauthConnect.title" : "communityConnect.title")}</Dialog.Title>
+            <Dialog.Title class="provider-dialog-title">{$t(entryId ? "oauthConnect.reauth" : initialProvider ? "oauthConnect.title" : "communityConnect.title")}</Dialog.Title>
             <Dialog.Description class="dialog-description">{$t("communityConnect.description")}</Dialog.Description>
           </div>
         </div>
@@ -132,7 +133,8 @@
       {#if loading}
         <div class="loading-state" aria-busy="true">{$t("common.loading")}</div>
       {:else if providers.length}
-        <div class="connect-layout">
+        <div class="connect-layout" class:reconnect-layout={entryId}>
+          {#if !entryId}
           <aside class="provider-picker">
             <label class="provider-search">
               <Search size={14} aria-hidden="true" />
@@ -151,6 +153,7 @@
             </nav>
             <span class="catalog-count">{$t("communityConnect.providerCount", { count: providers.length })}</span>
           </aside>
+          {/if}
           <div bind:this={connectionBody} use:scrollMask class="connection-body">
             {#if onBack}<button type="button" disabled={busy} class="back" on:click={onBack}><ArrowLeft size={14} />{$t("oauthConnect.changeProvider")}</button>{/if}
             {#if error}<Banner tone="danger">{error}</Banner>{/if}
@@ -201,7 +204,7 @@
         <div class="loading-state">{#if error}<Banner tone="danger">{error}</Banner>{/if}<Button on:click={load}>{$t("providerRuntime.retry")}</Button></div>
       {/if}
       <footer class="modal-footer">
-        <span class="security-note"><ShieldCheck size={14} />{$t(cliOwned ? "subscriptionCli.localNote" : "communityConnect.localNote")}</span>
+        <span class="security-note"><ShieldCheck size={14} />{$t(cliOwned ? "subscriptionCli.localNote" : provider?.localAuthorization && method?.type !== "api" ? "communityConnect.deviceNote" : "communityConnect.localNote")}</span>
         {#if busy && !login}<Button variant="primary" loading>{$t("communityConnect.waiting")}</Button>
         {:else if busy}<Button variant="secondary" on:click={cancel}>{$t("common.cancel")}</Button>
         {:else}<Button variant="primary" disabled={loading || !method || (cliOwned && (checkingCli || !cliStatus?.available)) || (method.type === "api" && !apiKey.trim())} on:click={start}>{$t("oauthConnect.continue")}<ArrowRight size={14} /></Button>{/if}
@@ -219,6 +222,7 @@
   .heading-icon { display: grid; place-items: center; width: 36px; height: 36px; flex-shrink: 0; border: 1px solid var(--border); border-radius: 10px; color: var(--text-secondary); }
   :global(.community-dialog .dialog-description) { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .connect-layout { display: grid; grid-template-columns: 224px minmax(0, 1fr); min-height: 0; height: 374px; }
+  .reconnect-layout { grid-template-columns: minmax(0, 1fr); height: auto; max-height: 374px; }
   .provider-picker { min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px 12px 12px; border-right: 1px solid var(--divider); background: var(--surface-2); }
   .provider-search { display: flex; align-items: center; gap: 7px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text-tertiary); }
   .provider-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }

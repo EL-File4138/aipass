@@ -5,6 +5,8 @@ use uuid::Uuid;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommunityLoginInput {
+    #[serde(default)]
+    pub entry_id: Option<Uuid>,
     pub provider: String,
     pub method: usize,
     #[serde(default)]

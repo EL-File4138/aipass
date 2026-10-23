@@ -153,7 +153,7 @@ pub(crate) fn device() -> Result<String> {
     }
 }
 
-pub(super) struct PrivateJson(Value);
+pub(super) struct PrivateJson(pub(super) Value);
 impl std::ops::Deref for PrivateJson {
     type Target = Value;
     fn deref(&self) -> &Value {
@@ -209,26 +209,7 @@ fn read_inner(provider: &str, root: &Path, cached: bool) -> Result<PrivateJson> 
                 json!({"access":tokens["access_token"],"accountId":format!("{}:{account}", if user.is_empty() {s(&id,"sub")} else {user}),"workspace":account,"expires":claims(s(tokens,"access_token"))["exp"]}),
             )
         }
-        "grok" => {
-            let raw = PrivateJson(read_json(&dir.join("auth.json"))?);
-            let item = raw
-                .as_object()
-                .into_iter()
-                .flatten()
-                .find_map(|(issuer, v)| {
-                    (issuer.trim_end_matches('/') == "https://auth.x.ai" && !s(v, "key").is_empty())
-                        .then_some(v)
-                })
-                .ok_or("Grok Build is not signed in")?;
-            let expiry = item["expires_at"]
-                .as_str()
-                .and_then(|s| {
-                    time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
-                        .ok()
-                })
-                .map(|t| t.unix_timestamp());
-            Ok(json!({"access":item["key"],"accountId":item["email"],"expires":expiry}))
-        }
+        "grok" => return grok::read_once(root),
         "gemini-cli" => {
             // This opt-in backend migrates/deletes oauth_creds.json and may leave
             // an obsolete file behind. Never import it as the active sign-in.

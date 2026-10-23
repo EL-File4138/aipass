@@ -332,13 +332,13 @@
       (selected.quota.label || selected.quota.limit || selected.quota.used || selected.quota.remaining || selected.quota.resetAt)
   );
   let communityRefreshing = false;
-  let communityError = "";
+  let communityError = "", communityEpoch = 0;
   async function refreshCommunity() {
     if (!selected || communityRefreshing) return;
-    const id = selected.id; communityRefreshing = true; communityError = "";
-    try { const subscription = await invokeTauri<NonNullable<typeof selected>["subscription"]>("community_refresh", { id }); if (selected?.id === id) selected = { ...selected, subscription }; }
-    catch (error) { if (selected?.id === id) communityError = String(error); }
-    finally { communityRefreshing = false; }
+    const id = selected.id, epoch = ++communityEpoch; communityRefreshing = true; communityError = "";
+    try { const subscription = await invokeTauri<NonNullable<typeof selected>["subscription"]>("community_refresh", { id }); if (selected?.id === id && epoch === communityEpoch) selected = { ...selected, subscription }; }
+    catch (error) { if (selected?.id === id && epoch === communityEpoch) communityError = String(error); }
+    finally { if (epoch === communityEpoch) communityRefreshing = false; }
   }
   $: isSubscription = selected?.credentialKind === "oauth";
   $: hasSubscription = Boolean(selected?.subscription);
@@ -349,7 +349,7 @@
   // reloads swap the `selected` reference for the same id and must not interrupt
   // an open dialog; the usage dialog re-renders from the refreshed props anyway.
   $: if ((selected?.id ?? "") !== lastDialogEntryId) {
-    lastDialogEntryId = selected?.id ?? "";
+    lastDialogEntryId = selected?.id ?? ""; communityEpoch++; communityError = ""; communityRefreshing = false;
     pricingSecretId = "";
     pricingDialogOpen = false;
     usageDialogOpen = false;
@@ -945,7 +945,7 @@
 
         {#if hasSubscription || isSubscription}
           {#key selected.id}
-            <SubscriptionUsageCard {invokeTauri} subscription={selected.subscription} refreshing={communityRefreshing} error={communityError}
+            <SubscriptionUsageCard {invokeTauri} entryId={selected.id} providerId={selected.providerId ?? undefined} subscription={selected.subscription} refreshing={communityRefreshing} error={communityError}
               refreshable={Boolean(isSubscription || selected.subscription?.source.startsWith("community:") || selected.subscription?.source === "claude-cli")} onRefresh={refreshCommunity} />
           {/key}
         {/if}

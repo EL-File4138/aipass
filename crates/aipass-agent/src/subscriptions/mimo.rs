@@ -256,6 +256,20 @@ pub(super) async fn usage(c: &mut Context) -> Result<Value> {
             .get(format!("{root}/user/xiaomi/subscription/self")),
     )?)
     .await?;
+    // Propagate a failed allowance read so the shared refresh path retains the
+    // previous snapshot as stale instead of replacing it with plan-only data.
+    let usage = json_request(signed(c, c.client.get(format!("{root}/user/usage")))?).await?;
+    parse_usage(&plan, &usage)
+}
+fn parse_usage(plan: &Value, usage: &Value) -> Result<Value> {
+    let data = |v: &Value| {
+        v.is_object()
+            && v.get("code").is_none_or(|code| code.as_i64() == Some(0))
+            && v["data"].is_object()
+    };
+    if !data(plan) || !data(usage) {
+        return Err("MiMo returned an invalid plan or allowance response".into());
+    }
     let current = &plan["data"]["current"];
     let tier = match current["planTier"].as_u64() {
         Some(1) => "Starter",
@@ -265,13 +279,17 @@ pub(super) async fn usage(c: &mut Context) -> Result<Value> {
         _ => "Free",
     };
     let mut out = json!({"plan":current["title"].as_str().filter(|s|!s.is_empty()).unwrap_or(tier),"until":server_time(&current["endTime"])});
-    if let Ok(v) = json_request(signed(c, c.client.get(format!("{root}/user/usage")))?).await {
-        if let (Some(percent), Some(_)) = (
-            v["data"]["percent"].as_f64(),
-            v["data"]["resetDate"].as_str(),
-        ) {
-            out["windows"] = json!([{"name":"7 days","used":(100.0-percent).clamp(0.0,100.0),"span":604800,"resetsAt":server_time(&v["data"]["resetDate"])}]);
+    let reset = &usage["data"]["resetDate"];
+    if !reset.is_null() {
+        let percent = device::percent(&usage["data"]["percent"])
+            .filter(|n| (0.0..=100.0).contains(n))
+            .ok_or("MiMo returned an invalid allowance percentage")?;
+        let reset = server_time(reset);
+        if reset.is_null() {
+            return Err("MiMo returned an invalid allowance reset date".into());
         }
+        out["windows"] =
+            json!([{"name":"7 days","used":100.0-percent,"span":604800,"resetsAt":reset}]);
     }
     Ok(out)
 }
@@ -297,4 +315,43 @@ pub(super) async fn generate(c: &mut Context, _: &Value, mut body: Value) -> Res
         return c.pipe(response).await;
     }
     Err("MiMo session refused".into())
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+
+    #[test]
+    fn business_errors_cannot_replace_the_previous_allowance() {
+        let plan = json!({"code":0,"data":{"current":{"planTier":2}}});
+        for bad in [json!({"code":401,"data":{}}), json!({}), json!([])] {
+            assert!(parse_usage(&plan, &bad).is_err());
+            assert!(parse_usage(&bad, &json!({"code":0,"data":{}})).is_err());
+        }
+        for data in [
+            json!({"percent":-1,"resetDate":"2026-10-30"}),
+            json!({"percent":50,"resetDate":"invalid"}),
+        ] {
+            assert!(parse_usage(&plan, &json!({"code":0,"data":data})).is_err());
+        }
+    }
+
+    #[test]
+    fn remaining_percent_and_free_offer_keep_distinct_meanings() {
+        let out = parse_usage(
+            &json!({"code":0,"data":{"current":{"planTier":2}}}),
+            &json!({"code":0,"data":{"percent":0,"resetDate":"2026-10-30 08:00:00"}}),
+        )
+        .unwrap();
+        assert_eq!(out["plan"], "Plus");
+        assert_eq!(out["windows"][0]["used"], 100.0);
+        assert_eq!(out["windows"][0]["resetsAt"], "2026-10-30T08:00:00+08:00");
+        let out = parse_usage(
+            &json!({"code":0,"data":{"current":null}}),
+            &json!({"code":0,"data":{"percent":100,"resetDate":null}}),
+        )
+        .unwrap();
+        assert_eq!(out["plan"], "Free");
+        assert!(out["windows"].is_null());
+    }
 }

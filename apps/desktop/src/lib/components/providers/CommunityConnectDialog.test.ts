@@ -220,3 +220,20 @@ test("Kilo failure retains the organization scope while erasing the key", async 
   expect(input.value).toBe("");expect(org.value).toBe("org-a");
   expect(invoke).toHaveBeenCalledWith("community_login_start",{input:{provider:"kilo-gateway",method:0,inputs:{organization:"org-a"},apiKey:"synthetic-key"}});
 });
+
+test("reconnect pins the original provider and sends its existing entry id", async () => {
+  setLocale("en");
+  const invoke = vi.fn(async (command: string) => command === "community_catalog" ? [...catalog, {
+    id: "qoder", name: "Qoder", localAuthorization: true,
+    methods: [{ index: 0, type: "oauth", label: "Sign in", native: false, prompts: [] }]
+  }] : pending);
+  app = mount(Dialog, { target: document.body, props: { invokeTauri: invoke as never, entryId: "existing-account", initialProvider: "qoder", onClose: vi.fn(), onConnected: vi.fn() } });
+  await vi.waitFor(() => { flushSync(); expect(button("Continue").disabled).toBe(false); });
+  expect(document.querySelector(".provider-picker")).toBeNull();
+  expect(document.body.textContent).toContain("excluded from sync and backups");
+  expect(document.body.textContent).not.toContain("Factory");
+  button("Continue").click();
+  await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith("community_login_start", { input: {
+    provider: "qoder", method: 0, inputs: {}, apiKey: null, entryId: "existing-account"
+  } }));
+});

@@ -15,7 +15,13 @@ pub(crate) fn write_runtime(
         write(vault, id, marker, revision, raw)?;
         if before.feedback != next.feedback {
             let entry = vault.get_provider_summary(id).map_err(map_vault_error)?;
-            if let Some(snapshot) = observed_snapshot(entry.subscription, &next) {
+            // Revocation belongs to this device's authorization, while billing
+            // windows belong to the account. Do not sync a local login failure.
+            let local_revoked = next.local_binding.is_some() && next.feedback.revoked.is_some();
+            if let Some(snapshot) = (!local_revoked)
+                .then(|| observed_snapshot(entry.subscription, &next))
+                .flatten()
+            {
                 vault
                     .update_provider_subscription(id, Some(snapshot))
                     .map_err(map_vault_error)?;
@@ -84,9 +90,9 @@ fn observed_snapshot(
 
 pub(super) fn usage(vault: &Vault, id: Uuid, mut stored: Value) -> Value {
     let account = vault
-        .provider_runtime_extension(id, KEY)
+        .reveal_secret(id)
         .ok()
-        .flatten()
+        .and_then(|marker| read(vault, id, &marker).ok())
         .and_then(|raw| decode(raw.expose()).ok());
     let Some(account) = account else {
         return stored;

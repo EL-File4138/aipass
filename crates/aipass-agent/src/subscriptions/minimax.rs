@@ -114,7 +114,8 @@ pub(super) async fn fresh(c: &mut Context) -> Result<()> {
     let site = site(&c.provider)?;
     let _guard = c.refresh_guard()?;
     let v = crate::subscription_import::reader::PrivateAuth(
-        json_request(
+        c.refresh_json(
+            "refresh",
             c.client
                 .post(format!("{}/oauth2/token", site.account))
                 .form(&[
@@ -333,48 +334,12 @@ pub(super) async fn usage(c: &Context) -> Result<Value> {
                 .header("X-Group-Id", group),
         )
         .await?;
-        result["windows"] = json!(plan_windows(&v));
+        result["windows"] = json!(super::plan_quota::minimax(&v)?);
     }
     if has_plan.is_none() && result["balance"].is_null() {
         return Err("MiniMax returned no membership allowance".into());
     }
     Ok(result)
-}
-fn plan_windows(v: &Value) -> Vec<Value> {
-    let mut windows = vec![];
-    for row in v["model_remains"].as_array().into_iter().flatten() {
-        let name = s(row, "model_name");
-        if name.is_empty() {
-            continue;
-        }
-        for (prefix, label, span, end) in [
-            ("current_interval", "Allowance", 0, "end_time"),
-            ("current_weekly", "Weekly", 604800, "weekly_end_time"),
-        ] {
-            let status = row[format!("{prefix}_status")].as_i64();
-            if status == Some(3) {
-                continue;
-            }
-            let used = if status == Some(2) {
-                Some(100.)
-            } else {
-                device::percent(&row[format!("{prefix}_remaining_percent")])
-                    .filter(|n| (0.0..=100.0).contains(n))
-                    .map(|n| 100. - n)
-            };
-            if let Some(used) = used {
-                let mut w = json!({"name":format!("{name} {label}"),"used":used.clamp(0.,100.),"resetsAt":device::date(&row[end])});
-                if span > 0 {
-                    w["span"] = json!(span);
-                }
-                if !name.eq_ignore_ascii_case("general") {
-                    w["aside"] = json!(true);
-                }
-                windows.push(w);
-            }
-        }
-    }
-    windows
 }
 pub(super) async fn generate(c: &mut Context, m: &Value, mut body: Value) -> Result<()> {
     match s(m, "thinkingMode") {
@@ -415,9 +380,9 @@ mod tests {
             site("minimax-code").unwrap().account,
             site("minimax-code-global").unwrap().account
         );
-        let ws = plan_windows(
+        let ws = super::super::plan_quota::minimax(
             &json!({"model_remains":[{"model_name":"general","current_interval_remaining_percent":0,"current_weekly_status":3},{"model_name":"other","current_interval_status":2},{"model_name":"unknown"},{"model_name":"invalid","current_interval_remaining_percent":-1}]}),
-        );
+        ).unwrap();
         assert_eq!(ws.len(), 2);
         assert_eq!(ws[0]["used"], 100.);
         assert_eq!(ws[1]["aside"], true);

@@ -145,12 +145,15 @@ fn same_binding(
     source: &SubscriptionImportSource,
     incoming: &SensitiveString,
 ) -> ServiceResult<bool> {
-    let Some(raw) = vault
-        .provider_runtime_extension(id, "community_account_v1")
-        .map_err(map_vault_error)?
-    else {
+    let Some(raw) = crate::community::stored(vault, id)? else {
         return Ok(false);
     };
+    let marker = vault.reveal_secret(id).map_err(map_vault_error)?;
+    let live = crate::community::read(vault, id, &marker);
+    if live.is_err() && crate::community::supports_local_authorization(&source.provider) {
+        return Ok(false);
+    }
+    let raw = live.unwrap_or_else(|_| SensitiveString::new(raw.expose()));
     let bundle =
         PrivateAuth(serde_json::from_str(raw.expose()).map_err(|_| validation("invalid binding"))?);
     let old = PrivateAuth(
@@ -165,6 +168,14 @@ fn same_binding(
         .and_then(|s| sources::normalize(s).ok());
     if bound != Some(sources::normalize(source.clone())?)
         || old.0["nativeDevice"] != next.0["nativeDevice"]
+    {
+        return Ok(false);
+    }
+    // A verified scoped import must upgrade a legacy Devin binding even when
+    // its source is unchanged. Ordinary saves cannot change account identity.
+    if source.provider == "devin"
+        && old.0.get("devinScope").is_none()
+        && next.0["devinScope"].is_object()
     {
         return Ok(false);
     }

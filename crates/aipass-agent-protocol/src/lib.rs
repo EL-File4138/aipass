@@ -54,8 +54,8 @@ pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 // Version 17 adds native credential switching and target-bound reauthentication.
 // Version 18 requires credential-bound subscription response feedback.
 // Version 19 requires the expanded installed-Agent catalog and native-OS config helpers.
-// Older residents cannot parse the added tool IDs or enforce installation before writes.
-pub const AGENT_PROTOCOL_VERSION: u32 = 19;
+// Version 20 requires device-local managed grants and target-bound reconnect.
+pub const AGENT_PROTOCOL_VERSION: u32 = 20;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "method", rename_all = "snake_case")]
@@ -1440,6 +1440,7 @@ mod tests {
             AgentRequest::CommunityCatalog,
             AgentRequest::CommunityLoginStart {
                 input: CommunityLoginInput {
+                    entry_id: None,
                     provider: "factory".into(),
                     method: 0,
                     inputs: Default::default(),

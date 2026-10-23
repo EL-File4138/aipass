@@ -54,31 +54,41 @@ pub(super) fn snapshot(provider: &str, value: &Value) -> SubscriptionSnapshot {
     }
 }
 pub(crate) fn refresh(state: &Arc<AgentState>, id: Uuid) -> ServiceResult<SubscriptionSnapshot> {
-    let (marker, provider, console_url, proxy, bridge) = with_vault(state, false, |vault| {
-        let marker = SensitiveString::new(vault.reveal_secret(id).map_err(map_vault_error)?);
-        let account = decode(read(vault, id, marker.expose())?.expose())?;
-        let prefs = crate::provider_runtime::load(vault, id)?;
-        let mut proxy = state
-            .proxy
-            .lock()
-            .map_err(|_| invalid("proxy unavailable"))?;
-        let global = proxy.load_config(vault)?.upstream_proxy;
-        let outbound = crate::provider_runtime::outbound(&prefs)
-            .map_err(invalid)?
-            .unwrap_or(global);
-        let console_url = super::console::account_url(&account);
-        Ok((
-            marker,
-            account.provider,
-            console_url,
-            outbound,
-            proxy.community_bridge(),
-        ))
+    let initial_marker = with_vault(state, false, |vault| {
+        vault
+            .reveal_secret(id)
+            .map(SensitiveString::new)
+            .map_err(map_vault_error)
     })?;
+    super::scope::read_runtime(state, id, initial_marker.expose())?;
+    let (marker, provider, console_url, proxy, bridge, local) =
+        with_vault(state, false, |vault| {
+            let marker = SensitiveString::new(vault.reveal_secret(id).map_err(map_vault_error)?);
+            let account = decode(read(vault, id, marker.expose())?.expose())?;
+            let prefs = crate::provider_runtime::load(vault, id)?;
+            let mut proxy = state
+                .proxy
+                .lock()
+                .map_err(|_| invalid("proxy unavailable"))?;
+            let global = proxy.load_config(vault)?.upstream_proxy;
+            let outbound = crate::provider_runtime::outbound(&prefs)
+                .map_err(invalid)?
+                .unwrap_or(global);
+            let console_url = super::console::account_url(&account);
+            Ok((
+                marker,
+                account.provider,
+                console_url,
+                outbound,
+                proxy.community_bridge(),
+                account.local_binding.is_some(),
+            ))
+        })?;
     let usage = match bridge.refresh(id, marker.expose(), &proxy) {
         Ok(usage) => usage,
         // An in-flight generation does not invalidate the previous quota reading.
         Err(error) if error == ACCOUNT_BUSY => return Err(invalid(error)),
+        Err(error) if local => return Err(invalid(error)),
         Err(error) => json!({"error":error}),
     };
     let mut snapshot = snapshot(&provider, &usage);

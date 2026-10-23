@@ -3,8 +3,11 @@
   import { Badge, Button, Card } from "@aipass/ui";
   import { AlertCircle, Gauge, RefreshCw, ExternalLink } from "lucide-svelte";
   import { t } from "../../stores/i18n";
+  import SubscriptionReconnect from "./SubscriptionReconnect.svelte";
 
   export let subscription: SubscriptionSnapshot | undefined = undefined;
+  export let entryId: string | undefined = undefined;
+  export let providerId: string | undefined = undefined;
   export let refreshing = false;
   export let invokeTauri: (<T>(command: string, args?: Record<string, unknown>) => Promise<T>) | undefined = undefined;
   let consoleError = "";
@@ -84,6 +87,7 @@
     {/if}
     {#if dates.length}<div class="dates">{#each dates as [key, value]}<span>{$t(key)}: {date(value)}</span>{/each}</div>{/if}
     <div class="usage-footer">
+      {#if reconnect && entryId && providerId && invokeTauri}{#key entryId}<SubscriptionReconnect {invokeTauri} {entryId} {providerId} onConnected={onRefresh} />{/key}{/if}
       {#if hasUsage && date(subscription?.observedAt)}<small>{$t("subscriptionUsage.updatedAt", { time: date(subscription?.observedAt) })}</small>{/if}
       {#if subscription?.consoleUrl && invokeTauri}<Button variant="secondary" size="sm" on:click={openConsole}><ExternalLink size={13} />{$t("subscriptionUsage.openConsole")}</Button>{/if}
       {#if refreshable && !consoleOnly}<Button variant="secondary" size="sm" loading={refreshing} disabled={refreshing} on:click={() => { void onRefresh(); }}><RefreshCw size={13} />{$t(failure ? "subscriptionUsage.retry" : "subscriptionUsage.refresh")}</Button>{/if}

@@ -1013,6 +1013,48 @@ Newest entries last within each section.
 - **Guardrail**: Never infer a billing product or wire from a model name. Keep missing usage unknown, exclude only explicitly free models, preserve model scopes and freshness in reset/pace ordering, and enforce configured headroom even when paid-credit/reset policies are enabled. Reject duplicate/truncated tool JSON and preserve declared string parameters in vendor templates.
 - **Watch points**: `plans`, `plan_quota`, `opencode`, `providers/trae/tools`, `community/console`, `subscription_policy`, proxy eligibility/affinity and quota UI.
 
+### Subscription allowance fields are not interchangeable across billing products
+- **Symptom**: exhausted Copilot enterprise pools disappeared, Cursor paid accounts looked exhausted, numeric Command Code resets and Factory extra balances were lost, and missing counters became zero usage.
+- **Root cause**: blanket unlimited/percentage handling in `subscriptions/cli_accounts/quota.rs`, included-only Cursor pools, raw numeric dates in `commandcode.rs`, display-only money in `factory.rs`, and default-zero counters in Kiro/Grok/Devin. Inference URLs were also reused for OpenCode billing.
+- **Fix**: normalize vendor billing semantics in Rust, preserve exact model scopes and separate purchased balances; share MiniMax account/key parsing, add Ollama allowance queries, and correct Kiro key RPC and ZCode week units. Evidence and remaining gaps: `docs/subscription-quota-audit-2026-10-23.md`.
+- **Guardrail**: test enterprise `unlimited` plus exhausted pools, precise counts versus rounded percentages, cents versus dollars, seconds versus milliseconds, missing versus explicit zero, and paid budgets alongside remaining included allowance. Trace every field through the typed snapshot and routing; a display-only amount is not a balance. Treat Magpie as protocol evidence, not proof of live account compatibility.
+- **Watch points**: provider usage parsers, `community/quota.rs`, `QuotaWindow` model scopes and freshness, `SubscriptionUsageCard.test.ts`, and regional/account billing endpoints.
+
+### Vendor task identity is distinct from a model call's request ID
+- **Symptom**: Qoder tool-loop calls repeatedly sent a fresh start time and stage `start`; native request/session IDs and cache-envelope fields were absent.
+- **Root cause**: `subscriptions/qoder.rs::generate` built each call from the current clock; the converter modeled only one request, not the user prompt it answers.
+- **Fix**: retain bounded, credential-free task metadata under the existing account generation/session; keep request IDs fresh, native task IDs/start time stable and user cache markers scoped. Recognize DSH and WorkBuddy session headers through existing affinity resolution.
+- **Guardrail**: test tool continuations, new prompts, account/session separation, changed system text, retries, expiry, eviction and late completions. Store prompt hashes, not plaintext. Do not claim vendor billing savings without account measurements or replay uncertain generation.
+- **Watch points**: `subscriptions/qoder/task.rs`, conversion `providers/qoder.rs`, proxy session affinity, `docs/subscription-quota-audit-2026-10-23.md`.
+
+### Provider compatibility rewrites must preserve instructions and meaningful completion
+- **Symptom**: Factory removed instructions joined to its billing header, Kimi Work rejected valid tool-schema shapes, and Devin completed usage-only replies as empty success.
+- **Root cause**: whole-block metadata filtering, direct schema passthrough and unconditional stream completion in the provider converters.
+- **Fix**: remove only the billing line; normalize schema locations with bounded reference handling; reject a fully completed Devin stream with no content before sending success headers. Read Devin's current cost tiers before applying account-wide quota gates.
+- **Guardrail**: preserve literal defaults/examples, constraints and block metadata; test idempotent rewrites. Distinguish a confirmed content-free completion from malformed/truncated streams and post-content errors, whose outcome must remain non-replayable. Exempt only verified free variants and all-free aliases.
+- **Watch points**: conversion `providers/{devin,kimi,qoder}.rs`, `factory_request`, Agent `Context::converted`, Devin quota scope, and their regression tests.
+
+### Subscription renewal must validate the source after failure
+- **Symptom**: early Grok 401s could remain stuck despite future expiry; concurrent Agents could renew the same source twice; copied managed grants could repeatedly send an already rejected refresh token.
+- **Root cause**: `subscriptions/cli_accounts/session.rs` treated expiry and CLI exit status as renewal evidence; entry-level serialization did not cover a shared CLI store. Token endpoint failures had no authoritative reread.
+- **Fix**: Grok locks the canonical source across reread, CLI renewal and verified reread; read-only GETs retry once and generation is never replayed. Selected managed OAuth adapters reread before durably marking a rejected grant, preserving a newer grant and all account data.
+- **Guardrail**: require changed usable same-owner credentials, test two processes against a single-use-token fixture, and never steal a live lock by age. Distinguish source locks from cross-device ownership: synchronized legacy grant copies require explicit fresh local authorization; new grants use the local v3 path. Do not flag rate limits or server failures as rejected authorization.
+- **Watch points**: `cli_accounts/{grok,source_lock}`, `subscriptions/{feedback,renewal}`, `community/renewal`, MiniMax/Qoder/Antigravity/Trae token exchange, cancellation and durable ACK.
+
+### Local subscription authorization must not travel with account descriptors
+- **Symptom**: copied refresh grants could race across vaults/devices; late authorization writes could overwrite a new login. Successful IPC writes were parsed as unit despite an empty-object response.
+- **Root cause**: synchronized runtime extensions mixed logical account identity with writable authorization; revision checks alone did not distinguish device-local reconnects.
+- **Fix**: encrypted local grant records use per-write DEKs and device/canonical-directory AAD outside sync/export; v3 descriptors contain no grants. Explicit reconnect pins the account and unlocked session, and compares the descriptor/local binding before commit. Parse the actual ACK shape. Reset quota request state on account selection and gate late responses by request generation, including A-B-A selection.
+- **Guardrail**: preserve entry/secret IDs and routes; require fresh authorization before migrating legacy grants; reject old local-binding writes even at a matching revision. Test two real Agent processes, backup/copy exclusion, epoch/password changes, lock/reunlock and concurrent reconnect. Do not sync local authorization failures as shared quota failures or claim retroactive revocation of old copies.
+- **Watch points**: `community/{account,device,reconnect,feedback,quota,renewal}`, subscription import, `local_subscription`, snapshot/export allowlists, protocol version and reconnect UI capability. Local-state key wrapping is stable across sync epochs; do not claim provider-record epoch erasure.
+
+### Devin billing scope must survive every account entry path
+- **Symptom**: email/JWT deduplication merged organization accounts; a same-source legacy import could refuse its own scope upgrade; checking an obsolete key first blocked a valid CLI replacement.
+- **Root cause**: `subscriptions/native_import.rs` enriched only missing identities; browser login and native import used different identity proof, while `subscription_import/persist.rs::same_binding` treated migration as an ordinary save.
+- **Fix**: resolve principal/server/org/team with the actual key in both login paths. Migrate legacy encrypted records by CAS and a new generation/storage version. Verify a changed source key against established scope before saving; labels are metadata.
+- **Guardrail**: preserve entry/secret IDs and routes, reject stale writes and organization changes, and test same-source migration plus repeat import. Missing scope must not deduplicate by email. Never relax ordinary save ownership checks to make a migration pass.
+- **Watch points**: Devin identity/login/fresh/quota, `community/{account,scope}`, subscription import persistence, vault subscription bindings, active proxy generation and older-reader compatibility.
+
 ### Desktop startup sizes must fit the monitor work area
 - **Symptom**: the installed Linux app opened at 1280×820 on a 1280×800 X11 desktop, hiding bottom navigation below the screen.
 - **Root cause**: default and restored window sizes enforced only the 960×640 minimum and a saved-size tolerance, without limiting the size to the current monitor work area.

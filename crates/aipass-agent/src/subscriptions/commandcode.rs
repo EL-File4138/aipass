@@ -220,6 +220,7 @@ pub(super) async fn models(c: &mut Context) -> Result<Value> {
 fn number(v: &Value) -> Option<f64> {
     v.as_f64()
         .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        .filter(|n| n.is_finite())
 }
 pub(super) async fn usage(c: &mut Context) -> Result<Value> {
     let v = json_request(
@@ -228,11 +229,14 @@ pub(super) async fn usage(c: &mut Context) -> Result<Value> {
             .bearer_auth(c.token()?),
     )
     .await?;
+    parse_usage(&v, &c.auth["metadata"])
+}
+fn parse_usage(v: &Value, metadata: &Value) -> Result<Value> {
     let mut windows = vec![];
     for (name, span, key) in [("5 hours", 18000, "fiveHour"), ("Weekly", 604800, "weekly")] {
         let x = &v["windowLimits"][key];
         if let (Some(u), Some(cap)) = (number(&x["used"]), number(&x["cap"]).filter(|n| *n > 0.0)) {
-            windows.push(json!({"name":name,"used":(100.0*u.max(0.0)/cap).min(100.0),"span":span,"resetsAt":x["resetAt"]}));
+            windows.push(json!({"name":name,"used":(100.0*u.max(0.0)/cap).min(100.0),"span":span,"resetsAt":device::date(&x["resetAt"])}));
         }
     }
     let mut left = 0.0;
@@ -243,16 +247,24 @@ pub(super) async fn usage(c: &mut Context) -> Result<Value> {
             known = true;
         }
     }
-    let (_, monthly) = plan_info(s(&c.auth["metadata"], "planId"));
-    let mut out = json!({"plan":c.auth["metadata"]["plan"]});
-    if known && monthly > 0.0 {
-        let current = number(&v["credits"]["monthlyCredits"])
-            .unwrap_or(0.0)
-            .max(0.0);
+    let id = v["credits"]["planId"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| s(metadata, "planId"));
+    let (plan, monthly) = plan_info(id);
+    let mut out = json!({"plan":if plan.is_empty() {s(metadata, "plan")} else {plan}});
+    if let Some(current) = number(&v["credits"]["monthlyCredits"])
+        .filter(|_| monthly > 0.0)
+        .map(|n| n.max(0.0))
+    {
         let pool = monthly.max(current) + left - current;
         windows.push(json!({"name":"Credits","used":100.0*(pool-left)/pool,"display":format!("${:.2} / ${pool:.2}",pool-left)}));
-    } else if known && windows.is_empty() {
+    }
+    if known {
         out["balance"] = json!(format!("${left:.2}"));
+    }
+    if !known && windows.is_empty() {
+        return Err("Command Code returned no credit or allowance data".into());
     }
     out["windows"] = json!(windows);
     Ok(out)
@@ -301,4 +313,38 @@ pub(super) async fn generate(c: &mut Context, m: &Value, body: Value) -> Result<
     .await?;
     let mut convert = GoStream::new(s(&body, "model"), &format!("chatcmpl-{}", hex_id()));
     c.converted(response, &mut convert).await
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+    #[test]
+    fn resets_are_dates_and_the_current_plan_overrides_cached_metadata() {
+        let v = json!({"credits":{"planId":"individual-goat-monthly","monthlyCredits":35,"purchasedCredits":5,"freeCredits":0},
+            "windowLimits":{"fiveHour":{"used":3,"cap":10,"resetAt":1790000000000i64}}});
+        let out = parse_usage(&v, &json!({"planId":"individual-go-monthly","plan":"Go"})).unwrap();
+        assert_eq!(out["plan"], "GOAT");
+        assert_eq!(out["balance"], "$40.00");
+        assert_eq!(
+            out["windows"][0]["resetsAt"],
+            device::date(&json!(1790000000)).unwrap()
+        );
+        assert!((out["windows"][1]["used"].as_f64().unwrap() - 100.0 * 35.0 / 75.0).abs() < 1e-8);
+    }
+    #[test]
+    fn absent_monthly_credits_do_not_mean_the_plan_is_spent() {
+        let out = parse_usage(
+            &json!({"credits":{"purchasedCredits":5}}),
+            &json!({"planId":"individual-go-monthly"}),
+        )
+        .unwrap();
+        assert_eq!(out["windows"], json!([]));
+        assert_eq!(out["balance"], "$5.00");
+        assert_eq!(
+            parse_usage(&json!({"credits":{"monthlyCredits":0}}), &json!({})).unwrap()["balance"],
+            "$0.00"
+        );
+        assert!(parse_usage(&json!({}), &json!({})).is_err());
+        assert!(parse_usage(&json!({"credits":{"monthlyCredits":"NaN"}}), &json!({})).is_err());
+    }
 }

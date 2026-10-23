@@ -569,19 +569,29 @@ pub(super) async fn models(c: &mut Context) -> Result<Value> {
     Ok(out)
 }
 pub(super) async fn usage(c: &mut Context) -> Result<Value> {
-    let v = management(
-        c,
-        "Get-Usage-Limits",
-        None,
-        None,
-        &[
+    let v = json_request(usage_request(c)?).await?;
+    parse_usage(&v)
+}
+fn usage_request(c: &Context) -> Result<RequestBuilder> {
+    let base = format!("https://management.{}.kiro.dev", region(c)?);
+    if c.auth["type"] == "api" {
+        return Ok(signed(c, c.client.post(format!("{base}/")))?
+            .header("Content-Type", "application/x-amz-json-1.0")
+            .header("X-Amz-Target", "AmazonCodeWhispererService.GetUsageLimits")
+            .header("x-amzn-codewhisperer-optout", "false")
+            .query(&[("origin", "KIRO_CLI")])
+            .json(&json!({"origin":"KIRO_CLI"})));
+    }
+    Ok(
+        signed(c, c.client.get(format!("{base}/Get-Usage-Limits")))?.query(&[
             ("origin", "KIRO_CLI"),
             ("profileArn", s(&c.auth, "profileArn")),
             ("resourceType", "CREDIT"),
             ("isEmailRequired", "true"),
-        ],
+        ]),
     )
-    .await?;
+}
+fn parse_usage(v: &Value) -> Result<Value> {
     let mut windows = vec![];
     for u in v["usageBreakdownList"].as_array().into_iter().flatten() {
         for (name, x, reset) in [
@@ -599,17 +609,22 @@ pub(super) async fn usage(c: &mut Context) -> Result<Value> {
             if name == "Free trial" && x["freeTrialStatus"] != "ACTIVE" {
                 continue;
             }
-            if let Some(limit) = x["usageLimitWithPrecision"].as_f64().filter(|n| *n > 0.0) {
-                let used = x["currentUsageWithPrecision"].as_f64().unwrap_or(0.0);
+            if let Some((limit, used)) = device::percent(&x["usageLimitWithPrecision"])
+                .filter(|n| *n > 0.0)
+                .zip(device::percent(&x["currentUsageWithPrecision"]).filter(|n| *n >= 0.0))
+            {
                 let at = reset
                     .and_then(|n| time::OffsetDateTime::from_unix_timestamp(n as i64).ok())
                     .and_then(|t| {
                         t.format(&time::format_description::well_known::Rfc3339)
                             .ok()
                     });
-                windows.push(json!({"name":name,"used":100.0*used/limit,"display":format!("{used:.2} / {limit}"),"resetsAt":at,"span":2592000}));
+                windows.push(json!({"name":name,"used":100.0*used/limit,"display":format!("{used:.2} / {limit}"),"resetsAt":at,"span":if name == "Free trial" {None} else {Some(2592000)}}));
             }
         }
+    }
+    if windows.is_empty() {
+        return Err("Kiro returned no measurable allowance".into());
     }
     Ok(json!({"plan":v["subscriptionInfo"]["subscriptionTitle"],"windows":windows}))
 }
@@ -658,6 +673,46 @@ pub(super) async fn generate(c: &mut Context, m: &Value, body: Value) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn api_keys_use_the_control_rpc_and_sessions_use_the_management_route() {
+        let (mut c, _, _) = super::super::tests::context(Client::new());
+        c.auth = json!({"type":"api","key":"synthetic","region":"eu-central-1"});
+        let r = usage_request(&c).unwrap().build().unwrap();
+        assert_eq!(r.method(), reqwest::Method::POST);
+        assert_eq!(
+            r.url().as_str(),
+            "https://management.eu-central-1.kiro.dev/?origin=KIRO_CLI"
+        );
+        assert_eq!(
+            r.headers()["X-Amz-Target"],
+            "AmazonCodeWhispererService.GetUsageLimits"
+        );
+        assert_eq!(r.headers()["tokentype"], "API_KEY");
+        assert_eq!(
+            serde_json::from_slice::<Value>(r.body().unwrap().as_bytes().unwrap()).unwrap(),
+            json!({"origin":"KIRO_CLI"})
+        );
+        c.auth = json!({"type":"oauth","access":"synthetic","profileArn":"arn:aws:codewhisperer:us-east-1:123:profile/a"});
+        let r = usage_request(&c).unwrap().build().unwrap();
+        assert_eq!(r.method(), reqwest::Method::GET);
+        assert_eq!(r.url().path(), "/Get-Usage-Limits");
+        assert!(!r.headers().contains_key("X-Amz-Target"));
+        assert!(r
+            .url()
+            .query_pairs()
+            .any(|(k, v)| k == "resourceType" && v == "CREDIT"));
+    }
+    #[test]
+    fn missing_counts_are_unknown_and_trial_expiry_is_not_a_monthly_reset() {
+        assert!(
+            parse_usage(&json!({"usageBreakdownList":[{"usageLimitWithPrecision":50}]})).is_err()
+        );
+        let out = parse_usage(&json!({"usageBreakdownList":[{"usageLimitWithPrecision":50,"currentUsageWithPrecision":0,
+            "freeTrialInfo":{"freeTrialStatus":"ACTIVE","usageLimitWithPrecision":500,"currentUsageWithPrecision":100}}]})).unwrap();
+        assert_eq!(out["windows"][0]["used"], 0.0);
+        assert_eq!(out["windows"][1]["used"], 20.0);
+        assert!(out["windows"][1]["span"].is_null());
+    }
     #[test]
     fn native_generation_binds_both_tokens_and_preserves_profile_ownership() {
         let native = json!({"access":"same-access","refresh":"old-refresh","profileArn":"arn:aws:kiro:us-east-1:alice:profile/main","expires":100});

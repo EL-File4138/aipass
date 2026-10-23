@@ -6,6 +6,8 @@ use super::*;
 pub(crate) struct Account {
     pub(super) provider: String,
     pub(super) generation: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) local_binding: Option<Uuid>,
     pub(super) auth: SensitiveString,
     pub(super) models: Value,
     pub(super) revision: u64,
@@ -50,7 +52,7 @@ pub(crate) fn read(vault: &Vault, id: Uuid, marker: &str) -> ServiceResult<Sensi
         return Err(invalid("community account changed or is unavailable"));
     }
     let raw = vault
-        .provider_runtime_extension(id, KEY)
+        .provider_runtime_extension(id, storage_key(vault, id)?)
         .map_err(map_vault_error)?
         .ok_or_else(|| invalid("community account is missing; reconnect it"))?;
     let account = decode(raw.expose())?;
@@ -58,6 +60,16 @@ pub(crate) fn read(vault: &Vault, id: Uuid, marker: &str) -> ServiceResult<Sensi
         || Some(account.provider.as_str()) != entry.provider_id.as_deref()
     {
         return Err(invalid("community provider changed; reconnect it"));
+    }
+    if storage_key(vault, id)? == super::device::KEY {
+        let local = super::device::local(vault, &account)?
+            .ok_or_else(|| invalid(super::device::RECONNECT))?;
+        return Ok(SensitiveString::new(
+            serde_json::to_string(&local).map_err(ServiceError::internal)?,
+        ));
+    }
+    if super::device::requires_local(&account)? {
+        return Err(invalid(super::device::RECONNECT));
     }
     Ok(SensitiveString::new(raw.expose()))
 }
@@ -77,6 +89,7 @@ pub(crate) fn write(
                 .ok_or_else(|| invalid("account revision overflow"))?
         || next.provider != current.provider
         || next.generation != current.generation
+        || next.local_binding != current.local_binding
         || next.identity != current.identity
         || next.native_method != current.native_method
     {
@@ -86,8 +99,11 @@ pub(crate) fn write(
         serde_json::from_str(current.auth.expose()).map_err(ServiceError::internal)?;
     let after: Value = serde_json::from_str(next.auth.expose()).map_err(ServiceError::internal)?;
     ensure_owner(&before, &after).map_err(invalid)?;
+    if storage_key(vault, id)? == super::device::KEY {
+        return super::device::save(vault, &next);
+    }
     vault
-        .set_provider_runtime_extension(id, KEY, Some(&SecretString::new(raw)))
+        .set_provider_runtime_extension(id, storage_key(vault, id)?, Some(&SecretString::new(raw)))
         .map_err(map_vault_error)
 }
 pub(crate) fn identity(auth: &Value) -> Option<String> {
@@ -121,6 +137,12 @@ pub(crate) fn identity_value(v: &Value) -> Option<String> {
         .or_else(|| v.as_u64().map(|n| n.to_string()))
 }
 pub(crate) fn ensure_owner(before: &Value, after: &Value) -> Result<(), String> {
+    crate::subscriptions::devin::identity::ensure(before, after)?;
+    if before.get("devinScope").is_some() {
+        // Devin's live, key-bound principal and billing scope are authoritative;
+        // display email and unverified token claims cannot rekey that identity.
+        return Ok(());
+    }
     let mut anchored = false;
     for path in [
         "/accountId",
@@ -160,17 +182,60 @@ pub(crate) fn ensure_owner(before: &Value, after: &Value) -> Result<(), String> 
     }
     Ok(())
 }
-pub(crate) fn is_account(vault: &Vault, id: Uuid) -> bool {
+pub(crate) fn stored(vault: &Vault, id: Uuid) -> ServiceResult<Option<SecretString>> {
     vault
-        .provider_runtime_extension(id, KEY)
-        .ok()
-        .flatten()
+        .provider_runtime_extension(id, storage_key(vault, id)?)
+        .map_err(map_vault_error)
+}
+pub(super) fn storage_key(vault: &Vault, id: Uuid) -> ServiceResult<&'static str> {
+    if vault
+        .provider_runtime_extension(id, super::device::KEY)
+        .map_err(map_vault_error)?
         .is_some()
+    {
+        return Ok(super::device::KEY);
+    }
+    Ok(
+        if vault
+            .provider_runtime_extension(id, KEY_V2)
+            .map_err(map_vault_error)?
+            .is_some()
+        {
+            KEY_V2
+        } else {
+            KEY
+        },
+    )
+}
+fn new_storage_key(account: &Account) -> &'static str {
+    if account.provider == "devin" {
+        KEY_V2
+    } else {
+        KEY
+    }
+}
+pub(crate) fn is_account(vault: &Vault, id: Uuid) -> bool {
+    stored(vault, id).ok().flatten().is_some()
 }
 
-pub(super) fn persist(vault: &Vault, account: Account) -> ServiceResult<Uuid> {
+pub(super) fn persist(vault: &Vault, mut account: Account) -> ServiceResult<Uuid> {
+    let local = super::device::requires_local(&account)?;
+    if local {
+        super::device::prepare(vault, &mut account)?;
+    }
+    let storage_key = if local {
+        super::device::KEY
+    } else {
+        new_storage_key(&account)
+    };
     let console_url = super::console::account_url(&account);
-    let raw = SecretString::new(serde_json::to_string(&account).map_err(ServiceError::internal)?);
+    let descriptor = if local {
+        super::device::descriptor(&account)?
+    } else {
+        account.clone()
+    };
+    let raw =
+        SecretString::new(serde_json::to_string(&descriptor).map_err(ServiceError::internal)?);
     decode(raw.expose())?;
     let marker = format!("aipass:community:{}", account.generation);
     let entry = vault
@@ -214,7 +279,7 @@ pub(super) fn persist(vault: &Vault, account: Account) -> ServiceResult<Uuid> {
                 notes: None,
                 secret_metadata: Default::default(),
             },
-            KEY,
+            storage_key,
             &raw,
         )
         .map_err(map_vault_error)?;
@@ -245,6 +310,7 @@ pub(super) fn bind_cli_with_models(
     let account = Account {
         provider: provider.into(),
         generation: Uuid::new_v4(),
+        local_binding: None,
         auth: SensitiveString::new(auth.to_string()),
         models,
         revision: 0,
@@ -252,11 +318,21 @@ pub(super) fn bind_cli_with_models(
         native_method: Some(crate::subscriptions::native_import::method(provider)),
         identity: identity.clone(),
     };
+    if super::device::requires_local(&account)? {
+        return super::device::bind(vault, id, account);
+    }
     let marker = format!("aipass:community:{}", account.generation);
     let raw = SecretString::new(serde_json::to_string(&account).map_err(ServiceError::internal)?);
     decode(raw.expose())?;
     vault
-        .bind_cli_subscription(id, provider, &identity, &marker, KEY, &raw)
+        .bind_cli_subscription(
+            id,
+            provider,
+            &identity,
+            &marker,
+            new_storage_key(&account),
+            &raw,
+        )
         .map_err(map_vault_error)
 }
 
@@ -271,6 +347,26 @@ pub(crate) fn legacy_scope_matches(
     entry: &aipass_vault::EntrySummary,
     auth: &Value,
 ) -> ServiceResult<bool> {
+    if entry.provider_id.as_deref() == Some("devin") {
+        let Some(raw) = vault
+            .provider_runtime_extension(entry.id, KEY)
+            .map_err(map_vault_error)?
+        else {
+            return Ok(false);
+        };
+        let old = decode(raw.expose())?;
+        let old_auth = crate::subscription_import::reader::PrivateAuth(
+            serde_json::from_str(old.auth.expose())
+                .map_err(|_| invalid("invalid Devin account"))?,
+        );
+        return Ok(old_auth.0["key"].is_string()
+            && old_auth.0["key"] == auth["key"]
+            && auth["devinScope"].is_object()
+            && crate::subscriptions::devin::identity::normalize_server(&old_auth.0)
+                .map_err(invalid)?
+                == crate::subscriptions::devin::identity::normalize_server(auth)
+                    .map_err(invalid)?);
+    }
     if entry.provider_id.as_deref() != Some("zcode") {
         return Ok(false);
     }
@@ -324,7 +420,7 @@ pub(super) fn register_cli_with_models(
         let provider_matches = entry.provider_id.as_deref() == Some(provider)
             || (provider == "codex" && entry.provider_id.as_deref() == Some("openai"))
             || (provider == "grok" && entry.provider_id.as_deref() == Some("xai"));
-        let legacy_matches = if provider == "zcode" && provider_matches {
+        let legacy_matches = if matches!(provider, "zcode" | "devin") && provider_matches {
             legacy_scope_matches(vault, &entry, auth)?
         } else if provider == "codex" && provider_matches {
             vault
@@ -349,10 +445,10 @@ pub(super) fn register_cli_with_models(
             && (entry.account_identity.as_deref() == Some(&identity) || legacy_matches)
         {
             if is_account(vault, entry.id) {
-                if let Some(raw) = vault
-                    .provider_runtime_extension(entry.id, KEY)
-                    .map_err(map_vault_error)?
-                {
+                if let Some(raw) = stored(vault, entry.id)? {
+                    let marker = vault.reveal_secret(entry.id).map_err(map_vault_error)?;
+                    let raw = read(vault, entry.id, &marker)
+                        .unwrap_or_else(|_| SensitiveString::new(raw.expose()));
                     let mut account = decode(raw.expose())?;
                     let stored_auth = crate::subscription_import::reader::PrivateAuth(
                         serde_json::from_str(account.auth.expose())
@@ -404,6 +500,7 @@ pub(super) fn register_cli_with_models(
         Account {
             provider: provider.into(),
             generation: Uuid::new_v4(),
+            local_binding: None,
             auth: SensitiveString::new(auth.to_string()),
             models,
             revision: 0,

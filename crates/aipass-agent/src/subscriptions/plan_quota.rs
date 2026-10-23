@@ -46,7 +46,10 @@ pub(super) fn kimi(v: &Value) -> Result<Vec<Value>> {
     Ok(out)
 }
 pub(super) fn minimax(v: &Value) -> Result<Vec<Value>> {
-    if v["base_resp"]["status_code"].as_i64() != Some(0) {
+    if v["base_resp"]
+        .get("status_code")
+        .is_some_and(|status| status.as_i64() != Some(0))
+    {
         return Err("MiniMax refused the subscription allowance request".into());
     }
     let mut out = Vec::new();

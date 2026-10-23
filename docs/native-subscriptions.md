@@ -20,6 +20,9 @@ is local session token/cost accounting, not remaining subscription allowance.
 Copilot/Gemini allowance queries use the current CLI access without storing or
 refreshing OAuth grants in AIPass.
 
+See the [42-entry quota audit](subscription-quota-audit-2026-10-23.md) for current
+balance/query corrections, Console-only entries and remaining validation gaps.
+
 ## Data and routing
 
 The encrypted provider record contains a routing marker, models, account identity
@@ -56,6 +59,28 @@ WebSockets are disabled for the subscription backend. Gemini's Code Assist respo
 preserves native thought signatures and tool history. Copilot premium quota is
 scoped to models with explicit premium flags or positive billing multipliers; unknown or unrelated
 quota buckets are advisory, so free models are not falsely exhausted.
+
+## AIPass-managed local authorization
+
+Factory, Antigravity, MiniMax Code, Cline, Trae, Qoder, Kiro, WorkBuddy and Cursor
+accounts with refresh grants store those grants in encrypted local vault files.
+Sync and encrypted backup retain the account descriptor and routes, excluding
+the local authorization. API-key-only accounts and the official CLI references
+above retain their existing ownership rules.
+
+Each device signs in locally. Restoring a backup or copying/moving a vault to a
+new directory also requires sign-in. Use **Sign in again** on the existing
+subscription card to retain the account and its routes. The provider, account
+identity and established scope must match; another account cannot replace the
+selected entry through this action. Local reconnect does not replace another
+device's grant. The Rust catalog supplies the UI capability.
+
+Legacy synchronized refresh grants remain encrypted and recoverable until a
+fresh local authorization succeeds. Their use is blocked pending that explicit
+transition; importing the same old grant does not migrate it. Successful
+migration removes the old runtime format so older clients fail closed. Existing
+old backups and offline old clients cannot be revoked by a local format change.
+Independent vendor grant-family behavior has not been verified with real accounts.
 
 ## Subscription policies
 

@@ -181,7 +181,7 @@ fn codex_and_copilot_usage_preserve_numbers_and_scoped_limits() {
     assert_eq!(v["windows"][0]["used"].as_f64(), Some(20.0));
     assert_eq!(v["windows"][1]["used"].as_f64(), Some(25.0));
     assert_eq!(v["windows"][1]["models"], json!(["paid"]));
-    assert_eq!(v["windows"][0]["aside"], true);
+    assert_eq!(v["windows"][0]["aside"], false);
     assert!(codex_usage(&json!({})).is_err());
     assert!(copilot_usage(&json!({}), &json!({})).is_err());
 }

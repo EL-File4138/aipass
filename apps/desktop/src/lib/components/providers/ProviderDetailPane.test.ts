@@ -483,6 +483,38 @@ test("a subscription without a first snapshot can load usage", async () => {
   expect(invokeTauri).toHaveBeenCalledWith("community_refresh", { id: "provider" });
 });
 
+test("switching subscription accounts clears errors and ignores late reads after switching back", async () => {
+  setLocale("en");
+  const a: ProviderEntry = { ...selected, credentialKind: "oauth", providerId: "qoder" };
+  const selection = writable(a), state = fromStore(selection);
+  const pending: { resolve: (value: unknown) => void; reject: (error: Error) => void }[] = [];
+  const invoke = vi.fn((command: string) => command === "community_refresh" ? new Promise((resolve, reject) => { pending.push({resolve, reject}); }) : Promise.resolve([]));
+  app = mount(ProviderDetailPane, { target: document.body, props: {
+    get selected() { return state.current; }, draft: emptyDraft(), probeResult: undefined, usageProbeResult: undefined, invokeTauri: invoke as never
+  } });
+  flushSync();
+  const refresh = () => document.querySelector<HTMLButtonElement>(".usage-footer button")!;
+  refresh().click(); flushSync();
+  pending[0].reject(new Error("reconnect this account"));
+  await vi.waitFor(() => { flushSync(); expect(document.body.textContent).toContain("Reconnect your account"); });
+  selection.set({...a, id:"other"}); flushSync();
+  expect(document.body.textContent).not.toContain("Reconnect your account");
+  selection.set({...a}); flushSync();
+  refresh().click(); flushSync();
+  selection.set({...a, id:"other"}); flushSync();
+  selection.set({...a}); flushSync();
+  expect(refresh().disabled).toBe(false);
+  refresh().click(); flushSync();
+  const snapshot = (usedPercent: number) => ({source:"community:qoder",observedAt:"2026-10-23T00:00:00Z",windows:[{id:"day",label:"Daily",usedPercent}]});
+  pending[1].resolve(snapshot(99));
+  await new Promise(resolve => setTimeout(resolve, 0)); flushSync();
+  expect(document.querySelector('[role="progressbar"]')).toBeNull();
+  expect(refresh().disabled).toBe(true);
+  pending[2].resolve(snapshot(12));
+  await vi.waitFor(() => { flushSync(); expect(document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBe("12"); });
+  expect(refresh().disabled).toBe(false);
+});
+
 test("credential row supports the configured copy action", () => {
   const onCopySecret = vi.fn();
   const onRevealSecret = vi.fn();

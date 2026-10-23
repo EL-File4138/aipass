@@ -1,7 +1,7 @@
 use super::quota::snapshot;
 use super::*;
 fn account() -> Account {
-    Account{provider:"factory".into(),generation:Uuid::new_v4(),auth:SensitiveString::new(json!({"type":"oauth","access":"fake-private-community-access","refresh":"fake-private-community-refresh","accountId":"alice"}).to_string()),models:json!({"claude-sonnet-4-6":{"name":"Sonnet","api":{"npm":"@ai-sdk/anthropic","url":"https://api.factory.ai/api/llm/a/v1"}}}),revision:0,feedback:Default::default(),native_method:None,identity:"alice".into()}
+    Account{provider:"factory".into(),generation:Uuid::new_v4(),local_binding:None,auth:SensitiveString::new(json!({"type":"oauth","access":"fake-private-community-access","refresh":"fake-private-community-refresh","accountId":"alice"}).to_string()),models:json!({"claude-sonnet-4-6":{"name":"Sonnet","api":{"npm":"@ai-sdk/anthropic","url":"https://api.factory.ai/api/llm/a/v1"}}}),revision:0,feedback:Default::default(),native_method:None,identity:"alice".into()}
 }
 #[test]
 fn cli_login_retains_live_models_without_rotating_an_unchanged_binding() {
@@ -90,12 +90,13 @@ fn a_failed_auth_write_replays_the_saved_pair_without_overwriting_newer_credenti
     let before = account();
     let id = persist(&vault, before.clone()).unwrap();
     let marker = vault.reveal_secret(id).unwrap();
+    let before = decode(read(&vault, id, &marker).unwrap().expose()).unwrap();
     let mut next = before.clone();
     next.revision += 1;
     next.auth = SensitiveString::new(json!({"type":"oauth","accountId":"alice","access":"rotated-access","refresh":"rotated-refresh"}).to_string());
     let mut recovery = AuthRecovery::default();
     recovery.pending.insert(id, (before.clone(), next.clone()));
-    let objects = dir.path().join("objects");
+    let objects = dir.path().join("local-subscriptions");
     let permissions = std::fs::metadata(&objects).unwrap().permissions();
     std::fs::set_permissions(&objects, std::fs::Permissions::from_mode(0o500)).unwrap();
     let failed = write(

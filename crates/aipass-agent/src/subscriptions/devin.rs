@@ -1,14 +1,10 @@
 use super::*;
+pub(crate) mod identity;
 mod quota;
 use sha2::{Digest, Sha256};
 const SERVER: &str = "https://server.codeium.com";
 fn server(c: &Context) -> Result<String> {
-    let s = c.auth["metadata"]["server"].as_str().unwrap_or(SERVER);
-    let u = url::Url::parse(s).map_err(|_| "invalid Devin server")?;
-    if u.scheme() != "https" || !u.username().is_empty() || u.password().is_some() {
-        return Err("invalid Devin server".into());
-    }
-    Ok(s.trim_end_matches('/').into())
+    identity::normalize_server(&c.auth)
 }
 fn native(source: &Value) -> Result<Value> {
     let root = if cfg!(windows) {
@@ -39,7 +35,7 @@ fn native(source: &Value) -> Result<Value> {
 }
 pub(super) async fn login(c: &mut Context, method: usize) -> Result<Value> {
     if method == 1 {
-        return native(&c.auth);
+        return identity::resolve(&c.client, &native(&c.auth)?).await;
     }
     let cb = loopback::Loopback::bind(&[0]).await?;
     let redirect = format!("http://127.0.0.1:{}/callback", cb.port);
@@ -77,26 +73,28 @@ pub(super) async fn login(c: &mut Context, method: usize) -> Result<Value> {
         .or(v["session_token"].as_str())
         .filter(|s| !s.is_empty())
         .ok_or("Devin returned no session token")?;
-    Ok(json!({"type":"api","key":key,"metadata":{"server":SERVER}}))
+    identity::resolve(
+        &c.client,
+        &json!({"type":"api","key":key,"metadata":{"server":SERVER}}),
+    )
+    .await
 }
 pub(super) async fn fresh(c: &mut Context) -> Result<()> {
-    if let Ok(source) = serde_json::from_value::<aipass_agent_protocol::SubscriptionImportSource>(
-        c.auth["nativeSource"].clone(),
-    ) {
-        let mut local = native(&c.auth)?;
-        let changed = local["key"] != c.auth["key"];
-        native_import::erase(&mut local);
-        if changed {
-            let secret = native_import::read(
-                &source,
-                c.outbound
-                    .as_ref()
-                    .unwrap_or(&UpstreamProxyConfig::default()),
-            )
-            .await?;
-            c.save(serde_json::from_str(secret.expose()).map_err(|_| "invalid Devin account")?)
-                .await?;
+    use crate::subscription_import::reader::PrivateAuth;
+    let mut candidate = PrivateAuth(c.auth.clone());
+    if c.auth["nativeSource"].is_object() {
+        let mut local = PrivateAuth(native(&c.auth)?);
+        if identity::normalize_server(&local.0)? != identity::normalize_server(&c.auth)? {
+            return Err("Devin server changed; reconnect explicitly".into());
         }
+        // Validate the current source key against the established scope. The
+        // saved key may already be revoked after the official CLI replaced it.
+        candidate.0["key"] = local.0["key"].take();
+    }
+    let mut verified = PrivateAuth(identity::resolve(&c.client, &candidate.0).await?);
+    crate::community::ensure_owner(&c.auth, &verified.0)?;
+    if verified.0 != c.auth {
+        c.save(verified.0.take()).await?;
     }
     Ok(())
 }
@@ -189,8 +187,33 @@ pub(super) async fn models(c: &mut Context) -> Result<Value> {
     Ok(out)
 }
 pub(super) async fn usage(c: &mut Context) -> Result<Value> {
-    let v=json_request(c.client.post(format!("{}/exa.seat_management_pb.SeatManagementService/GetUserStatus",server(c)?)).header("Connect-Protocol-Version","1").json(&json!({"metadata":{"ideName":"devin-cli","ideVersion":"3000.11.3","extensionName":"devin-cli","extensionVersion":"3000.11.3","apiKey":c.token()?,"locale":"en","os":vendor_platform()}}))).await?;
-    quota::normalize(&v)
+    let v = identity::status(&c.client, &c.auth).await?;
+    let checked = crate::subscription_import::reader::PrivateAuth(identity::resolved(&c.auth, &v)?);
+    crate::community::ensure_owner(&c.auth, &checked.0)?;
+    let mut usage = quota::normalize(&v)?;
+    let tiers = model_cost_tiers(c).await;
+    quota::scope(&mut usage, tiers.as_ref().ok(), &c.models);
+    Ok(usage)
+}
+
+async fn model_cost_tiers(c: &Context) -> Result<std::collections::BTreeMap<String, u64>> {
+    use aipass_proxy_conversion::providers::devin::models;
+    let response = send(
+        c.client
+            .post(format!(
+                "{}/exa.api_server_pb.ApiServerService/GetCliModelConfigs",
+                server(c)?
+            ))
+            .header("Content-Type", "application/proto")
+            .header("Connect-Protocol-Version", "1")
+            .timeout(Duration::from_secs(15))
+            .body(models::request(c.token()?, vendor_platform())),
+    )
+    .await?;
+    if !response.status().is_success() {
+        return Err("Devin model cost tiers unavailable".into());
+    }
+    models::cost_tiers(&read_bytes(response, LIMIT).await?)
 }
 
 pub(super) async fn generate(c: &mut Context, m: &Value, body: Value) -> Result<()> {
