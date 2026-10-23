@@ -36,30 +36,31 @@ pub(super) fn install_login_agent_async(app: AppHandle, feedback: TrayFeedback) 
     });
 }
 
+fn prepare_quit(app: &AppHandle) -> Result<(), String> {
+    let mut quitting = crate::runtime_lifecycle::RUNTIME.quit()?;
+    #[cfg(target_os = "macos")]
+    {
+        // Drain startup/repair before unloading supervision. Do not send
+        // Quit to our own singleton or kill its child mid-shutdown.
+        let stopped = agent_client(app).and_then(|client| {
+            aipass_agent::suspend_tray_autostart(&client.config.vault_dir)
+                .map(|_| ())
+                .map_err(|err| err.to_string())
+        });
+        if let Err(err) = stopped {
+            *quitting = false;
+            return Err(err);
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, &mut quitting);
+    Ok(())
+}
+
 pub(super) fn quit_aipass_async(app: AppHandle, feedback: TrayFeedback) {
     thread::spawn(move || {
         let _ = crate::logging::log_event("desktop.quit.requested", &[("source", "tray")]);
-        let result = crate::runtime_lifecycle::RUNTIME
-            .quit()
-            .and_then(|mut quitting| {
-                #[cfg(target_os = "macos")]
-                {
-                    // Drain startup/repair before unloading supervision. Do not send
-                    // Quit to our own singleton or kill its child mid-shutdown.
-                    let stopped = agent_client(&app).and_then(|client| {
-                        aipass_agent::suspend_tray_autostart(&client.config.vault_dir)
-                            .map(|_| ())
-                            .map_err(|err| err.to_string())
-                    });
-                    if let Err(err) = stopped {
-                        *quitting = false;
-                        return Err(err);
-                    }
-                }
-                #[cfg(not(target_os = "macos"))]
-                let _ = &mut quitting;
-                Ok(())
-            });
+        let result = prepare_quit(&app);
         if let Err(err) = result {
             eprintln!("failed to stop AIPass tray autostart before quit: {err}");
             feedback.agent_transient(&tr("tray.quitFailed"));
