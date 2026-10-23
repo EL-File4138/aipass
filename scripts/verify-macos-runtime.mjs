@@ -122,6 +122,18 @@ function stopFixtureProcesses(root, childPid) {
   }
 }
 
+function sampleFixtureProcess(root, pid, output) {
+  if (!Number.isInteger(pid) || pid <= 0) return;
+  try {
+    const executable = run("/bin/ps", ["-p", String(pid), "-o", "comm="]);
+    if (!executable.startsWith(`${root}/AIPass.app/Contents/`)) return;
+    run("/usr/bin/sample", [String(pid), "2", "1", "-file", join(output, "process-sample.txt")]);
+  } catch (error) {
+    // Sampling is diagnostic only; preserve the original gate failure.
+    writeFileSync(join(output, "sample-error.log"), `${error.message}\n`);
+  }
+}
+
 function collectCrashReports(root, output, started) {
   for (const directory of [
     join(homedir(), "Library/Logs/DiagnosticReports"),
@@ -264,6 +276,7 @@ async function scenario({
       await delay(100);
     }
     const result = JSON.parse(read(resultPath));
+    report.result = result;
     verifyResult(result, read(join(root, "logs/desktop.log")), mode, version);
     assert.equal(
       digest(binary),
@@ -293,12 +306,12 @@ async function scenario({
       await delay(100);
     }
     report.ok = true;
-    report.result = result;
     console.log(
       `Passed ${name}: ${version}, 960x640, responsive frontend and agent${mode === "startup" ? "" : ", verified install and new process restart"}.`,
     );
   } catch (error) {
     report.error = error.message;
+    sampleFixtureProcess(root, report.result?.pid ?? child?.pid, output);
     throw error;
   } finally {
     report.elapsedMs = Date.now() - started;

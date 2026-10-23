@@ -196,6 +196,8 @@ jobs:
       - run: cargo test --workspace --no-fail-fast
         timeout-minutes: 20
       - run: cargo build --workspace
+      - name: Verify unpackaged Windows CLI and Agent runtime
+        run: node scripts/verify-cli-runtime.mjs target/debug windows-runtime-check-reports/cli-debug
       - name: Prepare disposable updater signing key
         run: node scripts/prepare-runtime-check-build.mjs "${{ runner.temp }}/aipass-windows-runtime-signing"
       - name: Build Windows NSIS test installer

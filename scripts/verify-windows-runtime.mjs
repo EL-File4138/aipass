@@ -26,7 +26,7 @@ try {
   execFileSync(join(bundle, installers[0]), ["/S", `/D=${installed}`], { timeout: 120_000, windowsVerbatimArguments: true });
   for (const name of ["aipass-desktop", "aipass", "aipass-agent", "aipass-native-host"])
     assert.ok(existsSync(join(installed, `${name}.exe`)), `Missing installed ${name}`);
-  execFileSync(process.execPath, ["scripts/verify-cli-runtime.mjs", installed], { stdio: "inherit", timeout: 180_000 });
+  execFileSync(process.execPath, ["scripts/verify-cli-runtime.mjs", installed, join(reports, "cli")], { stdio: "inherit", timeout: 180_000 });
   const home = join(root, "home");
   mkdirSync(home);
   for (const target of ["main", "tray"]) {

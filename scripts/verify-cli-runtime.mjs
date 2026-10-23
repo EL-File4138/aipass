@@ -22,6 +22,8 @@ assert.ok(
   "Pass the directory containing CLI, Agent and Native Host",
 );
 const binaries = resolve(process.argv[2]);
+const reports = process.argv[3] ? resolve(process.argv[3]) : undefined;
+if (reports) mkdirSync(reports, { recursive: true });
 const root = mkdtempSync(
   process.platform === "win32"
     ? join(tmpdir(), "aipass-cli-")
@@ -82,8 +84,15 @@ const run = (args, extra = {}) =>
 // Starting explicitly avoids registering a login service during this test.
 const agent = spawn(join(stage, "aipass-agent" + suffix), ["--vault", vault], {
   env,
-  stdio: "ignore",
+  stdio: ["ignore", "pipe", "pipe"],
 });
+let agentOutput = "";
+let agentSpawnError;
+agent.stdout.setEncoding("utf8");
+agent.stderr.setEncoding("utf8");
+agent.stdout.on("data", data => { agentOutput = (agentOutput + data).slice(-65_536); });
+agent.stderr.on("data", data => { agentOutput = (agentOutput + data).slice(-65_536); });
+agent.on("error", error => { agentSpawnError = error; });
 // The native manifest reference lives in HKCU rather than APPDATA. Preserve it
 // even when this disposable test is run on a developer's Windows account.
 const registryKey = "HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\dev.aipass.native";
@@ -107,7 +116,8 @@ try {
   }
   registryPrepared = process.platform === "win32";
   for (let attempt = 0; attempt < 100; attempt++) {
-    assert.ok(!stopped, "Agent exited during startup");
+    if (agentSpawnError) throw agentSpawnError;
+    assert.ok(!stopped, `Agent exited during startup (code=${agent.exitCode}, signal=${agent.signalCode})\n${agentOutput}`);
     if (readdirSync(runtime).some((name) => name.endsWith(".token"))) break;
     await delay(100);
   }
@@ -235,6 +245,15 @@ try {
   complete = true;
 } catch (error) {
   failed = true;
+  if (reports) {
+    writeFileSync(join(reports, "agent-output.log"), agentOutput);
+    writeFileSync(join(reports, "failure.json"), JSON.stringify({
+      error: error.message, exitCode: agent.exitCode, signal: agent.signalCode,
+      spawnError: agentSpawnError?.message,
+    }, null, 2));
+    if (existsSync(join(root, "logs")))
+      cpSync(join(root, "logs"), join(reports, "logs"), { recursive: true });
+  }
   console.error(`Retained failed CLI fixture: ${root}`);
   throw error;
 } finally {
