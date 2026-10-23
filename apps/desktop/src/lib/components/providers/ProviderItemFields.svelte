@@ -86,7 +86,11 @@
       <input type="number" min="0" step="1" max="4294967295" readonly={!editing}
         aria-label={$t("providerForm.maxConcurrentRequests")}
         value={editing ? draft.maxConcurrentRequests ?? 0 : entry.maxConcurrentRequests ?? 0}
-        on:input={event => { draft.maxConcurrentRequests = event.currentTarget.valueAsNumber; draft.concurrencyLimitTouched = true; }} />
+        on:input={event => {
+          const input = event.currentTarget;
+          draft.maxConcurrentRequests = input.validity.badInput ? Number.NaN : input.value === "" ? undefined : Number(input.value);
+          draft.concurrencyLimitTouched = true;
+        }} />
     </label>
     <div class="item-row"><SwitchField label={$t("providerForm.supportsWebsockets")} checked={editing ? draft.supportsWebsockets ?? true : entry.supportsWebsockets ?? true} disabled={!editing}
       onCheckedChange={value => { draft.supportsWebsockets = value; draft.websocketPreferenceTouched = true; }} /></div>

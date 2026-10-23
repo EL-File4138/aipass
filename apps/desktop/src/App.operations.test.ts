@@ -177,12 +177,12 @@ test.each([false, true])("correcting an invalid endpoint closes the saved editor
   });
   button("Edit").click();
   await vi.waitFor(() => { flushSync(); expect(document.querySelector(".detail.editing")).toBeTruthy(); });
-  input('input[placeholder="https://api.example.com"]', "ftp://invalid.test");
+  input('.detail input[aria-label="Endpoint"]', "ftp://invalid.test");
   button("Save changes").click();
   await vi.waitFor(() => { flushSync(); expect(document.querySelector(".error-toast")).toBeTruthy(); expect(button("Save changes").disabled).toBe(false); });
   expect(document.querySelector(".detail .banner.tone-danger")).toBeNull();
   expect(invoke.mock.calls.filter(([cmd]) => cmd === "provider_update")).toHaveLength(0);
-  input('input[placeholder="https://api.example.com"]', "https://fixed.test/v1");
+  input('.detail input[aria-label="Endpoint"]', "https://fixed.test/v1");
   button("Save changes").click();
   await vi.waitFor(() => { flushSync(); expect(button("Edit")).toBeTruthy(); });
   expect(invoke.mock.calls.filter(([cmd]) => cmd === "provider_update")).toHaveLength(1);

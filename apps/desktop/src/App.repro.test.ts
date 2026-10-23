@@ -54,7 +54,7 @@ async function render(overrides: Record<string, (args: any) => unknown> = {}) {
 async function openEditorAndSave() {
   button("Edit").click();
   await vi.waitFor(() => { flushSync(); expect(document.querySelector(".detail.editing")).toBeTruthy(); });
-  const title = document.querySelector<HTMLInputElement>('input[placeholder="My provider"]')!;
+  const title = document.querySelector<HTMLInputElement>('input[aria-label="Title"]')!;
   title.value = "Renamed provider";
   title.dispatchEvent(new Event("input", { bubbles: true }));
   flushSync();
@@ -102,13 +102,13 @@ test("deleting the first and final keys then saving provider metadata never resu
     provider_update: args => { saved = args.request; }
   });
   button("Edit").click();
-  await vi.waitFor(() => { flushSync(); expect(document.querySelectorAll(".key-row")).toHaveLength(2); });
-  document.querySelector<HTMLButtonElement>('.key-row-actions button[aria-label="Remove key"]')!.click();
-  await vi.waitFor(() => { flushSync(); expect(document.querySelectorAll(".key-row")).toHaveLength(1); });
-  expect(document.querySelector(".key-row-label")?.textContent).toBe("Other");
+  await vi.waitFor(() => { flushSync(); expect(document.querySelectorAll(".kv-row.secret")).toHaveLength(2); });
+  document.querySelector<HTMLButtonElement>('.kv-actions button[aria-label="Remove key"]')!.click();
+  await vi.waitFor(() => { flushSync(); expect(document.querySelectorAll(".kv-row.secret")).toHaveLength(1); });
+  expect(document.querySelector(".credential-heading .kv-label")?.textContent).toBe("Other");
   expect(invoke).toHaveBeenCalledWith("secret_remove", { id: "provider", label: "key" });
-  document.querySelector<HTMLButtonElement>('.key-row-actions button[aria-label="Remove key"]')!.click();
-  await vi.waitFor(() => { flushSync(); expect(document.querySelectorAll(".key-row")).toHaveLength(0); });
+  document.querySelector<HTMLButtonElement>('.kv-actions button[aria-label="Remove key"]')!.click();
+  await vi.waitFor(() => { flushSync(); expect(document.querySelectorAll(".kv-row.secret")).toHaveLength(0); });
   expect(invoke).toHaveBeenCalledWith("secret_remove", { id: "provider", label: "other" });
   button("Save changes").click();
   await vi.waitFor(() => { flushSync(); expect(button("Edit")).toBeTruthy(); });
