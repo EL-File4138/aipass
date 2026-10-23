@@ -471,7 +471,7 @@ fn locking_session_keeps_runtime_credentials_available_to_proxy() {
     service.handle = Some(
         ProxyHandle::start(
             RuntimeConfig::from_routes(proxy_addr.to_string(), vec![runtime_route]),
-            service.usage.clone(),
+            service.usage_store().unwrap().clone(),
         )
         .expect("start proxy"),
     );

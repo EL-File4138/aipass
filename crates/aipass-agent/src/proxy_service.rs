@@ -37,7 +37,7 @@ pub struct ProxyService {
     vault_dir: PathBuf,
     config: ProxyConfig,
     handle: Option<ProxyHandle>,
-    usage: Arc<UsageStore>,
+    usage: Option<Arc<UsageStore>>,
     /// A stop requested while locked cannot rewrite encrypted configuration.
     /// Keep the intent until the next unlocked config load can persist it.
     pending_disabled_persist: bool,
@@ -79,7 +79,7 @@ impl ProxyService {
             vault_dir: vault_dir.to_path_buf(),
             config: ProxyConfig::default(),
             handle: None,
-            usage,
+            usage: Some(usage),
             pending_disabled_persist: false,
             pending_ws_events: Vec::new(),
             pending_ws_refresh: HashSet::new(),
@@ -236,7 +236,7 @@ impl ProxyService {
     }
 
     pub fn logs(&self) -> ServiceResult<Vec<aipass_agent_protocol::ProxyLogEntry>> {
-        self.usage
+        self.usage_store()?
             .logs()
             .map_err(|err| ServiceError::internal(anyhow::anyhow!(err)))
     }
@@ -354,7 +354,7 @@ impl ProxyService {
             ));
         }
         let runtime = self.runtime_config(vault)?;
-        let handle = ProxyHandle::start(runtime, self.usage.clone())
+        let handle = ProxyHandle::start(runtime, self.usage_store()?.clone())
             .map_err(|err| ServiceError::internal(anyhow::anyhow!(err)))?;
         handle.set_subscription_backend(self.subscription_backend());
         let previous_enabled = self.config.enabled;
@@ -487,7 +487,7 @@ impl ProxyService {
         self.pending_ws_refresh.clear();
         self.handle.take();
         self.config = ProxyConfig::default();
-        self.usage
+        self.usage_store()?
             .clear()
             .map_err(|err| ServiceError::internal(anyhow::anyhow!(err)))
     }
@@ -505,7 +505,7 @@ impl ProxyService {
         }
         self.capture_ws_events();
         self.handle.take();
-        let next = ProxyHandle::start(runtime, self.usage.clone())
+        let next = ProxyHandle::start(runtime, self.usage_store()?.clone())
             .map_err(|err| ServiceError::internal(anyhow::anyhow!(err)))?;
         next.set_subscription_backend(self.subscription_backend());
         for event in &self.pending_ws_events {
@@ -807,6 +807,7 @@ impl ProxyService {
 }
 
 mod config;
+mod import;
 mod pricing;
 mod routing;
 mod runtime;

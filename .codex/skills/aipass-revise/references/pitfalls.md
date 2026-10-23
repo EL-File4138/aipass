@@ -104,6 +104,13 @@ Newest entries last within each section.
 - **Guardrail**: serialize target selection with settings changes/import/reset; install vault identity and its sync settings together. Test failed settings persistence, recovery with stale sibling settings, queued sync target changes, and record-only first installation in `vault_sync::tests`.
 - **Watch points**: configured startup/watcher/manual sync, file/backup/WebDAV/CloudKit import, `load_sync_settings`, `save_sync_settings`, and create-time discovery.
 
+### Vault replacement must reopen its local usage database
+- **Symptom**: Windows file/WebDAV imports failed with access denied; Unix could retain a usage connection into the renamed backup.
+- **Root cause**: `vault_sync::install_import` stopped the proxy but left `ProxyService` holding SQLite's open database inside the directory being replaced.
+- **Fix**: release the stopped runtime's usage store before renaming, lock the session, reopen the installed or rolled-back database on every exit, and clear old runtime configuration after replacement. Keep the encrypted vault backup and settings recovery journal.
+- **Guardrail**: test successful import and rollback against actual usage reads, retain old backup contents, and run the same import tests on native Windows. Fail closed if storage cannot reopen; never substitute an empty in-memory database.
+- **Watch points**: `vault_sync/import.rs`, `proxy_service/import.rs`, WebDAV first-install, settings-write failures and Agent usage queries.
+
 ### Automatic CloudKit upgrades must commit only after authenticated read-back
 - **Symptom**: existing local/WebDAV/folder settings never entered CloudKit; Drive fallback skipped late edits once another device populated CloudKit.
 - **Root cause**: settings had no upgrade marker and `vault_sync::run_cloudkit_inner` consulted Drive only when CloudKit was empty. Reusing this fallback for fresh CloudKit restores also misclassified them as legacy installations.
@@ -924,6 +931,13 @@ Newest entries last within each section.
 - **Fix**: Share config/auth path resolution, rebase inherited default XDG paths onto independent homes and preserve custom XDG locations.
 - **Guardrail**: Test config and data defaults against independent homes, retain explicit custom overrides, and use the same resolver for detection, snapshots, previews and writes.
 - **Watch points**: `aipass-config-writers::{utils,detect,plan}`, `tool_credentials::reader`, Linux CI and per-vault test home overrides.
+
+### Native helper previews and fixtures must follow the host shell
+- **Symptom**: Windows previews hid a generated Claude helper; Cursor/Zed import fixtures read no keys; a JSON path assertion failed on escaped backslashes.
+- **Root cause**: preview redaction only recognized the Unix helper, while tests hard-coded `.env` files, Unix quoting and serialized path substrings. Zed also inherited the process profile's default APPDATA for independent homes.
+- **Fix**: recognize only the exact generated PowerShell script after strict base64/UTF-16 decoding, retain redaction for arbitrary commands, use native helper paths/literals, parse JSON paths before comparison, and rebase default APPDATA like default XDG paths.
+- **Guardrail**: test both generated shell forms and malicious encoded commands on every OS; retain explicit custom profile directories and keep test writes inside their isolated home.
+- **Watch points**: config writer previews, native credential imports, `ToolEntry::credential_command`, profile path resolution and Windows workspace tests.
 
 ### Every prerelease extension needs a numeric browser version
 - **Symptom**: beta packaging could succeed with an unloadable semver prerelease in manifest.version; the desktop bundled a different extension version.

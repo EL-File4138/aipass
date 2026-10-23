@@ -9,7 +9,7 @@ impl ProxyService {
         list_prices: &[ModelPriceRule],
     ) -> ServiceResult<ServerUsageSummary> {
         let summary = self
-            .usage
+            .usage_store()?
             .summary_since(since, self.cost_resolver(pricing, list_prices))
             .map_err(|err| ServiceError::internal(anyhow::anyhow!(err)))?;
         Ok(ServerUsageSummary {
@@ -30,7 +30,7 @@ impl ProxyService {
     }
 
     pub fn clear_usage(&self) -> ServiceResult<()> {
-        self.usage
+        self.usage_store()?
             .clear()
             .map_err(|err| ServiceError::internal(anyhow::anyhow!(err)))
     }
@@ -43,7 +43,7 @@ impl ProxyService {
         pricing: &PricingConfig,
         list_prices: &[ModelPriceRule],
     ) -> ServiceResult<Vec<UsageTimeseriesPoint>> {
-        self.usage
+        self.usage_store()?
             .timeseries(
                 days,
                 timezone_offset_minutes,

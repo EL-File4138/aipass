@@ -520,7 +520,7 @@ fn stopping_after_the_last_enabled_route_persists_disabled_state() {
     service.handle = Some(
         ProxyHandle::start(
             RuntimeConfig::from_routes("127.0.0.1:0", Vec::new()),
-            service.usage.clone(),
+            service.usage_store().unwrap().clone(),
         )
         .expect("start proxy"),
     );
