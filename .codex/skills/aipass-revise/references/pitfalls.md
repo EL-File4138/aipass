@@ -1055,6 +1055,13 @@ Newest entries last within each section.
 - **Guardrail**: preserve entry/secret IDs and routes, reject stale writes and organization changes, and test same-source migration plus repeat import. Missing scope must not deduplicate by email. Never relax ordinary save ownership checks to make a migration pass.
 - **Watch points**: Devin identity/login/fresh/quota, `community/{account,scope}`, subscription import persistence, vault subscription bindings, active proxy generation and older-reader compatibility.
 
+### Packaged subscription fixtures must follow the current IPC and identity contract
+- **Symptom**: Linux packaged runtime rejected capability probes after a protocol upgrade; synthetic Devin imports could no longer prove their organization.
+- **Root cause**: `scripts/verify-linux-native-clis.mjs` hardcoded protocol 18 and assumed a JWT alone established Devin ownership.
+- **Fix**: read the protocol constant from its Rust owner and serve key-bound status from an isolated HTTPS fixture with a process-local Linux CA file. Assert principal, server, organization, team and stable entry IDs across repeated imports.
+- **Guardrail**: search packaged scripts whenever changing IPC or authorization semantics. Keep positive identity/import checks, verify TLS and wrong-key rejection, and never contact real vendor accounts or disable certificate verification for fixtures.
+- **Watch points**: `verify-linux-native-clis.mjs`, `scripts/fixtures/devin-status*`, protocol version, native import and platform runtime jobs.
+
 ### Desktop startup sizes must fit the monitor work area
 - **Symptom**: the installed Linux app opened at 1280×820 on a 1280×800 X11 desktop, hiding bottom navigation below the screen.
 - **Root cause**: default and restored window sizes enforced only the 960×640 minimum and a saved-size tolerance, without limiting the size to the current monitor work area.

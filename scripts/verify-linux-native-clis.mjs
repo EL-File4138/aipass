@@ -17,6 +17,19 @@ import { dirname, join, resolve } from "node:path";
 import { createConnection } from "node:net";
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
+import { devinStatusFixture } from "./fixtures/devin-status.mjs";
+
+const protocolSource = readFileSync(
+  new URL("../crates/aipass-agent-protocol/src/lib.rs", import.meta.url),
+  "utf8",
+);
+const protocolVersion = Number(
+  /pub const AGENT_PROTOCOL_VERSION: u32 = (\d+);/.exec(protocolSource)?.[1],
+);
+assert.ok(
+  Number.isInteger(protocolVersion) && protocolVersion > 0,
+  "Agent protocol version missing",
+);
 
 assert.equal(process.platform, "linux", "Linux only");
 assert.ok(process.argv[2], "Pass directory containing aipass and aipass-agent");
@@ -154,6 +167,13 @@ const run = (args, extra = {}) => {
   assert.ok(!output.includes(access), "CLI response leaked an access token");
   return JSON.parse(output);
 };
+const devinToken = jwt({ sub: "alice-devin", exp: 2208988800 });
+const devin = await devinStatusFixture(
+  join(root, "identity-fixture"),
+  devinToken,
+);
+// Linux rustls loads this process-local CA file. Never change the OS trust store.
+env.SSL_CERT_FILE = devin.ca;
 const agent = spawn(join(binaries, "aipass-agent"), ["--vault", vault], {
   env,
   stdio: "ignore",
@@ -180,7 +200,7 @@ const capability = (provider) =>
       );
       const body = Buffer.from(
         JSON.stringify({
-          protocolVersion: 18,
+          protocolVersion,
           authToken: token,
           request:
             provider === "anthropic"
@@ -198,7 +218,7 @@ const capability = (provider) =>
         socket.destroy();
         try {
           const response = JSON.parse(bytes.subarray(4).toString());
-          assert.equal(response.ok, true);
+          assert.equal(response.ok, true, JSON.stringify(response));
           accept(response.data);
         } catch (error) {
           reject(error);
@@ -251,13 +271,25 @@ try {
     );
     imported(provider, "existing", /^key-/);
   }
-  const devinToken = jwt({ sub: "alice-devin", exp: 2208988800 });
   write(
     join(env.XDG_DATA_HOME, "devin/credentials.toml"),
-    `windsurf_api_key = ${JSON.stringify(devinToken)}\n`,
+    `windsurf_api_key = ${JSON.stringify(devinToken)}\napi_server_url = ${JSON.stringify(devin.url)}\n`,
   );
-  imported("devin");
-  imported("devin", "existing");
+  const scopedDevin = imported("devin", "imported", /^devin:v2:/);
+  assert.equal(
+    imported("devin", "existing", /^devin:v2:/).entryId,
+    scopedDevin.entryId,
+  );
+  const scope = JSON.parse(
+    Buffer.from(
+      scopedDevin.accountIdentity.slice("devin:v2:".length),
+      "base64url",
+    ).toString(),
+  );
+  assert.equal(scope.principal, "alice-devin");
+  assert.equal(scope.org, "fixture-org");
+  assert.equal(scope.team, "fixture-team");
+  assert.equal(scope.server, devin.url);
   const kiroRoot = join(env.XDG_DATA_HOME, "kiro-cli");
   mkdirSync(kiroRoot, { recursive: true });
   const db = new DatabaseSync(join(kiroRoot, "data.sqlite3"));
@@ -374,5 +406,6 @@ try {
   agent.kill("SIGTERM");
   for (let i = 0; i < 50 && !stopped; i++) await delay(100);
   if (!stopped) agent.kill("SIGKILL");
+  await devin.close();
   rmSync(root, { recursive: true, force: true });
 }
