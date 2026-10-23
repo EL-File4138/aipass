@@ -28,7 +28,8 @@ try {
     assert.ok(existsSync(join(installed, `${name}.exe`)), `Missing installed ${name}`);
   execFileSync(process.execPath, ["scripts/verify-cli-runtime.mjs", installed, join(reports, "cli")], { stdio: "inherit", timeout: 180_000 });
   const home = join(root, "home");
-  mkdirSync(home);
+  for (const name of ["Roaming", "Local"])
+    mkdirSync(join(home, "AppData", name), { recursive: true });
   for (const target of ["main", "tray"]) {
     rmSync(join(root, "result.json"), { force: true });
     writeFileSync(join(root, "runtime-check.json"), JSON.stringify({ mode: "startup", endpoint: "http://127.0.0.1:1/feed" }));

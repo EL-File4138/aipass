@@ -44,6 +44,11 @@ const home = join(root, "home");
 const runtime = join(root, "run");
 for (const directory of [home, runtime, join(root, "data/agent")])
   mkdirSync(directory, { recursive: true });
+if (process.platform === "win32") {
+  // Known Folder lookup verifies these paths before returning a profile.
+  for (const name of ["Roaming", "Local"])
+    mkdirSync(join(home, "AppData", name), { recursive: true });
+}
 writeFileSync(
   join(root, "data/agent/sync-settings.json"),
   '{"mode":"local","cloudkitMigrationComplete":true}',
