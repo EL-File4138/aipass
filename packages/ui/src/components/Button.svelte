@@ -91,13 +91,13 @@
   }
 
   .btn-primary {
-    background: var(--accent);
+    background: var(--accent-fill);
     color: var(--accent-contrast);
-    border-color: var(--accent);
+    border-color: var(--accent-fill);
 
     &:hover:not(:disabled) {
-      background: var(--accent-hover);
-      border-color: var(--accent-hover);
+      background: var(--accent-fill-hover);
+      border-color: var(--accent-fill-hover);
     }
   }
 

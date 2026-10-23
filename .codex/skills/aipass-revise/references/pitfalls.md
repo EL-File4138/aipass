@@ -478,6 +478,20 @@ Newest entries last within each section.
 - **Guardrail**: add new persistent user state to both backup and restore through the shared list. Test export/import/decrypt round trips and explicitly assert whether each local file enters sync snapshots.
 - **Watch points**: vault `BACKUP_ROOT_FILES`, `sync_path_allowed`, agent pricing state and server configuration.
 
+### Tray quit must finish startup before unloading supervision
+- **Symptom**: quitting from the tray could launch another desktop once.
+- **Root cause**: `src-tauri/src/tray_lifecycle.rs` stopped supervision outside the runtime lifecycle guard while startup/repair could register it again; the stop helper also sent Quit to the caller's own singleton.
+- **Fix**: drain startup under the lifecycle write lock, mark the runtime terminal, suspend and verify the supervisor without killing its child, then exit once. A failed unload keeps the application alive and allows retry.
+- **Guardrail**: reject startup, watchdog repairs and updates after terminal quit. Exercise both the concurrency regression in `runtime_lifecycle.rs` and supervisor-unload/child-exit/no-relaunch in `autostart/imp/tests.rs`.
+- **Watch points**: desktop startup, tray repair, updates, singleton exit and macOS LaunchAgent suspension.
+
+### Display and edit must share API observations and field positions
+- **Symptom**: editing replaced the header/body layout and exposed API-derived quota as editable inputs; saving could send an obsolete quota draft.
+- **Root cause**: `ProviderDetailPane.svelte` had separate display and form trees, and `App.svelte` allowed quota draft fields to replace observations.
+- **Fix**: share `ProviderItemFields` and credential rows across modes, keep quota cards read-only and mounted, use the latest selected observation when saving, and collapse domain/protocol overrides. Rust derives absent domains from API hosts; editing an existing exact API-host set treats it as the default.
+- **Guardrail**: keep header/credential/endpoint geometry stable at 960x640; never bind API quota values to draft inputs. Keep explicit custom domains when the API changes and refresh embedded control-panel output for shared field/token changes.
+- **Watch points**: ProviderDetailPane, ProviderFormFields, desktop provider_inputs, App saveProvider, ProviderItemFields and AgentAccountDetail. Agent statistics must follow the active entry/secret, never a pending switch selection, and label local request coverage.
+
 ## Endpoint inference (three implementations)
 
 ### Valid AI endpoints misclassified as custom_http

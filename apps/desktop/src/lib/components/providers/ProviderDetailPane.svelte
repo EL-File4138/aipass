@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, tick } from "svelte";
   import SubscriptionUsageCard from "./SubscriptionUsageCard.svelte";
   import { subscriptionAccountPresentation } from "@aipass/schemas";
   import SubscriptionAccountCard from "./SubscriptionAccountCard.svelte";
+  import ProviderItemFields from "./ProviderItemFields.svelte";
   import ProviderRuntimePanel from "./ProviderRuntimePanel.svelte";
   import { ProviderEmptyState } from "@aipass/ui";
   import ProviderIntegration from "../integration/ProviderIntegration.svelte";
@@ -17,7 +18,6 @@
     CredentialBillingFields,
     Field,
     IconButton,
-    ProviderFormFields,
     ProviderIcon,
     providerKindTone
   } from "@aipass/ui";
@@ -44,7 +44,6 @@
     CodexApiKeyMode,
     CredentialAssignment,
     Draft,
-    FormMode,
     MaybePromise,
     PricingApplyScope,
     PricingGroup,
@@ -83,8 +82,8 @@
   export let usageProbing = false;
   export let notice = "";
   export let editMode = false;
-  export let formMode: FormMode = "edit";
   export let draft: Draft;
+  let titleInput: HTMLInputElement | undefined;
   export let onProbe: () => MaybePromise = () => {};
   export let onUsageProbe: (request: UsageProbeRequest) => Promise<UsageProbeResult> = async () => {
     throw localizedMessage("error.usageProbeUnavailable");
@@ -343,7 +342,6 @@
   $: isSubscription = selected?.credentialKind === "oauth";
   $: hasSubscription = Boolean(selected?.subscription);
   $: keyFormats = selected ? [...new Set(selected.secretRefs.map(secret => secret.interfaceType ?? selected!.interfaceType))] : [];
-  $: isOfficialOauth = selected?.credentialKind === "oauth" && selected?.providerKind === "official";
 
   // Close the dialogs only when the selected entry actually changes. Background
   // reloads swap the `selected` reference for the same id and must not interrupt
@@ -383,10 +381,6 @@
     return apiEndpoint?.url ?? entry.endpoints[0]?.url ?? "";
   }
 
-  function consoleDisplay(entry: ProviderEntry): string {
-    return entry.endpoints.find((endpoint) => endpoint.kind === "console")?.url ?? "";
-  }
-
   function openUsageProbe() {
     if (!selected) return;
     usageDialogOpen = true;
@@ -395,7 +389,7 @@
   async function startEdit() {
     if (!selected || isSubscription || startingEdit) return;
     startingEdit = true;
-    try { await onEditStart(selected); } finally { startingEdit = false; }
+    try { await onEditStart(selected); await tick(); titleInput?.focus({ preventScroll: true }); } finally { startingEdit = false; }
   }
 
   function cancelEdit() {
@@ -450,7 +444,7 @@
       <div class="identity">
         <ProviderIcon title={selected.title} kind={selected.providerKind} providerId={selected.providerId} credentialKind={selected.credentialKind} domain={selected.domains[0]} faviconUrl={selected.faviconUrl} size="lg" />
         <div class="identity-text">
-          <h1>{isSubscription ? subscriptionAccountPresentation(selected, $t).title : selected.title}</h1>
+          <h1>{#if editMode && !isSubscription}<input class="title-input" aria-label={$t("providerForm.title")} bind:this={titleInput} bind:value={draft.title} />{:else}{isSubscription ? subscriptionAccountPresentation(selected, $t).title : selected.title}{/if}</h1>
           <div class="meta">
             <Badge tone={providerKindTone[selected.providerKind]}>{$t(providerKindLabelKey(selected.providerKind))}</Badge>
             {#if !isSubscription}<Badge>{$t(keyFormats.length > 1 ? "credential.multipleFormats" : interfaceLabelKey(keyFormats[0] ?? selected.interfaceType))}</Badge>{/if}
@@ -542,146 +536,11 @@
         {/if}
       {/if}
 
-      {#if editMode && !isSubscription}
-        <ProviderFormFields
-          showSecretFields={false}
-          showConcurrencySetting
-          showWebsocketSetting
-          websocketWarning={selected.websocketWarning}
-          websocketProbing={saving && Boolean(draft.websocketPreferenceTouched && draft.supportsWebsockets && selected.supportsWebsockets === false)}
-          itemLayout
-          {formMode}
-          bind:draft
-          {onInferDraftFromDomain}
-          {onProviderChanged}
-          {onInterfaceChanged}
-          {onAuthChanged}
-          {isOfficialOauth}
-        />
-
-        <section class="form-section">
-          <h3 class="section-title">{$t("providerDetail.keys")}</h3>
-          <div class="section-fields">
-            {#each selected.secretRefs as secret (secret.id)}
-              {@const assignment = assignmentFor(secret.id)}
-              {#if editingSecretId === secret.id}
-                <div class="secret-edit-row">
-                  <input
-                    bind:value={editingSecretLabel}
-                    aria-label={$t("providerDetail.secretLabel")}
-                    placeholder={$t("providerDetail.secretLabelPlaceholder")}
-                  />
-                  <div class="secret-edit-input">
-                    <input bind:value={editingSecretValue} aria-label={$t("providerDetail.secretValue")} type={editingSecretVisible ? "text" : "password"} disabled={editingSecretLoading} autocomplete="off" spellcheck="false" />
-                    <button type="button" class="secret-toggle" disabled={editingSecretLoading} aria-label={$t(editingSecretVisible ? "providerForm.hideApiKey" : "providerForm.showApiKey")} aria-pressed={editingSecretVisible} on:click={() => (editingSecretVisible = !editingSecretVisible)}>
-                      {#if editingSecretVisible}<EyeOff size={14} />{:else}<Eye size={14} />{/if}
-                    </button>
-                  </div>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={editingSecretLoading || editingSecretSaving || Boolean(secretBusy) || !editingSecretLabel.trim() || !editingSecretValue.trim()}
-                    on:click={saveSecretEdit}
-                  >{$t("common.save")}</Button>
-                  <IconButton size="sm" label={$t("common.cancel")} on:click={cancelSecretEdit}>
-                    <Undo2 size={13} />
-                  </IconButton>
-                  <div class="secret-edit-meta">
-                    <SelectField value={editingSecretInterface} ariaLabel={$t("providerDetail.keyFormat")} options={keyInterfaceOptions} disabled={editingSecretLoading} onValueChange={(value) => (editingSecretInterface = value as InterfaceType)} />
-                    <input
-                      bind:value={editingSecretGroup}
-                      aria-label={$t("providerDetail.keyGroup")}
-                      placeholder={$t("providerDetail.keyGroupPlaceholder")}
-                      disabled={editingSecretLoading}
-                    />
-                  <Field label={$t("credential.endpointOverride")}><input type="url" bind:value={editingSecretEndpoint} placeholder={endpointDisplay(selected)} /></Field>
-                  <Field label={$t("credential.modelOverride")}><input bind:value={editingSecretModel} placeholder={selected.defaultModel || $t("credential.inheritSite")} /></Field>
-                  <span class="inherit-hint">{$t("credential.inheritDefaults")}</span>
-                  </div>
-                  <CredentialBillingFields bind:value={editingSecretBilling} disabled={editingSecretLoading} />
-                </div>
-              {:else}
-                <div class="key-row">
-                  <span class="key-row-label">{secret.label}</span>
-                  <code class="key-row-value mono">{revealedSecrets[secret.id] || fullyMasked()}</code>
-                  <div class="key-row-actions">
-                    <IconButton size="sm" label={$t("providerDetail.editKey")} on:click={() => beginSecretEdit(secret)}>
-                      <Pencil size={13} />
-                    </IconButton>
-                    <IconButton
-                      size="sm"
-                      label={$t("providerDetail.removeKey")}
-                      on:click={() => onRemoveSecret(secret.id)}
-                      disabled={Boolean(secretBusy) || saving || editingSecretSaving}
-                    >
-                      <Trash2 size={13} />
-                    </IconButton>
-                  </div>
-                </div>
-              {/if}
-              <Button variant="secondary" size="sm" class="key-pricing-advanced" on:click={() => (pricingSecretId = secret.id)}>
-                <SlidersHorizontal size={13} /> {$t("pricing.credentialSettings")}
-              </Button>
-            {/each}
-            {#if showAddSecret}
-              <div class="add-secret-row">
-                <input
-                  bind:value={newSecretLabel}
-                  aria-label={$t("providerDetail.secretLabel")}
-                  placeholder={$t("providerDetail.secretLabelPlaceholder")}
-                />
-                <input
-                  bind:value={newSecretKey}
-                  aria-label={$t("providerDetail.secretValue")}
-                  type="password"
-                  placeholder={$t("providerDetail.apiKey")}
-                />
-                <Button variant="secondary" size="sm" disabled={addingSecret || Boolean(secretBusy) || !newSecretLabel.trim() || !newSecretKey.trim()} on:click={saveNewSecret}>
-                  {$t("common.save")}
-                </Button>
-                <Button variant="ghost" size="sm" on:click={() => { showAddSecret = false; newSecretKey = ""; }}>
-                  <Trash2 size={13} />
-                </Button>
-                <div class="secret-edit-meta">
-                  <SelectField value={newSecretInterface} ariaLabel={$t("providerDetail.keyFormat")} options={keyInterfaceOptions} onValueChange={(value) => (newSecretInterface = value as InterfaceType)} />
-                  <input
-                    bind:value={newSecretGroup}
-                    aria-label={$t("providerDetail.keyGroup")}
-                    placeholder={$t("providerDetail.keyGroupPlaceholder")}
-                  />
-                  <Field label={$t("credential.endpointOverride")}><input type="url" bind:value={newSecretEndpoint} placeholder={endpointDisplay(selected)} /></Field>
-                  <Field label={$t("credential.modelOverride")}><input bind:value={newSecretModel} placeholder={selected.defaultModel || $t("credential.inheritSite")} /></Field>
-                  <span class="inherit-hint">{$t("credential.inheritDefaults")}</span>
-                </div>
-              </div>
-            {/if}
-            {#if !showAddSecret}
-              <button type="button" class="add-chip" on:click={openAddSecret}>
-                <Plus size={12} />
-                <span>{$t("providerDetail.addKey")}</span>
-              </button>
-            {/if}
-          </div>
-        </section>
-      {:else}
         {#if isSubscription}
           <SubscriptionAccountCard entry={selected} />
         {:else}
         <Card title={$t("providerDetail.credentials")} padded={false}>
-          {#if endpointDisplay(selected)}
-            <button
-              type="button"
-              class="kv-row clickable"
-              class:copied-flash={copied === "endpoint"}
-              on:click={() => onCopyValue("endpoint", endpointDisplay(selected!))}
-            >
-              <span class="kv-label">{$t("providerDetail.endpoint")}</span>
-              <code class="kv-value mono">{endpointDisplay(selected)}</code>
-              <span class="kv-hint">
-                {#if copied === "endpoint"}<Check size={13} /> {$t("providerDetail.copied")}{:else}<span class="copy-hint"><Copy size={13} /></span>{/if}
-              </span>
-            </button>
-          {/if}
+          <ProviderItemFields entry={selected} bind:draft editing={editMode} section="endpoint" {onCopyValue} {copied} />
           {#each selected.secretRefs as secret (secret.id)}
             {@const pricingAssignment = assignmentFor(secret.id)}
             {#if editingSecretId === secret.id}
@@ -736,6 +595,7 @@
                 <button type="button" class="secret-copy" title={secret.label} aria-label={$t(credentialClickAction === "copy" ? "providerDetail.copySecret" : revealedSecrets[secret.id] ? "providerDetail.hideSecret" : "providerDetail.revealSecret", { label: secret.label })} on:click={() => credentialClickAction === "copy" ? onCopySecret(secret.id) : onRevealSecret(secret.id)}></button>
                 <code use:scrollMask class="kv-value mono" class:revealed={Boolean(revealedSecrets[secret.id])}>{revealedSecrets[secret.id] || fullyMasked()}</code>
                 <span class="kv-actions">
+                  {#if editMode}<button type="button" class="icon-btn" aria-label={$t("providerDetail.removeKey")} disabled={Boolean(secretBusy) || saving || editingSecretSaving} on:click={() => onRemoveSecret(secret.id)}><Trash2 size={14} /></button>{/if}
                   {#if copied === `secret:${secret.id}`}
                     <span class="kv-hint copied"><Check size={13} /> {$t("providerDetail.copied")}</span>
                   {:else}
@@ -819,76 +679,18 @@
               </button>
             {/if}
           </div>
-          <div class="kv-row">
-            <span class="kv-label">{$t("providerForm.maxConcurrentRequests")}</span>
-            <span class="kv-value">{selected.maxConcurrentRequests || $t("providerForm.unlimitedConcurrency")}</span>
-          </div>
-          {#if selected.defaultModel}
-            <button
-              type="button"
-              class="kv-row clickable"
-              class:copied-flash={copied === "model"}
-              on:click={() => onCopyValue("model", selected?.defaultModel ?? "")}
-            >
-              <span class="kv-label">{$t("providerDetail.defaultModel")}</span>
-              <code class="kv-value mono">{selected.defaultModel}</code>
-              <span class="kv-hint">
-                {#if copied === "model"}<Check size={13} /> {$t("providerDetail.copied")}{:else}<span class="copy-hint"><Copy size={13} /></span>{/if}
-              </span>
-            </button>
-          {/if}
-          {#if selected.modelAliases?.length}
-            <div class="kv-row">
-              <span class="kv-label">{$t("providerDetail.aliases")}</span>
-              <code class="kv-value mono">{selected.modelAliases.map(([alias, model]) => `${alias} → ${model}`).join(", ")}</code>
-              <span></span>
-            </div>
-          {/if}
-          {#if consoleDisplay(selected)}
-            <button
-              type="button"
-              class="kv-row clickable"
-              class:copied-flash={copied === "console"}
-              on:click={() => onCopyValue("console", consoleDisplay(selected!))}
-            >
-              <span class="kv-label">{$t("providerDetail.console")}</span>
-              <code class="kv-value mono">{consoleDisplay(selected)}</code>
-              <span class="kv-hint">
-                {#if copied === "console"}<Check size={13} /> {$t("providerDetail.copied")}{:else}<span class="copy-hint"><Copy size={13} /></span>{/if}
-              </span>
-            </button>
-          {/if}
-          {#if selected.tags.length || selected.headerNames?.length}
-            {#if selected.tags.length}
-              <div class="kv-row">
-                <span class="kv-label">{$t("providerDetail.tags")}</span>
-                <div class="chips kv-value">
-                  {#each selected.tags as tag}<span class="chip">{tag}</span>{/each}
-                </div>
-                <span></span>
-              </div>
-            {/if}
-            {#if selected.headerNames?.length}
-              <div class="kv-row">
-                <span class="kv-label">{$t("providerDetail.headers")}</span>
-                <div class="chips kv-value">
-                  {#each selected.headerNames as header}<span class="chip mono">{header}</span>{/each}
-                </div>
-                <span></span>
-              </div>
-            {/if}
-          {/if}
+          <ProviderItemFields entry={selected} bind:draft editing={editMode} {onProviderChanged} {onInterfaceChanged} {onAuthChanged} {onInferDraftFromDomain} />
           {#if probeResult}
             <div class="kv-row">
               <span class="kv-label">{$t("providerDetail.status")}</span>
               <span class="kv-value">
                 <span class={`probe-dot ${probeResult.ok ? "ok" : "fail"}`}></span>
                 {probeResult.ok ? $t("providerDetail.healthy") : $t("providerDetail.checkFailed")}
-                {#if probeResult.modelCount !== undefined} · {$t("providerDetail.modelCount", { count: probeResult.modelCount })}{/if}
+                {#if probeResult.modelCount !== undefined}<span class="probe-fact">{$t("providerDetail.modelCount", { count: probeResult.modelCount })}</span>{/if}
                 {#if probeResult.websocket}
-                  · {$t(probeResult.websocket.supported === true ? "providerDetail.wsSupported" : probeResult.websocket.supported === false ? "providerDetail.wsUnsupported" : "providerDetail.wsUnknown")}
+                  <span class="probe-fact">{$t(probeResult.websocket.supported === true ? "providerDetail.wsSupported" : probeResult.websocket.supported === false ? "providerDetail.wsUnsupported" : "providerDetail.wsUnknown")}</span>
                 {/if}
-                {#if probeResult.error} · <span class="probe-error">{probeResult.error}</span>{/if}
+                {#if probeResult.error} <span class="probe-error">{probeResult.error}</span>{/if}
               </span>
               <span></span>
             </div>
@@ -900,15 +702,15 @@
                 <span class={`probe-dot ${usageProbeResult.ok ? "ok" : "fail"}`}></span>
                 {usageProbeResult.ok ? $t(usageSourceLabelKey(usageProbeResult.source)) : $t("providerDetail.checkFailed")}
                 {#if usageProbeResult.quota?.remaining != null}
-                  · {$t("providerDetail.remaining")}: {usageProbeResult.quota.remaining}
+                  <span class="probe-fact">{$t("providerDetail.remaining")}: {usageProbeResult.quota.remaining}</span>
                 {/if}
                 {#if usageProbeResult.quota?.used != null}
-                  · {$t("providerDetail.used")}: {usageProbeResult.quota.used}
+                  <span class="probe-fact">{$t("providerDetail.used")}: {usageProbeResult.quota.used}</span>
                 {/if}
                 {#if usageProbeResult.gateway?.group}
-                  · {$t("providerDetail.gatewayGroup")}: {usageProbeResult.gateway.group}
+                  <span class="probe-fact">{$t("providerDetail.gatewayGroup")}: {usageProbeResult.gateway.group}</span>
                 {/if}
-                {#if usageProbeResult.error} · <span class="probe-error">{usageProbeResult.error}</span>{/if}
+                {#if usageProbeResult.error} <span class="probe-error">{usageProbeResult.error}</span>{/if}
               </span>
               <span></span>
             </div>
@@ -954,16 +756,13 @@
           {#key selected.id}<ProviderRuntimePanel id={selected.id} providerTitle={selected.title} providerId={selected.credentialKind === "oauth" ? selected.providerId ?? "" : ""} {invokeTauri} />{/key}
         {/if}
 
-        {#if selected.notes}
-          <Card title={$t("providerDetail.notes")} collapsible>
-            <div class="notes-body">{selected.notes}</div>
-          </Card>
+        {#if !isSubscription || selected.notes}
+          <ProviderItemFields entry={selected} bind:draft editing={editMode && !isSubscription} section="notes" />
         {/if}
 
-        <ProviderIntegration entry={selected} {invokeTauri} detections={toolDetections}
+        <ProviderIntegration disabled={editMode && !isSubscription} entry={selected} {invokeTauri} detections={toolDetections}
           checkRevision={JSON.stringify([selected.updatedAt, selected.subscription?.observedAt, probeResult?.ok, probeResult?.status, usageProbeResult?.ok, usageProbeResult?.status])}
           onPreview={onPreviewToolConfig} onApply={onApplyToolConfig} onRefresh={onRefreshToolDetections} />
-      {/if}
     </div>
   </section>
 
@@ -1012,7 +811,7 @@
 {/if}
 
 <style lang="scss">
-  .kv-row > .kv-hint, .kv-row > .kv-actions, .kv-row > span:last-child:not(.kv-label):not(.kv-value):not(.kv-actions) {
+  .kv-row > .kv-actions, .kv-row > span:last-child:not(.kv-label):not(.kv-value):not(.kv-actions) {
     grid-column: 2;
     grid-row: 1 / 3;
   }
@@ -1049,9 +848,6 @@
   .credential-heading .pricing-badge { max-width: 48%; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .quota-unit { margin-left: 0.3em; }
   .kv-row.secret > .kv-actions { grid-row: 2; }
-  .notes-body {
-    overflow-wrap: anywhere;
-  }
 
   .detail {
     display: flex;
@@ -1095,41 +891,16 @@
     background: transparent;
   }
 
-  .detail:not(.editing) .detail-header { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; column-gap: 12px; row-gap: 8px; align-items: center; }
-  .detail:not(.editing) .identity, .detail:not(.editing) .identity-text { display: contents; }
-  .detail:not(.editing) .identity :global(.provider-icon) { grid-column: 1; grid-row: 1 / 3; }
-  .detail:not(.editing) .identity-text h1 { grid-column: 2; grid-row: 1; min-width: 0; font-size: 18px; }
-  .detail:not(.editing) .meta { grid-column: 2 / -1; grid-row: 2; flex-wrap: nowrap; overflow: hidden; }
-  .detail:not(.editing) .actions { grid-column: 3; grid-row: 1; }
+  .detail .detail-header { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; column-gap: 12px; row-gap: 8px; align-items: center; }
+  .detail .identity, .detail .identity-text { display: contents; }
+  .detail .identity :global(.provider-icon) { grid-column: 1; grid-row: 1 / 3; }
+  .detail .identity-text h1 { grid-column: 2; grid-row: 1; min-width: 0; font-size: 18px; }
+  .detail .meta { grid-column: 2 / -1; grid-row: 2; flex-wrap: nowrap; overflow: hidden; }
+  .detail .actions { grid-column: 3; grid-row: 1; }
 
-  // Editing uses the header as a persistent action bar. Keeping the title and
-  // save controls on one compact row leaves more room for the form at the
-  // Tauri minimum viewport (960x640).
-  .detail.editing .detail-header {
-    flex-direction: row;
-    align-items: center;
-    gap: 14px;
-    padding: 12px 18px;
-    background: color-mix(in oklab, var(--surface) 94%, transparent);
-  }
-
-  .detail.editing .identity {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-
-  .detail.editing .identity-text {
-    gap: 5px;
-  }
-
-  .detail.editing .identity-text h1 {
-    font-size: 16px;
-  }
-
-  .detail.editing .actions {
-    flex: 0 0 auto;
-  }
-
+  .title-input { width: 100%; min-width: 0; height: 28px; padding: 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; color: var(--text); font: inherit; }
+  .title-input:focus { outline: none; border-color: var(--accent); }
+  .identity-text h1 { height: 28px; line-height: 28px; margin: 0; }
   .identity {
     flex: 1;
     display: flex;
@@ -1256,10 +1027,6 @@
     background: transparent;
   }
 
-  .detail.editing .detail-body {
-    padding: 18px;
-    gap: 16px;
-  }
 
   :global(.detail-body > .card) {
     flex: 0 0 auto;
@@ -1485,102 +1252,6 @@
     overflow-wrap: anywhere;
   }
 
-  .chips {
-    white-space: normal;
-    overflow: visible;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-  }
-
-  .chip {
-    overflow-wrap: anywhere;
-    min-width: 0;
-    padding: 3px 8px;
-    border-radius: 999px;
-    background: var(--surface-2);
-    color: var(--text-secondary);
-    font-size: 11px;
-  }
-
-  .notes-body {
-    padding: 14px 16px;
-    color: var(--text);
-    font-size: 13px;
-    line-height: 1.5;
-    white-space: pre-wrap;
-  }
-
-  .form-section {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .section-title {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-tertiary);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    margin: 0;
-    padding-left: 2px;
-  }
-
-  .section-fields {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    padding: 14px;
-    background: var(--surface);
-    border: 1px solid var(--divider);
-    border-radius: var(--radius);
-  }
-
-  .key-row {
-    display: grid;
-    grid-template-columns: 130px minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .key-row-label {
-    font-size: 13px;
-    color: var(--text-secondary);
-  }
-
-  .key-row-value {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--text-tertiary);
-    font-size: 13px;
-  }
-
-  .key-row-actions {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .key-row-remove {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    border-radius: var(--radius);
-    color: var(--text-tertiary);
-    transition: background-color 80ms ease, color 120ms ease;
-
-    &:hover:not(:disabled) {
-      background: var(--danger-soft);
-      color: var(--danger);
-    }
-  }
-
-  .section-fields :global(.key-pricing-advanced) { align-self: flex-start; }
-
   .pricing-badge {
     display: inline-flex;
     align-items: center;
@@ -1607,7 +1278,6 @@
     &:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 2px; }
   }
 
-  .secret-edit-row,
   .credential-inline-editor,
   .add-secret-row {
     display: grid;
@@ -1708,6 +1378,8 @@
       margin-top: 4px;
     }
   }
+
+  .probe-fact, .probe-error { display: block; margin-top: 4px; }
 
   .probe-dot {
     display: inline-block;

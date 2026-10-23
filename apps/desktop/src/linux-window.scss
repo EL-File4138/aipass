@@ -12,15 +12,6 @@
     padding-top: var(--linux-header-inset);
   }
 
-  // The Agent view spans both content columns and retains the app-title row.
-  .workspace > .agent-management {
-    padding-top: 34px;
-
-    > header {
-      padding-right: calc(var(--linux-detail-inset) + 1px);
-    }
-  }
-
   .workspace > .detail > .detail-header {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -100,4 +91,10 @@
 :root[data-platform="linux"][data-composited="false"],
 :root[data-platform="linux"][data-window-maximized="true"] {
   --window-radius: 0px;
+}
+
+:root[data-platform="linux"] .workspace > .agent-detail > .detail-header {
+  display: flex;
+  min-height: 76px;
+  padding: 42px 16px 12px;
 }

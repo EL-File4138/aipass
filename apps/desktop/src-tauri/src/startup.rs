@@ -79,15 +79,6 @@ pub(crate) fn ensure_tray_autostart_for_current_desktop(
         .map_err(|err| err.to_string())
 }
 
-#[cfg(target_os = "macos")]
-pub(crate) fn stop_tray_autostart_for_current_desktop(vault_dir: &Path) -> Result<(), String> {
-    let singleton_socket =
-        singleton::current_singleton_socket_path().map_err(|err| err.to_string())?;
-    aipass_agent::stop_tray_autostart_with_socket(vault_dir, &singleton_socket)
-        .map(|_| ())
-        .map_err(|err| err.to_string())
-}
-
 pub(crate) fn ensure_agent_resident_async(app: AppHandle) {
     thread::spawn(move || {
         let Ok(_starting) = runtime_lifecycle::RUNTIME.start() else {

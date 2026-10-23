@@ -17,6 +17,7 @@
   export let onApply: (request: ToolSwitchRequest) => Promise<ToolConfigApplyResult>;
   export let onRefresh: () => MaybePromise = () => {};
   export let checkRevision = "";
+  export let disabled = false;
   let secretId = "";
   let setupTool: IntegrationToolDefinition | undefined;
   $: if (setupTool && !installedIntegrationTools(detections).some(tool => tool.id === setupTool?.id)) setupTool = undefined;
@@ -65,16 +66,18 @@
   function focused() { if (document.visibilityState === "visible") void refreshStatus(); }
   onMount(() => { mounted = true; void refreshStatus(); window.addEventListener("focus", focused); document.addEventListener("visibilitychange", focused); });
   onDestroy(() => { mounted = false; generation++; window.removeEventListener("focus", focused); document.removeEventListener("visibilitychange", focused); });
-  $: selectionKey = JSON.stringify([entry.id, entry.providerId, entry.credentialKind, entry.accountIdentity, secret, entry.interfaceType, entry.authScheme, entry.endpoints, entry.defaultModel, entry.supportsWebsockets, codexMode]);
+  $: selectionKey = JSON.stringify([disabled, entry.id, entry.providerId, entry.credentialKind, entry.accountIdentity, secret, entry.interfaceType, entry.authScheme, entry.endpoints, entry.defaultModel, entry.supportsWebsockets, codexMode]);
   let lastSelection = "";
   $: if (selectionKey !== lastSelection) { lastSelection = selectionKey; pendingLogin = undefined; setupTool = undefined; loginOpen = false; message = error = ""; }
   async function preview(tool: IntegrationToolDefinition) {
+    if (disabled) throw new Error($t("integration.externalChange"));
     if (!secret) throw new Error($t("integration.chooseKey"));
     const selection = selectionKey;
     const request = requestFor(tool);
     const response = await onPreview(request);
     if (response.previewId) request.previewId = response.previewId;
     return { preview: response, apply: async () => {
+      if (disabled || selection !== selectionKey) throw new Error($t("integration.externalChange"));
       const result = await onApply(request);
       if (!mounted || selection !== selectionKey) return result;
       if (result.outcome && result.outcome !== "applied") {
@@ -89,7 +92,7 @@
     } };
   }
   async function reconnect(tool: IntegrationToolDefinition) {
-    if (reconnecting) return;
+    if (disabled || reconnecting) return;
     const status = statuses[tool.id];
     if (status?.mode !== "official" && (!nativeTool || !secret)) return;
     reconnecting = true; error = "";
@@ -109,7 +112,7 @@
     catch (e) { if (mounted && selection === selectionKey) error = String(e); } finally { reconnecting = false; }
   }
   async function restore(tool: IntegrationToolDefinition) {
-    const operationId = statuses[tool.id]?.operationId; if (!operationId || restoring) return;
+    const operationId = statuses[tool.id]?.operationId; if (disabled || !operationId || restoring) return;
     restoring = true; error = "";
     const selection = selectionKey;
     try {
@@ -124,13 +127,13 @@
 </script>
 
 {#if tools.length}
-  <IntegrationCard {tools} disabled={!secret} {detections} {statuses} nativeSwitch={Boolean(nativeTool)}
+  <IntegrationCard {tools} disabled={disabled || !secret} {detections} {statuses} nativeSwitch={Boolean(nativeTool)}
     showContext={entry.credentialKind !== "oauth" || Boolean(message || error || (pendingLogin && !loginOpen))}
-    onSetup={tool => setupTool = tool}
+    onSetup={tool => { if (!disabled) setupTool = tool; }}
     onRestore={restore} onReconnect={reconnect} onPreview={preview}
     onRefresh={async () => { await onRefresh(); await refreshStatus(); }}
     {codexMode} codexModeOptions={codexOptions} onCodexModeChange={mode => codexMode = mode as CodexApiKeyMode}
-    resetKey={JSON.stringify([entry.id, entry.title, entry.providerId, secret, entry.interfaceType, entry.authScheme, entry.endpoints, entry.defaultModel, entry.supportsWebsockets, codexMode, oauth])}>
+    resetKey={JSON.stringify([disabled, entry.id, entry.title, entry.providerId, secret, entry.interfaceType, entry.authScheme, entry.endpoints, entry.defaultModel, entry.supportsWebsockets, codexMode, oauth])}>
     {#if entry.credentialKind !== "oauth"}<CredentialPicker {entry} value={secretId} onValueChange={value => secretId = value} />{/if}
     {#if message}<Banner tone="success">{message}</Banner>{/if}
     {#if error}<Banner tone="danger">{error}</Banner>{/if}

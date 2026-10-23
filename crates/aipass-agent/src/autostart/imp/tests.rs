@@ -108,6 +108,23 @@ fn suspending_tray_supervision_preserves_the_desktop_child() {
         .status()
         .unwrap()
         .success());
+    // User quit unloads supervision first and lets the desktop exit itself.
+    // The next supervisor retry interval must not create another desktop.
+    assert!(Command::new("kill")
+        .args(["-TERM", pid.trim()])
+        .status()
+        .unwrap()
+        .success());
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    assert!(!launch_agent_running(&service_name));
+    assert_eq!(fs::read_to_string(&pid_path).unwrap(), pid);
+    assert!(!Command::new("kill")
+        .args(["-0", pid.trim()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .unwrap()
+        .success());
 }
 
 #[test]

@@ -445,7 +445,7 @@
     .bind-save {
       padding: 1px 8px;
       border-radius: 999px;
-      background: var(--accent);
+      background: var(--accent-fill);
       color: var(--accent-contrast, #fff);
       font-size: 11px;
       font-weight: 600;

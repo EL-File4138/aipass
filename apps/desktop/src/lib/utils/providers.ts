@@ -1,10 +1,20 @@
 import type { ProviderEntry } from "@aipass/schemas";
+import { encodeListValues } from "@aipass/ui";
 
 import type { EntrySummary } from "../types";
 
 export { emptyDraft, mergeHeaderPairs } from "@aipass/ui";
 
 export { isExpiringSoon, providerCounts, entryMatchesFilter } from "@aipass/schemas";
+
+// Older entries materialized the default API hosts. Treat that exact set as
+// the default so changing an API address does not retain a stale host.
+export function domainOverride(entry: ProviderEntry): string {
+  const hosts = new Set(entry.endpoints.filter(endpoint => endpoint.kind === "api").flatMap(endpoint => {
+    try { const url = new URL(endpoint.url ?? ""); return /^https?:$/.test(url.protocol) ? [url.hostname] : []; } catch { return []; }
+  }));
+  return hosts.size === entry.domains.length && entry.domains.every(domain => hosts.has(domain)) ? "" : encodeListValues(entry.domains);
+}
 
 export function summaryToEntry(summary: EntrySummary): ProviderEntry {
   return {

@@ -84,7 +84,7 @@
     VaultStatus
   } from "./lib/types";
   import { passwordStrength, unlockErrorMessage } from "./lib/utils/auth";
-  import { emptyDraft, entryMatchesFilter, mergeHeaderPairs, providerCounts as buildProviderCounts, summaryToEntry } from "./lib/utils/providers";
+  import { domainOverride, emptyDraft, entryMatchesFilter, mergeHeaderPairs, providerCounts as buildProviderCounts, summaryToEntry } from "./lib/utils/providers";
   import { importCcSwitchConfigurations } from "./lib/utils/official-accounts";
   import { aipassProviderLinkToDraft, ccSwitchLinkToDraft, findAipassProviderDuplicate, findCcSwitchDuplicate, splitEndpointList } from "./lib/utils/deeplink";
   import { buildRouteTarget, buildSingleEntryRoute, proxySupportedEntry, prepareRouteSave } from "./lib/utils/server";
@@ -1426,7 +1426,7 @@
     protocolTouched = { providerId: true, interfaceType: true, authScheme: true };
     draft = {
       title: entry.title,
-      domain: encodeListValues(entry.domains),
+      domain: domainOverride(entry),
       endpoint: encodeListValues(
         entry.endpoints
           .filter((endpoint) => endpoint.kind === "api")
@@ -1470,22 +1470,7 @@
       billingUnitPrice: "",
       notes: entry.notes ?? ""
     };
-    editQuotaSnapshot = quotaDraftState();
     detailEditMode = true;
-  }
-
-  // Snapshot of the draft's quota fields taken when the edit form opened, so
-  // saveProvider can tell a deliberate edit apart from a stale snapshot.
-  let editQuotaSnapshot = "";
-
-  function quotaDraftState(): string {
-    return JSON.stringify([
-      draft.quotaLabel,
-      draft.quotaLimit,
-      draft.quotaUsed,
-      draft.quotaRemaining,
-      draft.quotaResetAt
-    ]);
   }
 
   function cancelDetailEdit() {
@@ -1547,14 +1532,8 @@
       defaultModel: draft.defaultModel || undefined,
       modelAliases: modelAliasPairs(draft.modelAlias),
       headers: headerPairs(draft.header),
-      // The vault replaces quota wholesale on update (an omitted value clears
-      // it), so an edit the user never touched must re-send the freshest
-      // in-memory quota — not the snapshot taken when the form opened, which
-      // a usage probe may have superseded meanwhile.
-      quota:
-        formMode === "edit" && quotaDraftState() === editQuotaSnapshot
-          ? selected?.quota
-          : quotaFromDraft(),
+      // API observations are read-only, including while metadata is edited.
+      quota: formMode === "edit" ? selected?.quota : quotaFromDraft(),
       gateway: formMode === "edit" ? entry?.gateway : undefined,
       tags: listValues(draft.tag),
       notes: draft.notes || undefined
@@ -3353,7 +3332,6 @@
         {usageProbing}
         notice={noticeText}
         editMode={detailEditMode}
-        formMode="edit"
         bind:draft
         onProbe={probeSelected}
         onUsageProbe={probeUsageSelected}

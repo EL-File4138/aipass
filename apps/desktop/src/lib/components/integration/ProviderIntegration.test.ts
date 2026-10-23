@@ -110,3 +110,17 @@ test("guided BYOK copies the exact selected credential through Rust without reve
  await vi.waitFor(()=>expect(invoke).toHaveBeenCalledWith("secret_copy",{id:entry.id,field:"subscription"}));
  expect(plan).not.toHaveBeenCalled();expect(apply).not.toHaveBeenCalled();expect(document.body.textContent).not.toContain("Credentials switched");
 });
+
+
+test("editing keeps integration status visible and disables configuration mutations", async () => {
+ setLocale("en"); const plan = vi.fn(); const apply = vi.fn();
+ const invoke = vi.fn(async (_command: string) => ({ tool: "codex", state: "login_required", mode: "official", entryId: entry.id, operationId: "previous", overrides: [] }));
+ app = mount(ProviderIntegration, { target: document.body, props: { disabled: true, detections: [{ tool: "codex", binaryFound: true }], entry, invokeTauri: invoke as never, onPreview: plan, onApply: apply } });
+ flushSync(); await settled();
+ for (const label of ["Switch", "Sign in again", "Restore"]) {
+   const button = [...document.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent?.includes(label));
+   expect(button?.disabled).toBe(true); button?.click();
+ }
+ expect(plan).not.toHaveBeenCalled(); expect(apply).not.toHaveBeenCalled();
+ expect(invoke.mock.calls.every(([command]) => command === "tool_config_status")).toBe(true);
+});

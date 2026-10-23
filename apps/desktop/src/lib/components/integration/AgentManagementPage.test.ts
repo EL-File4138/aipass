@@ -51,3 +51,28 @@ test("credential edits while previewing invalidate the pending selection", async
   await vi.waitFor(() => { flushSync(); expect(document.querySelector(".preview-dialog-content")).toBeNull(); });
   expect(invoke.mock.calls.some(([command]) => command === "agent_management_apply")).toBe(false);
 });
+
+test("the detail shows only the active account usage until a switch is applied", async () => {
+  setLocale("en");
+  const active = {...entry, quota: {remaining: "87", unit: "credits"}};
+  const other = {...entry, id: "other", title: "Other account", quota: {remaining: "999", unit: "credits"}};
+  const invoke = vi.fn(async (command: string) => {
+    if (command === "server_usage_summary") return {providers: [
+      {providerEntryId: "api", secretId: "key", requestCount: 3, inputTokens: 120, outputTokens: 40, cacheReadTokens: 8, cacheCreationTokens: 2},
+      {providerEntryId: "other", secretId: "key", requestCount: 100, inputTokens: 50000, outputTokens: 50000, cacheReadTokens: 0, cacheCreationTokens: 0}
+    ]};
+    return invokeFixture()(command);
+  });
+  app = mount(AgentManagementPage, {target: document.body, props: {entries: [active, other], invokeTauri: invoke as never, onRefreshEntries: async () => {}}});
+  await settled();
+  await vi.waitFor(() => { flushSync(); expect(document.querySelector(".account-detail")?.textContent).toContain("120"); });
+  const trigger = document.querySelector<HTMLButtonElement>('.switch-controls .select-trigger')!;
+  trigger.dispatchEvent(new PointerEvent("pointerdown", {bubbles: true, button: 0, pointerType: "mouse"}));
+  await vi.waitFor(() => { flushSync(); expect(document.querySelector('[role="option"][data-value="other:key"]')).toBeTruthy(); });
+  document.querySelector<HTMLElement>('[role="option"][data-value="other:key"]')!.dispatchEvent(new PointerEvent("pointerup", {bubbles: true, button: 0, pointerType: "mouse"}));
+  flushSync();
+  expect(document.querySelector(".account-detail")?.textContent).toContain("87");
+  expect(document.querySelector(".account-detail")?.textContent).not.toContain("999");
+  expect(document.querySelector(".account-detail")?.textContent).not.toContain("50K");
+  expect(invoke.mock.calls.some(([command]) => command === "agent_management_apply")).toBe(false);
+});

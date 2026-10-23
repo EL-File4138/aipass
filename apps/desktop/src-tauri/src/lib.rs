@@ -27,12 +27,12 @@ mod runtime_lifecycle;
 mod self_install;
 mod singleton;
 mod startup;
+#[cfg(target_os = "macos")]
+use startup::ensure_tray_autostart_for_current_desktop;
 use startup::{ensure_agent_resident_async, ensure_agent_running_for_desktop_inner};
 pub(crate) use startup::{
     ensure_agent_running_for_desktop, install_tray_autostart_for_current_desktop,
 };
-#[cfg(target_os = "macos")]
-use startup::{ensure_tray_autostart_for_current_desktop, stop_tray_autostart_for_current_desktop};
 mod subscription_import;
 mod tool_commands;
 mod tray;

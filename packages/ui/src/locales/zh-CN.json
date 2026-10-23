@@ -616,6 +616,7 @@
   "providerForm.hideApiKey": "隐藏 API 密钥",
   "providerForm.details": "详情",
   "providerForm.domains": "域名",
+  "providerForm.domainFromApi": "默认使用 API 地址",
   "providerForm.endpointUrl": "接口地址",
   "providerForm.oauthEndpointWarning": "此 OAuth 凭据只会通过代理发送到上方接口地址；修改为不可信地址会泄露登录凭据。",
   "providerForm.defaultModel": "默认模型",
@@ -891,6 +892,7 @@
   "tray.switchGroup": "切换分组",
   "tray.noGroups": "无分组",
   "tray.quit": "退出 AIPass",
+  "tray.quitFailed": "退出失败，请重试",
   "tray.updatedAt": "更新于 {time}",
   "tray.unavailable": "不可用",
   "tray.routes.one": "{count} 条路由",
@@ -1330,5 +1332,13 @@
   "integration.setup.qoder": "前往设置 → 模型；Qoder CLI 使用 /model → Custom。BYOK、服务商和自定义 URL 以当前套餐及向导目录为准。",
   "integration.modelCatalogRequired": "需要 Meta 模型目录接口",
   "integration.setup.zcode": "设置 → 模型服务商 → 添加服务商。选择 OpenAI 或 Anthropic，填写下方参数，添加模型 ID 并启用。",
-  "integration.setup.jetbrains-copilot": "Copilot 模型选择 → Model management → Add a custom endpoint → OpenAI compatible。填写参数并选择模型；缺少该选项时先更新插件。组织策略可能限制 BYOK。"
+  "integration.setup.jetbrains-copilot": "Copilot 模型选择 → Model management → Add a custom endpoint → OpenAI compatible。填写参数并选择模型；缺少该选项时先更新插件。组织策略可能限制 BYOK。",
+  "agents.currentCredential": "当前凭据",
+  "agents.localUsage": "近 7 天本地用量",
+  "agents.localUsageHint": "仅统计经过 AIPass 的请求。",
+  "agents.unlinkedUsage": "连接 AIPass 凭据后可查看用量。",
+  "agents.usageFailed": "无法读取本地用量。",
+  "agents.inputTokens": "输入 Token",
+  "agents.outputTokens": "输出 Token",
+  "agents.cacheTokens": "缓存 Token"
 }

@@ -70,7 +70,7 @@ c6f6b6b78dbab2d730cb56df7949a9720aa5b80bc2c01cfacdd3674f7f0c4a00 ../../packages/
 6642c21edff97224d69471c930c152c7197a24dba74157046219f6ebd2e117c2 ../../packages/ui/src/components/Badge.svelte
 aff66a23f131a57c9bcb4718755cfc2eed9f79f42e18171f2b3e39073830aa4c ../../packages/ui/src/components/Banner.svelte
 7e47e555fae10330562a0419148986a7ccd639e489245eb7296039d2a8eee6a2 ../../packages/ui/src/components/Brand.svelte
-201d0a755a2c1a8cf518d4f66f5d0b319241e8939f989acf43226117a220d2db ../../packages/ui/src/components/Button.svelte
+9b3ded9c4e8adad0fc5b0655efad3a5bb7131e9eb76641db14d7aab3756eeb1f ../../packages/ui/src/components/Button.svelte
 b2385a01323c9b745fa1ec74507e2e9d8fe0a69e90507f22a39e9b0604a6be3b ../../packages/ui/src/components/Card.svelte
 cfe4246593d75db003e41fd104c4ccd1a6cd555ed1d9e6e5b8a9a607d0249410 ../../packages/ui/src/components/Collapsible.svelte
 0914f714f7f9f6602098b60f27be21afedac31b8d28c8b7e7d300e6f00eb935d ../../packages/ui/src/components/CredentialBillingFields.svelte
@@ -79,9 +79,9 @@ a6accb691f72ae3fb15092d1056cfcb7d78ba57e44a48cc8ba43bdeadf089234 ../../packages/
 439d6ec2973ab84a72459a65b660111232a8ad7f8f6ec0e92e6f3c24d427c177 ../../packages/ui/src/components/IconButton.svelte
 5fd4c09163161a0f9e998b770a1c1bbb7747042dd1dfac5a9f7b5b076f039d75 ../../packages/ui/src/components/Logo.svelte
 210386251de0129166c6da5b963609ed8df4a89b24d54aee2dcae6c0511d0ed0 ../../packages/ui/src/components/Modal.svelte
-d50e6cd161135b8c08300e4ee2d463f67744f870ede0b166cb4638626bae448c ../../packages/ui/src/components/ProgressButton.svelte
+cb9d7276ce3d9714747789977546f83fa0ad3adeccd6bd7b8c71222a1e982ddd ../../packages/ui/src/components/ProgressButton.svelte
 f4d72275e952ba839881ff3f45feb9814204049b22624aae179992f8c9c90c22 ../../packages/ui/src/components/ProviderEmptyState.svelte
-2b0837e8b3bf735a51203183b1874f716bb36d196dc40474684146cb073a5da9 ../../packages/ui/src/components/ProviderFormFields.svelte
+69051f0d2cc6f011179df8f08ac0d3c6481e1c7b3ac2ac73f7d9ae0b85f1fb7e ../../packages/ui/src/components/ProviderFormFields.svelte
 7140b65055883ad0599b97416aada024a47b5647b789d64065bfaf611218c42a ../../packages/ui/src/components/ProviderIcon.svelte
 bd5b02915c626cb9023d32d9730445bfa5f21898e83a1d898de72733468b4afb ../../packages/ui/src/components/ProviderListPane.svelte
 8e3998096c3034d9112a79469f436afd5a339109aad72800df0f05716543f2a6 ../../packages/ui/src/components/ProxyRouteGroupDialog.svelte
@@ -99,10 +99,10 @@ aee9eb05ecc931af04b784f4dd2e589de8f573fd90ad3f8c53de1c480d3bf186 ../../packages/
 f32b22b84b182859220ec87c2a1d06654d043774500151bc7c9c39dd606a2dc0 ../../packages/ui/src/index.test.ts
 30140eb1e0885a34c7b2504eb68d865ee0b3e82b5e25f289c314583843edfd07 ../../packages/ui/src/index.ts
 e869bc56c5048b80726d1c251a9868e5c36f96c4a6afdc7543b09478e77fe977 ../../packages/ui/src/locales/aliases.json
-cf3989852c6ef64538a0c8731988d4c8cbb8b021105f17b8b97fe8d466d005c3 ../../packages/ui/src/locales/en.json
-0b8c385679ddff1f54d75f4d84baf9d2e92c77b417645ee630328eb588fbc86d ../../packages/ui/src/locales/zh-CN.json
+4c737f0f1b51d43b22f4a456f08aa360fa913efb449dcaff304850f133bc198f ../../packages/ui/src/locales/en.json
+ee7d39e13f555ce680ee29dd8630ca4b523377114e7df17950d276e710721692 ../../packages/ui/src/locales/zh-CN.json
 b9018964d3462a82d1e63fe60da79bfd7034fb7723f7264d61ba4f9dd8c54be0 ../../packages/ui/src/provider-icons.ts
-e6c445118b87f09550e39038fa3c124c50837e137ebf6245d53244a12f0b0576 ../../packages/ui/src/styles/base.scss
+cf7bae55267729e8d66f74d8a60662d9373f836132e973cc7ecfb9cef8801abd ../../packages/ui/src/styles/base.scss
 105b51b17486f6286aec9a005ee079828f1ebe29c8303e565e4a6eaed808beb6 ../../packages/ui/src/styles/select-menu.scss
 b324d7c8d1f94e41888ce20da7fdfc5eb9b0c5a9c68b04f7a88db07d3e45f01b ../../packages/ui/src/types.ts
 05fed22f80bfc74f66dea9f5217d34431051584c9dfc3b51e2eece7e4e31a6ba ../desktop/public/aipass-logo.png

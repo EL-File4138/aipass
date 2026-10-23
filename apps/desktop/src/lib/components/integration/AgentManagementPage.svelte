@@ -7,6 +7,8 @@
   import type { ToolDetection, ToolConfigTarget, ToolConfigStatus, ToolSwitchRequest, ToolConfigPreview, ToolConfigApplyResult } from "../../types";
   import { integrationToolDefinitions, installedIntegrationTools, toolIsInstalled } from "../../utils/integrations";
   import { agentCredentialChoices } from "../../utils/agent-credentials";
+  import AgentAccountDetail from "./AgentAccountDetail.svelte";
+  import { subscriptionAccountPresentation } from "@aipass/schemas";
   import IntegrationSetupDialog from "./IntegrationSetupDialog.svelte";
   import { integrationSetupDetails } from "../../utils/integration-setup";
   import IntegrationToolIcon from "./IntegrationToolIcon.svelte";
@@ -36,6 +38,17 @@
   $: tools = installedIntegrationTools(detections);
   $: choices = Object.fromEntries(tools.map(tool => [tool.id, agentCredentialChoices(entries, tool.id)]));
   $: if (previewOpen && selectionRevision !== revision && !busy) { previewOpen = false; pending = undefined; }
+
+  let selectedTool: ToolConfigTarget | undefined;
+  $: if (!tools.some(tool => tool.id === selectedTool)) selectedTool = tools[0]?.id;
+  $: activeTool = tools.find(tool => tool.id === selectedTool);
+  $: activeStatus = selectedTool ? statuses[selectedTool] : undefined;
+  $: activeEntry = entries.find(entry => entry.id === activeStatus?.entryId);
+  function accountLabel(status: ToolConfigStatus | undefined) {
+    const entry = entries.find(entry => entry.id === status?.entryId);
+    return entry?.credentialKind === "oauth" ? subscriptionAccountPresentation(entry, $t).account || entry.title
+      : entry?.title || status?.entryTitle || status?.accountIdentity || $t("integration.unmanaged");
+  }
 
   async function refresh(clearError = true) {
     const current = ++generation;
@@ -120,74 +133,74 @@
   }
 </script>
 
-<section class="agent-management" aria-label={$t("agents.title")}>
-  <header>
-    <h1>{$t("agents.title")}</h1>
-    <IconButton label={$t("integration.scanInstallations")} disabled={loading || Boolean(busy)} on:click={() => refresh()}>
-      <RefreshCw size={16} class={loading ? "spinning" : ""} />
-    </IconButton>
+<section class="list-pane agent-list-pane" aria-label={$t("agents.title")}>
+  <header class="toolbar"><h1>{$t("agents.title")}</h1>
+    <IconButton label={$t("integration.scanInstallations")} disabled={loading || Boolean(busy)} on:click={() => refresh()}><RefreshCw size={16} class={loading ? "spinning" : ""} /></IconButton>
   </header>
-  <div class="body" use:scrollMask>
-    {#if message}<Banner tone="success">{message}</Banner>{/if}
-    {#if error}<Banner tone="danger">{error}</Banner>{/if}
-    <div class="agent-list" aria-busy={loading}>
-      {#each tools as tool (tool.id)}
-        {@const status = statuses[tool.id]}
-        {@const available = choices[tool.id] ?? []}
-        {@const detection = detections.find(d => d.tool === tool.id)}
-        {@const needsRuntime = tool.id === "cursor" && !detection?.localRuntimeFound}
-        <div class="agent-row">
-          <div class="identity">
-            <span class="tool-icon"><IntegrationToolIcon tool={tool.id} size={24} /></span>
-            <div class="tool-copy"><strong>{tool.name}</strong>
-              {#if !tool.setupGuide}<span class="current" title={status?.accountIdentity || status?.entryTitle}>
-                {status?.entryTitle || status?.accountIdentity || $t("integration.unmanaged")}
-              </span>{/if}
-              {#if !detection?.binaryFound && !detection?.extensionFound}<span class="subtle">{$t("agents.configOnly")}</span>{/if}
-              {#if needsRuntime}<span class="subtle">{$t("agents.cursorRuntimeRequired")}</span>{/if}
-            </div>
-          </div>
-          <div class="switch-controls">
-            <SelectField value={selections[tool.id] ?? ""} options={available}
-              placeholder={$t(available.length ? "agents.choose" : "agents.noCompatible")}
-              ariaLabel={`${tool.name}: ${$t("agents.credential")}`} disabled={loading || Boolean(busy) || !available.length || needsRuntime}
-              onValueChange={value => selections = { ...selections, [tool.id]: value }} />
-            <Button size="sm" variant="secondary" disabled={loading || Boolean(busy) || !selections[tool.id] || needsRuntime || status?.state === "conflict" || status?.state === "storage_unavailable"}
-              loading={busy === tool.id} on:click={() => prepare(tool.id)}>{$t(tool.setupGuide ? "integration.setupAction" : "agents.switch")}</Button>
-          </div>
-          {#if status?.state && status.state !== "ready" && status.state !== "unmanaged"}
-            <div class="row-note">{$t(`integration.state.${status.state}`)}
-              {#if status.operationId}<Button size="sm" disabled={Boolean(busy) || loading} on:click={() => restore(tool.id)}>{$t("integration.restore")}</Button>{/if}
-            </div>
-          {/if}
-          {#if status?.overrides.length}<div class="row-note">{$t("integration.environmentOverrides", { keys: status.overrides.join(", ") })}</div>{/if}
-        </div>
-      {:else}
-        <div class="empty"><Terminal size={28} /><strong>{$t(loading ? "agents.scanning" : "agents.empty")}</strong><span>{$t("agents.emptyDetail")}</span></div>
-      {/each}
-    </div>
+  <div class="agent-list" use:scrollMask aria-busy={loading}>
+    {#each tools as tool (tool.id)}
+      <button type="button" class="agent-row" class:active={selectedTool === tool.id} aria-pressed={selectedTool === tool.id} on:click={() => selectedTool = tool.id}>
+        <span class="tool-icon"><IntegrationToolIcon tool={tool.id} size={23} /></span>
+        <span class="tool-copy"><strong>{tool.name}</strong><span class="current">{accountLabel(statuses[tool.id])}</span></span>
+      </button>
+    {:else}<div class="empty"><Terminal size={28} /><strong>{$t(loading ? "agents.scanning" : "agents.empty")}</strong><span>{$t("agents.emptyDetail")}</span></div>{/each}
   </div>
+</section>
+<section class="detail agent-detail" aria-label={activeTool?.name ?? $t("agents.title")}>
+  {#if activeTool}
+      {@const available = choices[activeTool.id] ?? []}
+      {@const detection = detections.find(d => d.tool === activeTool.id)}
+      {@const needsRuntime = activeTool.id === "cursor" && !detection?.localRuntimeFound}
+    <header class="detail-header"><span class="tool-icon"><IntegrationToolIcon tool={activeTool.id} size={25} /></span><h2>{activeTool.name}</h2></header>
+    <div class="body" use:scrollMask>
+      {#if message}<Banner tone="success">{message}</Banner>{/if}
+      {#if error}<Banner tone="danger">{error}</Banner>{/if}
+      <div class="switch-controls">
+        <SelectField value={selections[activeTool.id] ?? ""} options={available} label={$t("agents.credential")}
+          placeholder={$t(available.length ? "agents.choose" : "agents.noCompatible")}
+          ariaLabel={`${activeTool.name}: ${$t("agents.credential")}`} disabled={loading || Boolean(busy) || !available.length || needsRuntime}
+          onValueChange={value => { if (activeTool) selections = { ...selections, [activeTool.id]: value }; }} />
+        <Button size="sm" variant="secondary" disabled={loading || Boolean(busy) || !selections[activeTool.id] || needsRuntime || activeStatus?.state === "conflict" || activeStatus?.state === "storage_unavailable"}
+          loading={busy === activeTool.id} on:click={() => { if (activeTool) void prepare(activeTool.id); }}>{$t(activeTool.setupGuide ? "integration.setupAction" : "agents.switch")}</Button>
+      </div>
+      {#if !detection?.binaryFound && !detection?.extensionFound}<p class="subtle">{$t("agents.configOnly")}</p>{/if}
+      {#if needsRuntime}<p class="subtle">{$t("agents.cursorRuntimeRequired")}</p>{/if}
+      {#if activeStatus?.state && activeStatus.state !== "ready" && activeStatus.state !== "unmanaged"}
+        <div class="row-note">{$t(`integration.state.${activeStatus.state}`)}
+          {#if activeStatus.operationId}<Button size="sm" disabled={Boolean(busy) || loading} on:click={() => { if (activeTool) void restore(activeTool.id); }}>{$t("integration.restore")}</Button>{/if}
+        </div>
+      {/if}
+      {#if activeStatus?.overrides.length}<div class="row-note">{$t("integration.environmentOverrides", { keys: activeStatus.overrides.join(", ") })}</div>{/if}
+      {#if activeEntry && activeStatus?.state === "ready"}
+        {#key `${activeTool.id}:${activeEntry.id}:${activeStatus.secretId ?? ""}`}<AgentAccountDetail entry={activeEntry} secretId={activeStatus.secretId} {invokeTauri} {onRefreshEntries} />{/key}
+      {:else}<div class="unmanaged"><strong>{accountLabel(activeStatus)}</strong><span>{$t("agents.unlinkedUsage")}</span></div>{/if}
+    </div>
+  {:else}<div class="empty"><Terminal size={28} /><span>{$t(loading ? "agents.scanning" : "agents.empty")}</span></div>{/if}
 </section>
 <IntegrationPreviewDialog open={previewOpen} {preview} toolName={integrationToolDefinitions.find(t => t.id === pending?.tool)?.name ?? ""}
   busy={Boolean(busy)} managedSwitch onConfirm={apply} onOpenChange={open => { if (!busy) { previewOpen = open; if (!open) pending = undefined; } }} />
 
 <style lang="scss">
-  .agent-management { grid-column: 2 / -1; display: flex; flex-direction: column; background: var(--surface); }
-  header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 22px 24px 18px; border-bottom: 1px solid var(--divider); flex-shrink: 0; }
-  h1 { margin: 0; font-size: 18px; font-weight: 650; }
-  .body { padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; overflow: auto; min-height: 0; }
-  .agent-list { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; flex-shrink: 0; }
-  .agent-row { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(260px, 1.4fr); align-items: center; gap: 12px 20px; padding: 15px 18px; border-bottom: 1px solid var(--divider); }
-  .agent-row:last-child { border-bottom: 0; }
-  .identity { display: flex; align-items: center; gap: 13px; min-width: 0; }
+  .agent-list-pane, .agent-detail { display: flex; flex-direction: column; background: var(--surface); min-width: 0; min-height: 0; }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: var(--workspace-content-top, 42px) var(--pane-content-inset, 13px) 12px; border-bottom: 1px solid var(--divider); flex-shrink: 0; }
+  h1, h2 { margin: 0; font-size: 17px; font-weight: 650; }
+  .agent-list { padding: 7px; overflow: auto; min-height: 0; }
+  .agent-row { display: flex; align-items: center; gap: 11px; width: 100%; padding: 12px 9px; border-radius: 8px; text-align: left; color: var(--text); }
+  .agent-row:hover { background: var(--surface-2); }
+  .agent-row.active { background: var(--accent-soft); }
+  .agent-row:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: -2px; }
   .tool-icon { display: grid; place-items: center; width: 36px; height: 36px; flex-shrink: 0; color: var(--text); background: var(--surface-2); border-radius: 8px; }
   .tool-copy { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-  .tool-copy strong { font-size: 14px; font-weight: 600; }
+  .tool-copy strong { font-size: 13px; font-weight: 600; }
   .current { color: var(--text-secondary); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .subtle { color: var(--text-tertiary); font-size: 11px; }
-  .switch-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; min-width: 0; }
+  .detail-header { display: flex; align-items: center; gap: 12px; min-height: 76px; padding: 18px 20px; border-bottom: 1px solid var(--divider); flex-shrink: 0; }
+  .body { padding: 18px; display: flex; flex-direction: column; gap: 14px; overflow: auto; min-height: 0; }
+  .subtle { color: var(--text-tertiary); font-size: 11px; margin: 0; }
+  .switch-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; min-width: 0; }
   .switch-controls :global(.btn) { min-height: 34px; }
-  .row-note { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; color: var(--warning); font-size: 11px; overflow-wrap: anywhere; }
+  .row-note { display: flex; align-items: center; gap: 12px; color: var(--warning); font-size: 11px; overflow-wrap: anywhere; }
+  .unmanaged { display: grid; gap: 8px; font-size: 12px; color: var(--text-tertiary); overflow-wrap: anywhere; }
+  .unmanaged strong { font-weight: 500; color: var(--text-secondary); }
   .empty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 48px 20px; text-align: center; color: var(--text-secondary); font-size: 12px; }
   :global(.spinning) { animation: agent-scan 1s linear infinite; }
   @keyframes agent-scan { to { transform: rotate(360deg); } }

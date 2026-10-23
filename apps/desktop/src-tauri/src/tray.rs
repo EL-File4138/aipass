@@ -351,7 +351,7 @@ fn dispatch_action(app: &AppHandle, action_id: &str, feedback: &TrayFeedback) {
                 select_proxy_route_async(app.clone(), route_id, feedback.clone());
             }
         }
-        action::QUIT => quit_aipass_async(app.clone()),
+        action::QUIT => quit_aipass_async(app.clone(), feedback.clone()),
         _ => {}
     }
 }

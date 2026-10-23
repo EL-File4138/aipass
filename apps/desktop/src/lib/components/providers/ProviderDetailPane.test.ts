@@ -360,13 +360,13 @@ test("all keys share editing, deletion and pricing controls, including the only 
   const onUpdateSecret = vi.fn(async () => {});
   render({ editMode: true, onRemoveSecret, onReadSecret, onUpdateSecret });
   expect(document.querySelector(".provider-form-fields .secret-input")).toBeNull();
-  expect(document.querySelectorAll(".key-row")).toHaveLength(1);
-  const buttons = document.querySelectorAll<HTMLButtonElement>(".key-row-actions button");
-  buttons[1].click();
+  expect(document.querySelectorAll(".kv-row.secret")).toHaveLength(1);
+  const edit = document.querySelector<HTMLButtonElement>('.kv-actions button[aria-label="Edit credential"]')!;
+  document.querySelector<HTMLButtonElement>('.kv-actions button[aria-label="Remove key"]')!.click();
   expect(onRemoveSecret).toHaveBeenCalledWith("key");
-  buttons[0].click();
+  edit.click();
   await vi.waitFor(() => { flushSync(); expect(document.querySelector<HTMLInputElement>(".secret-edit-input input")?.value).toBe("fixture-key"); });
-  document.querySelector<HTMLButtonElement>(".secret-edit-row .btn")!.click();
+  document.querySelector<HTMLButtonElement>(".credential-inline-editor .btn")!.click();
   await vi.waitFor(() => expect(onUpdateSecret).toHaveBeenCalledWith("key", "Production", "fixture-key", expect.objectContaining({ interfaceType: "custom_http" })));
 });
 
@@ -431,12 +431,12 @@ test("provider save commits the open key editor first and stops on key failure",
   const onUpdateSecret = vi.fn(async () => { calls.push("key"); if (fail) throw new Error("fixture write failure"); });
   const onEditSave = vi.fn(async () => { calls.push("provider"); });
   render({ editMode: true, onReadSecret: async () => "fixture-key", onUpdateSecret, onEditSave });
-  document.querySelector<HTMLButtonElement>(".key-row-actions button")!.click();
+  document.querySelector<HTMLButtonElement>('.kv-actions button[aria-label="Edit credential"]')!.click();
   await vi.waitFor(() => { flushSync(); expect(document.querySelector<HTMLInputElement>(".secret-edit-input input")?.value).toBe("fixture-key"); });
   document.querySelector<HTMLButtonElement>(".actions .btn-primary")!.click();
   await vi.waitFor(() => { flushSync(); expect(onUpdateSecret).toHaveBeenCalledTimes(1); expect(document.querySelector<HTMLButtonElement>(".actions .btn-primary")!.disabled).toBe(false); });
   expect(calls).toEqual(["key"]);
-  expect(document.querySelector(".secret-edit-row")).toBeTruthy();
+  expect(document.querySelector(".credential-inline-editor")).toBeTruthy();
   fail = false;
   document.querySelector<HTMLButtonElement>(".actions .btn-primary")!.click();
   await vi.waitFor(() => expect(onEditSave).toHaveBeenCalledTimes(1));
@@ -451,14 +451,14 @@ test("a completed save cannot close a newer key editor", async () => {
     selected: { ...selected, secretRefs: [selected.secretRefs[0], { ...selected.secretRefs[0], id: "other", label: "Other" }] },
     onReadSecret: async id => `fixture-${id}`, onUpdateSecret
   });
-  document.querySelector<HTMLButtonElement>(".key-row-actions button")!.click();
+  document.querySelector<HTMLButtonElement>('.kv-actions button[aria-label="Edit credential"]')!.click();
   await vi.waitFor(() => { flushSync(); expect(document.querySelector<HTMLInputElement>(".secret-edit-input input")?.value).toBe("fixture-key"); });
-  document.querySelector<HTMLButtonElement>(".secret-edit-row .btn")!.click();
+  document.querySelector<HTMLButtonElement>(".credential-inline-editor .btn")!.click();
   flushSync();
-  document.querySelector<HTMLButtonElement>(".key-row-actions button")!.click();
+  document.querySelector<HTMLButtonElement>('.kv-actions button[aria-label="Edit credential"]')!.click();
   await vi.waitFor(() => { flushSync(); expect(document.querySelector<HTMLInputElement>(".secret-edit-input input")?.value).toBe("fixture-other"); });
   finish();
-  await vi.waitFor(() => { flushSync(); expect(document.querySelector<HTMLButtonElement>(".secret-edit-row .btn")!.disabled).toBe(false); });
+  await vi.waitFor(() => { flushSync(); expect(document.querySelector<HTMLButtonElement>(".credential-inline-editor .btn")!.disabled).toBe(false); });
   expect(document.querySelector<HTMLInputElement>(".secret-edit-input input")?.value).toBe("fixture-other");
 });
 
@@ -522,4 +522,30 @@ test("credential row supports the configured copy action", () => {
   document.querySelector<HTMLButtonElement>("button.secret-copy")!.click();
   expect(onCopySecret).toHaveBeenCalledWith("key");
   expect(onRevealSecret).not.toHaveBeenCalled();
+});
+
+test("editing keeps credentials and live quota in place without exposing quota inputs", () => {
+  setLocale("en");
+  const selection = writable({ ...selected, quota: {label: "Credits", remaining: "100", used: "12"} });
+  const selectedState = fromStore(selection);
+  const mode = writable(false), modeState = fromStore(mode);
+  const draft = {...emptyDraft(), title: selected.title, endpoint: "https://api.example.test/v1"};
+  app = mount(ProviderDetailPane, {target: document.body, props: {
+    get selected() { return selectedState.current; }, get editMode() { return modeState.current; }, draft,
+    invokeTauri: async () => null as never, probeResult: undefined, usageProbeResult: undefined
+  }});
+  flushSync();
+  const header = document.querySelector(".detail-header");
+  const credential = document.querySelector(".secret-copy");
+  const endpoint = document.querySelector('input[aria-label="Endpoint"]');
+  mode.set(true); flushSync();
+  expect(document.querySelector(".detail-header")).toBe(header);
+  expect(document.querySelector(".secret-copy")).toBe(credential);
+  expect(document.querySelector('input[aria-label="Endpoint"]')).toBe(endpoint);
+  expect(document.querySelector<HTMLInputElement>('input[aria-label="Endpoint"]')!.readOnly).toBe(false);
+  expect(document.querySelector<HTMLDetailsElement>("details.advanced")!.open).toBe(false);
+  expect(document.querySelector('[data-provider-field="quota"]')).toBeNull();
+  selection.update(entry => ({...entry, quota: {...entry.quota, remaining: "87"}})); flushSync();
+  expect(document.querySelector(".quota-value")?.textContent).toContain("87");
+  expect(document.querySelector('.quota-value input')).toBeNull();
 });

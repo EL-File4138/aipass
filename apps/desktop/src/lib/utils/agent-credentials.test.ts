@@ -37,3 +37,13 @@ test("separate imported entries with the same title remain distinguishable", () 
   expect(new Set(choices.map(c => c.label)).size).toBe(2);
   expect(choices.map(c => c.value)).toEqual(["api:openai", "second:openai"]);
 });
+
+test("native account labels keep the email and a short workspace scope", () => {
+  const identity = "alice@example.test:workspace-1234567890";
+  const subscription = {...api, title: `codex · ${identity}`, providerId: "codex", providerKind: "official" as const, credentialKind: "oauth" as const, accountIdentity: identity, secretRefs: [api.secretRefs[0]]};
+  const [choice] = agentCredentialChoices([subscription], "codex");
+  expect(choice.label).toContain("alice@example.test");
+  expect(choice.label).toContain("34567890");
+  expect(choice.label).not.toContain("workspace-1234567890");
+  expect(choice.value).toBe("api:openai");
+});

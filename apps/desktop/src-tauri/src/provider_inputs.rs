@@ -5,6 +5,12 @@ use aipass_vault::{ProviderEntryInput, ProviderEntryUpdateInput};
 
 pub(crate) fn provider_add_input(request: ProviderAddRequest) -> ProviderEntryInput {
     let provider_kind = provider_kind_for_id(request.provider_id.as_deref());
+    let endpoints = endpoints_from(
+        request.endpoint,
+        request.endpoints,
+        request.console_endpoints,
+    );
+    let domains = domains_from(request.domain, &endpoints);
     ProviderEntryInput {
         max_concurrent_requests: request.max_concurrent_requests,
         supports_websockets: request.supports_websockets,
@@ -13,13 +19,9 @@ pub(crate) fn provider_add_input(request: ProviderAddRequest) -> ProviderEntryIn
         provider_id: request.provider_id,
         credential_kind: request.credential_kind,
         account_identity: request.account_identity,
-        domains: clean_strings(request.domain),
+        domains,
         favicon_url: request.favicon_url.and_then(non_empty),
-        endpoints: endpoints_from(
-            request.endpoint,
-            request.endpoints,
-            request.console_endpoints,
-        ),
+        endpoints,
         interface_type: request.interface_type,
         auth_scheme: request.auth_scheme,
         api_key: request.api_key.into_inner(),
@@ -38,6 +40,12 @@ pub(crate) fn provider_add_input(request: ProviderAddRequest) -> ProviderEntryIn
 
 pub(crate) fn provider_update_input(request: ProviderUpdateRequest) -> ProviderEntryUpdateInput {
     let provider_kind = provider_kind_for_id(request.provider_id.as_deref());
+    let endpoints = endpoints_from(
+        request.endpoint,
+        request.endpoints,
+        request.console_endpoints,
+    );
+    let domains = domains_from(request.domain, &endpoints);
     ProviderEntryUpdateInput {
         max_concurrent_requests: request.max_concurrent_requests,
         supports_websockets: request.supports_websockets,
@@ -46,13 +54,9 @@ pub(crate) fn provider_update_input(request: ProviderUpdateRequest) -> ProviderE
         provider_id: request.provider_id,
         credential_kind: request.credential_kind,
         account_identity: request.account_identity,
-        domains: clean_strings(request.domain),
+        domains,
         favicon_url: request.favicon_url.and_then(non_empty),
-        endpoints: endpoints_from(
-            request.endpoint,
-            request.endpoints,
-            request.console_endpoints,
-        ),
+        endpoints,
         interface_type: request.interface_type,
         auth_scheme: request.auth_scheme,
         api_key: request
@@ -106,4 +110,63 @@ fn clean_pairs(values: Vec<(String, String)>) -> Vec<(String, String)> {
 fn non_empty(value: String) -> Option<String> {
     let trimmed = value.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+// An explicit domain list is an override. Otherwise use only API hosts;
+// console URLs must not change credential matching or provider identity.
+fn domains_from(domains: Vec<String>, endpoints: &[ProviderEndpoint]) -> Vec<String> {
+    let explicit = clean_strings(domains);
+    if !explicit.is_empty() {
+        return explicit;
+    }
+    let mut hosts = Vec::new();
+    for endpoint in endpoints
+        .iter()
+        .filter(|endpoint| endpoint.kind == aipass_provider_registry::EndpointKind::Api)
+    {
+        if let Some(url) = endpoint
+            .url
+            .as_deref()
+            .and_then(|value| url::Url::parse(value).ok())
+        {
+            if matches!(url.scheme(), "http" | "https") {
+                if let Some(host) = url.host_str() {
+                    if !hosts.iter().any(|existing| existing == host) {
+                        hosts.push(host.to_owned());
+                    }
+                }
+            }
+        }
+    }
+    hosts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn default_domains_follow_api_hosts_and_preserve_explicit_overrides() {
+        let endpoints = endpoints_from(
+            None,
+            vec![
+                "https://api.example.test:443/v1".into(),
+                "https://api.example.test/v2".into(),
+                "http://localhost:8080/v1".into(),
+            ],
+            vec!["https://console.example.test".into()],
+        );
+        assert_eq!(
+            domains_from(vec!["  ".into()], &endpoints),
+            vec!["api.example.test", "localhost"]
+        );
+        assert_eq!(
+            domains_from(vec![" custom.example.test ".into()], &endpoints),
+            vec!["custom.example.test"]
+        );
+        assert!(domains_from(
+            vec![],
+            &endpoints_from(None, vec!["invalid".into()], vec![])
+        )
+        .is_empty());
+    }
 }

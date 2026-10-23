@@ -616,6 +616,7 @@
   "providerForm.hideApiKey": "Hide API key",
   "providerForm.details": "Details",
   "providerForm.domains": "Domains",
+  "providerForm.domainFromApi": "Use API address",
   "providerForm.endpointUrl": "Endpoint URL",
   "providerForm.oauthEndpointWarning": "This OAuth credential is only sent to the endpoint above through the proxy. Pointing it at an untrusted address will leak the login credential.",
   "providerForm.defaultModel": "Default model",
@@ -891,6 +892,7 @@
   "tray.switchGroup": "Switch group",
   "tray.noGroups": "No groups",
   "tray.quit": "Quit AIPass",
+  "tray.quitFailed": "Unable to quit. Try again.",
   "tray.updatedAt": "Updated at {time}",
   "tray.unavailable": "Unavailable",
   "tray.routes.one": "{count} route",
@@ -1330,5 +1332,13 @@
   "integration.setup.qoder": "Open Settings → Models, or /model → Custom in Qoder CLI. BYOK availability, providers and custom URLs depend on your plan and the live wizard catalog.",
   "integration.modelCatalogRequired": "Requires the Meta model catalog",
   "integration.setup.zcode": "Settings → Model Providers → Add Provider. Choose OpenAI or Anthropic, enter these values, add the model ID and enable it.",
-  "integration.setup.jetbrains-copilot": "Copilot model picker → Model management → Add a custom endpoint → OpenAI compatible. Enter these values and select the model. Update the Copilot plugin if this option is missing; organization policies may restrict BYOK."
+  "integration.setup.jetbrains-copilot": "Copilot model picker → Model management → Add a custom endpoint → OpenAI compatible. Enter these values and select the model. Update the Copilot plugin if this option is missing; organization policies may restrict BYOK.",
+  "agents.currentCredential": "Current credential",
+  "agents.localUsage": "Local usage · 7 days",
+  "agents.localUsageHint": "Only requests through AIPass are counted.",
+  "agents.unlinkedUsage": "Connect an AIPass credential to view its usage.",
+  "agents.usageFailed": "Unable to load local usage.",
+  "agents.inputTokens": "Input tokens",
+  "agents.outputTokens": "Output tokens",
+  "agents.cacheTokens": "Cache tokens"
 }

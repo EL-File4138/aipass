@@ -237,10 +237,10 @@
                 {/if}
               </span>
               {#if status.mode === "official" && ["login_required", "renewal_required"].includes(status.state)}
-                <Button size="sm" disabled={state.busy} on:click={() => onReconnect(tool)}>{$t("integration.relogin")}</Button>
+                <Button size="sm" disabled={disabled || state.busy} on:click={() => onReconnect(tool)}>{$t("integration.relogin")}</Button>
               {/if}
               {#if status.operationId}
-                <Button size="sm" disabled={state.busy || status.state === "conflict"} on:click={() => onRestore(tool)}>{$t("integration.restore")}</Button>
+                <Button size="sm" disabled={disabled || state.busy || status.state === "conflict"} on:click={() => onRestore(tool)}>{$t("integration.restore")}</Button>
               {/if}
             </div>
             {#if !["ready", "unmanaged", "api_key_invalid", "api_key_changed"].includes(status.state)}<Banner tone="warning">{$t(`integration.state.${status.state}`)}</Banner>{/if}
