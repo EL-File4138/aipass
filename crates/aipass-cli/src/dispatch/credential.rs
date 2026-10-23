@@ -9,7 +9,7 @@ pub(crate) fn handle_credential_command(
     let agent = CliAgent::from_parts(vault.clone(), cli_password.clone())?;
 
     match command {
-        Command::Add {
+        Command::Add(AddArgs {
             title,
             provider,
             domain,
@@ -35,7 +35,7 @@ pub(crate) fn handle_credential_command(
             billing_unit_price,
             notes,
             tag,
-        } => {
+        }) => {
             let provider_guess = provider.or_else(|| {
                 domain.first().and_then(|domain| {
                     match_provider_by_domain(domain).map(|provider| provider.id.to_string())
@@ -118,7 +118,7 @@ pub(crate) fn handle_credential_command(
                 &format!("{len} providers"),
             )
         }
-        Command::Update {
+        Command::Update(UpdateArgs {
             id,
             title,
             provider,
@@ -147,7 +147,7 @@ pub(crate) fn handle_credential_command(
             tag,
             max_concurrent_requests,
             supports_websockets,
-        } => {
+        }) => {
             let existing: aipass_vault::EntrySummary =
                 agent.request(AgentRequest::ProviderGet { id })?;
             let domains = if domain.is_empty() {

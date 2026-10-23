@@ -1,3 +1,6 @@
+mod credentials;
+pub use credentials::{AddArgs, UpdateArgs};
+
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -59,58 +62,7 @@ pub enum Command {
     },
     /// Add a provider credential to the vault.
     #[command(visible_aliases = ["credential", "credentials"])]
-    Add {
-        #[arg(long)]
-        title: String,
-        #[arg(long)]
-        provider: Option<String>,
-        #[arg(long)]
-        domain: Vec<String>,
-        #[arg(long)]
-        endpoint: Vec<String>,
-        #[arg(long = "console-url")]
-        console_url: Vec<String>,
-        #[arg(long)]
-        favicon_url: Option<String>,
-        #[arg(long, value_enum, default_value = "api")]
-        credential_kind: CredentialKindArg,
-        #[arg(long)]
-        account_identity: Option<String>,
-        #[arg(long, value_enum)]
-        interface: InterfaceArg,
-        #[arg(long, value_enum)]
-        auth: AuthArg,
-        #[arg(long, env = "AIPASS_INPUT_API_KEY")]
-        api_key: String,
-        #[arg(long)]
-        secret_label: Option<String>,
-        #[arg(long)]
-        default_model: Option<String>,
-        #[arg(long = "model-alias")]
-        model_alias: Vec<String>,
-        #[arg(long)]
-        header: Vec<String>,
-        #[arg(long)]
-        quota_label: Option<String>,
-        #[arg(long)]
-        quota_limit: Option<String>,
-        #[arg(long)]
-        quota_remaining: Option<String>,
-        #[arg(long)]
-        quota_reset_at: Option<String>,
-        #[arg(long)]
-        group: Option<String>,
-        #[arg(long)]
-        billing_rate: Option<String>,
-        #[arg(long)]
-        billing_currency: Option<String>,
-        #[arg(long)]
-        billing_unit_price: Option<String>,
-        #[arg(long)]
-        notes: Option<String>,
-        #[arg(long)]
-        tag: Vec<String>,
-    },
+    Add(AddArgs),
     List {
         #[arg(long)]
         provider: Option<String>,
@@ -119,63 +71,7 @@ pub enum Command {
         #[arg(long)]
         all: bool,
     },
-    Update {
-        id: Uuid,
-        #[arg(long)]
-        title: Option<String>,
-        #[arg(long)]
-        provider: Option<String>,
-        #[arg(long)]
-        domain: Vec<String>,
-        #[arg(long)]
-        endpoint: Vec<String>,
-        #[arg(long = "console-url")]
-        console_url: Vec<String>,
-        #[arg(long)]
-        favicon_url: Option<String>,
-        #[arg(long, value_enum)]
-        credential_kind: Option<CredentialKindArg>,
-        #[arg(long)]
-        account_identity: Option<String>,
-        #[arg(long, value_enum)]
-        interface: Option<InterfaceArg>,
-        #[arg(long, value_enum)]
-        auth: Option<AuthArg>,
-        #[arg(long, env = "AIPASS_INPUT_API_KEY")]
-        api_key: Option<String>,
-        #[arg(long)]
-        secret_label: Option<String>,
-        #[arg(long)]
-        default_model: Option<String>,
-        #[arg(long = "model-alias")]
-        model_alias: Vec<String>,
-        #[arg(long)]
-        header: Vec<String>,
-        #[arg(long)]
-        quota_label: Option<String>,
-        #[arg(long)]
-        quota_limit: Option<String>,
-        #[arg(long)]
-        quota_remaining: Option<String>,
-        #[arg(long)]
-        quota_reset_at: Option<String>,
-        #[arg(long)]
-        group: Option<String>,
-        #[arg(long)]
-        billing_rate: Option<String>,
-        #[arg(long)]
-        billing_currency: Option<String>,
-        #[arg(long)]
-        billing_unit_price: Option<String>,
-        #[arg(long)]
-        notes: Option<String>,
-        #[arg(long)]
-        tag: Vec<String>,
-        #[arg(long)]
-        max_concurrent_requests: Option<u32>,
-        #[arg(long)]
-        supports_websockets: Option<bool>,
-    },
+    Update(UpdateArgs),
     Archive {
         id: Uuid,
     },

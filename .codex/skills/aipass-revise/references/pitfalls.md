@@ -1220,6 +1220,13 @@ Newest entries last within each section.
 - **Guardrail**: Require native Windows workspace tests plus an installed NSIS main/tray/CLI/Native Messaging/uninstall smoke. Keep installer registration tests on disposable runners; preserve existing Native Messaging registry values in standalone CLI tests. macOS tests and PowerShell syntax checks are not Windows runtime evidence. Signed upgrade/restart, multi-user pipe ACL denial and real lock/suspend events remain separate native acceptance checks.
 - **Watch points**: ipc/framing.rs, client.rs, singleton.rs, power/windows.rs, storage/portable_path.rs, VaultExportFile, pnpm-command.mjs, verify-windows-runtime.mjs and Windows CI.
 
+### CLI argument construction must fit the native main-thread stack
+- **Symptom**: native Windows `aipass --json init` aborted with a main-thread stack overflow although CLI unit tests passed. A macOS debug binary with a 1 MiB stack reproduced it even for `--version` and `--help`.
+- **Root cause**: `crates/aipass-cli/src/cli_types.rs` derived one large `Command::augment_subcommands` frame containing both credential argument builders. The larger test-thread stack concealed the executable's startup failure.
+- **Fix**: extract add/update arguments into independent `Args` implementations, preserving command names, aliases, options and help output. Exercise init, add, update and version parsing on a 1 MiB thread.
+- **Guardrail**: keep large clap builders in separate argument modules. Run `argument_parsing_fits_the_windows_main_thread_stack` and actual debug/release CLI runtime checks; passing parser tests on their default thread stack is insufficient.
+- **Watch points**: `cli_types.rs`, `cli_types/credentials.rs`, CLI dispatch destructuring and `verify-cli-runtime.mjs`.
+
 ### Windows login startup needs real per-user registration and stable namespaces
 - **Symptom**: Windows tray login APIs always returned unregistered; normal repair required SCM privileges. A new nested vault could hash to a different pipe after its directory was created. CrossOver requests above the default pipe buffer never progressed.
 - **Root cause**: `autostart/windows.rs` was a tray stub and delegated Agent autostart to SCM. `paths.rs` mixed ordinary nonexistent paths with verbatim canonical Windows paths. PIPE_NOWAIT could return zero for an oversized write forever, so retrying the same payload did not help. Login argv also survived updater restart.

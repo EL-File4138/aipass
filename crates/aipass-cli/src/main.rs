@@ -44,6 +44,38 @@ mod tests {
     const ENTRY_ID: &str = "00000000-0000-0000-0000-000000000001";
 
     #[test]
+    fn argument_parsing_fits_the_windows_main_thread_stack() {
+        // Windows executable main threads have a 1 MiB stack. Test threads are
+        // larger by default and otherwise conceal oversized clap derive frames.
+        std::thread::Builder::new()
+            .name("cli-parser-small-stack".into())
+            .stack_size(1024 * 1024)
+            .spawn(|| {
+                let cli = Cli::try_parse_from(["aipass", "init"]).unwrap();
+                assert!(matches!(cli.command, Command::Init { .. }));
+                let cli = Cli::try_parse_from([
+                    "aipass", "credential", "--title", "small-stack", "--interface",
+                    "openai-compatible", "--auth", "bearer", "--api-key", "fixture-key",
+                ])
+                .unwrap();
+                assert!(matches!(cli.command, Command::Add(AddArgs { title, .. }) if title == "small-stack"));
+                let cli = Cli::try_parse_from([
+                    "aipass", "update", ENTRY_ID, "--max-concurrent-requests", "0",
+                    "--supports-websockets", "false",
+                ])
+                .unwrap();
+                assert!(matches!(cli.command, Command::Update(UpdateArgs {
+                    max_concurrent_requests: Some(0), supports_websockets: Some(false), ..
+                })));
+                let version = Cli::try_parse_from(["aipass", "--version"]).err().unwrap();
+                assert_eq!(version.kind(), clap::error::ErrorKind::DisplayVersion);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
     fn credential_alias_parses_as_add() {
         let cli = Cli::try_parse_from([
             "aipass",
@@ -59,7 +91,7 @@ mod tests {
         ])
         .expect("credential alias should parse");
 
-        assert!(matches!(cli.command, Command::Add { .. }));
+        assert!(matches!(cli.command, Command::Add(_)));
     }
 
     #[test]
@@ -86,11 +118,11 @@ mod tests {
         ])
         .expect("repeatable endpoints should parse");
 
-        let Command::Add {
+        let Command::Add(AddArgs {
             endpoint,
             console_url,
             ..
-        } = cli.command
+        }) = cli.command
         else {
             panic!("expected add command");
         };

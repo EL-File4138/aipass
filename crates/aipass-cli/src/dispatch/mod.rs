@@ -36,9 +36,9 @@ pub(crate) fn run(cli: Cli) -> Result<()> {
         Command::Unlock => misc::handle_unlock(json, vault, cli_password),
         Command::Lock => misc::handle_lock(json, vault, cli_password),
         Command::Init { password } => misc::handle_init(json, vault, cli_password, password),
-        Command::Add { .. }
+        Command::Add(_)
         | Command::List { .. }
-        | Command::Update { .. }
+        | Command::Update(_)
         | Command::Archive { .. }
         | Command::Restore { .. }
         | Command::Delete { .. }
