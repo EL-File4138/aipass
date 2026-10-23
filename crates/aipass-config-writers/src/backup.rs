@@ -310,8 +310,12 @@ fn rewrite_codex_session_file(path: &Path, from_provider: &str, to_provider: &st
         }
         writer.flush()?;
     }
+    // Windows cannot replace the destination while its read handle is open.
+    drop(reader);
     temp.as_file().sync_all()?;
-    temp.persist(path).map_err(|err| err.error)?;
+    temp.persist(path)
+        .map_err(|err| err.error)
+        .with_context(|| format!("replace Codex session {}", path.display()))?;
     #[cfg(unix)]
     fs::File::open(parent)?.sync_all()?;
     Ok(())
