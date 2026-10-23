@@ -453,12 +453,26 @@ async fn http_ws_auxiliary_or_malformed_events_cannot_finish_or_replay_a_request
                 .bearer_auth(LOCAL_TOKEN)
                 .json(&json!({"model":"test","input":"hello","stream":streaming}))
                 .send()
-                .await
-                .unwrap();
+                .await;
             if streaming {
-                assert!(response.bytes().await.is_err());
+                match response {
+                    Ok(response) => assert!(response.bytes().await.is_err()),
+                    Err(error) => {
+                        // Hyper may observe the failed stream before flushing headers.
+                        // Accept only that incomplete response, never a connect failure.
+                        let mut source = std::error::Error::source(&error);
+                        let mut incomplete = false;
+                        while let Some(cause) = source {
+                            incomplete |= cause
+                                .downcast_ref::<hyper::Error>()
+                                .is_some_and(hyper::Error::is_incomplete_message);
+                            source = cause.source();
+                        }
+                        assert!(incomplete, "unexpected streaming error: {error:?}");
+                    }
+                }
             } else {
-                assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+                assert_eq!(response.unwrap().status(), StatusCode::BAD_GATEWAY);
             }
             assert_eq!(upstream.calls.lock().unwrap().len(), 1);
             let summary = store.summary(|_| 0).unwrap();
