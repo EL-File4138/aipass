@@ -48,16 +48,22 @@ fn helper(key: &str, value: &str) -> bool {
     let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(encoded) else {
         return false;
     };
+    let bytes = zeroize::Zeroizing::new(bytes);
     if bytes.len() % 2 != 0 {
         return false;
     }
-    let units = bytes
-        .chunks_exact(2)
-        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-        .collect::<Vec<_>>();
+    let units = zeroize::Zeroizing::new(
+        bytes
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect::<Vec<_>>(),
+    );
     let Ok(script) = String::from_utf16(&units) else {
         return false;
     };
+    let script = zeroize::Zeroizing::new(script);
     script
         .strip_prefix("$ErrorActionPreference = 'Stop'; & ")
         .and_then(|s| s.strip_suffix("; exit $LASTEXITCODE"))
