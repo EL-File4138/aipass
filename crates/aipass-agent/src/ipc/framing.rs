@@ -137,15 +137,21 @@ impl Write for FrameIo<'_> {
 
 fn read_exact_with_deadline(conn: &mut impl Read, buf: &mut [u8], deadline: Instant) -> Result<()> {
     let mut offset = 0;
+    let mut last_progress = Instant::now();
     while offset < buf.len() {
         check_deadline(deadline)?;
         match conn.read(&mut buf[offset..]) {
             Ok(0) => {
                 return Err(std::io::Error::from(ErrorKind::UnexpectedEof).into());
             }
-            Ok(count) => offset += count,
+            Ok(count) => {
+                offset += count;
+                last_progress = Instant::now();
+            }
             Err(err) if err.kind() == ErrorKind::Interrupted => {}
-            Err(err) if err.kind() == ErrorKind::WouldBlock => wait_for_io(deadline)?,
+            Err(err) if err.kind() == ErrorKind::WouldBlock => {
+                wait_for_io(deadline, last_progress)?
+            }
             Err(err) => return Err(err.into()),
         }
     }
@@ -154,25 +160,39 @@ fn read_exact_with_deadline(conn: &mut impl Read, buf: &mut [u8], deadline: Inst
 
 fn write_all_with_deadline(conn: &mut impl Write, buf: &[u8], deadline: Instant) -> Result<()> {
     let mut offset = 0;
+    let mut last_progress = Instant::now();
     while offset < buf.len() {
         check_deadline(deadline)?;
         match conn.write(&buf[offset..]) {
             Ok(0) => {
                 return Err(std::io::Error::from(ErrorKind::WriteZero).into());
             }
-            Ok(count) => offset += count,
+            Ok(count) => {
+                offset += count;
+                last_progress = Instant::now();
+            }
             Err(err) if err.kind() == ErrorKind::Interrupted => {}
-            Err(err) if err.kind() == ErrorKind::WouldBlock => wait_for_io(deadline)?,
+            Err(err) if err.kind() == ErrorKind::WouldBlock => {
+                wait_for_io(deadline, last_progress)?
+            }
             Err(err) => return Err(err.into()),
         }
     }
     Ok(())
 }
 
-fn wait_for_io(deadline: Instant) -> Result<()> {
+fn wait_for_io(deadline: Instant, last_progress: Instant) -> Result<()> {
     let now = Instant::now();
     check_deadline(deadline)?;
-    thread::sleep((deadline - now).min(Duration::from_millis(5)));
+    // Give an active reader/writer time to drain the small pipe buffer before
+    // sleeping. Sleeping 5 ms for every 512-byte fragment imposes a >5 s floor
+    // on a 512 KiB response, even when neither peer is slow. After a short idle
+    // interval, sleep as before so a silent peer does not cause a busy loop.
+    if now.duration_since(last_progress) < Duration::from_millis(1) {
+        thread::yield_now();
+    } else {
+        thread::sleep((deadline - now).min(Duration::from_millis(5)));
+    }
     Ok(())
 }
 
@@ -186,6 +206,54 @@ fn check_deadline(deadline: Instant) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn small_buffer_backpressure_does_not_consume_the_frame_deadline() {
+        use std::{
+            collections::VecDeque,
+            sync::{Arc, Mutex},
+        };
+        #[derive(Clone)]
+        struct SmallPipe(Arc<Mutex<VecDeque<u8>>>);
+        impl Read for SmallPipe {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                let mut queue = self.0.lock().unwrap();
+                let count = buffer.len().min(queue.len());
+                if count == 0 {
+                    return Err(ErrorKind::WouldBlock.into());
+                }
+                for byte in &mut buffer[..count] {
+                    *byte = queue.pop_front().unwrap();
+                }
+                Ok(count)
+            }
+        }
+        impl Write for SmallPipe {
+            fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+                let mut queue = self.0.lock().unwrap();
+                let count = buffer.len().min(512 - queue.len());
+                if count == 0 {
+                    return Err(ErrorKind::WouldBlock.into());
+                }
+                queue.extend(&buffer[..count]);
+                Ok(count)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut writer = SmallPipe(Arc::new(Mutex::new(VecDeque::new())));
+        let mut reader = writer.clone();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let payload = vec![42; 1024 * 1024];
+        let sent = payload.clone();
+        let producer = thread::spawn(move || write_all_with_deadline(&mut writer, &sent, deadline));
+        let mut received = vec![0; payload.len()];
+        let result = read_exact_with_deadline(&mut reader, &mut received, deadline);
+        producer.join().unwrap().unwrap();
+        result.unwrap();
+        assert_eq!(received, payload);
+    }
 
     #[cfg(windows)]
     #[test]

@@ -403,22 +403,11 @@ fn listener_authority_matches_browser_default_port_normalization() {
 
 impl Fixture {
     fn new(https: bool) -> Self {
-        let phase = |name| {
-            #[cfg(windows)]
-            eprintln!(
-                "control panel fixture {:?}: {name}",
-                std::thread::current().name()
-            );
-            #[cfg(not(windows))]
-            let _ = name;
-        };
-        phase("create vault");
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("vault");
         let creation =
             Vault::create(&root, &SecretString::new("panel-test-vault-password")).unwrap();
         let vault_id = creation.vault.vault_id();
-        phase("install tools");
         let tools = temp.path().join("tools");
         std::fs::create_dir_all(&tools).unwrap();
         crate::server::tests::install_test_tools(&tools);
@@ -433,13 +422,11 @@ impl Fixture {
                 "fake-panel-provider-secret",
             ))
             .unwrap();
-        phase("create state");
         let entry = creation.vault.get_provider_summary(provider).unwrap();
         let state = crate::server::tests::sync_test_state(root);
         session::set_session_vault(&state, creation.vault);
         let route = Uuid::new_v4();
         let target = Uuid::new_v4();
-        phase("configure proxy");
         session::with_vault(&state, false, |vault| {
             state.proxy.lock().unwrap().set_config(
                 vault,
@@ -478,14 +465,12 @@ impl Fixture {
             Ok(())
         })
         .unwrap();
-        phase("rotate access code");
         let code = session::with_vault(&state, false, |vault| {
             ControlPanel::rotate_access_code(&state, vault, false)
         })
         .unwrap()
         .access_code
         .into_inner();
-        phase("configure listener");
         let status = ControlPanel::configure(
             &state,
             vault_id,
@@ -499,7 +484,6 @@ impl Fixture {
             false,
         )
         .unwrap();
-        phase("build client");
         let mut client = Client::builder()
             .no_proxy()
             .local_address(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
@@ -508,7 +492,7 @@ impl Fixture {
             client = client
                 .add_root_certificate(reqwest::Certificate::from_pem(pem.as_bytes()).unwrap());
         }
-        let fixture = Self {
+        Self {
             _temp: temp,
             state,
             client: client.build().unwrap(),
@@ -517,9 +501,7 @@ impl Fixture {
             route,
             target,
             vault_id,
-        };
-        phase("ready");
-        fixture
+        }
     }
 
     fn grant_remote_unlock(&mut self) {

@@ -73,7 +73,11 @@ impl Listener {
         let socket = socket
             .map(Ok)
             .unwrap_or_else(|| TcpListener::bind(address))?;
-        socket.set_nonblocking(true)?;
+        let accept_socket = socket.try_clone()?;
+        // Set the mode on the actual handle passed to Tokio, after duplication.
+        // A blocking accept prevents both requests and the shutdown watch from
+        // being polled on Windows.
+        accept_socket.set_nonblocking(true)?;
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .max_blocking_threads(8)
@@ -82,7 +86,7 @@ impl Listener {
         let address = socket.local_addr()?;
         let accept_socket = {
             let _entered = runtime.enter();
-            tokio::net::TcpListener::from_std(socket.try_clone()?)?
+            tokio::net::TcpListener::from_std(accept_socket)?
         };
         Ok(Prepared {
             socket,
@@ -463,4 +467,37 @@ fn response(status: StatusCode, content_type: &str, body: impl Into<Bytes>) -> R
         .header("x-content-type-options", "nosniff").header("referrer-policy", "no-referrer")
         .header("x-frame-options", "DENY").header("permissions-policy", "camera=(), microphone=(), geolocation=()")
         .body(Full::new(body.into())).expect("static response headers")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cloned_listener_serves_http_and_stops_while_idle() {
+        let (finished, result) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let root = tempfile::tempdir().unwrap();
+            let state = crate::server::tests::sync_test_state(root.path().join("vault"));
+            let listener =
+                Listener::start(&state, "127.0.0.1:0".parse().unwrap(), None, None).unwrap();
+            let response = reqwest::blocking::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(2))
+                .build()
+                .unwrap()
+                .get(format!("http://{}/", listener.address))
+                .send();
+            drop(listener);
+            let _ = finished.send(response.map(|response| response.status()));
+        });
+        // Do not let a blocking accept hide the failure in test teardown.
+        assert_eq!(
+            result
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .unwrap(),
+            StatusCode::OK
+        );
+    }
 }
